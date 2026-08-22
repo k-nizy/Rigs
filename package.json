@@ -1,0 +1,10 @@
+{
+  "name": "rigs",
+  "private": true,
+  "description": "Teleop floor: rotation desk and rig pedal loop, sharing one engine.",
+  "scripts": {
+    "test": "node --test packages/engine/engine.test.js packages/schema/schema.test.js apps/server/server.test.js",
+    "serve": "node apps/server/server.js",
+    "build": "python apps/desk/tools/make-single-file.py && python apps/rig/tools/make-single-file.py"
+  }
+}
