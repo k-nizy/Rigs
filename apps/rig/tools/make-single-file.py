@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Inline the rig app into one self-contained HTML file.
 
-The project is served as index.html + assets/ + ../shared/, which is right
+The project is served as index.html + assets/ + ../../packages/, which is right
 for a real deploy. A single file is what you need to hand someone a link,
 so this regenerates dist/rig.html from the actual current sources - never
 edit the output by hand, it will be overwritten.
@@ -17,8 +17,9 @@ root = pathlib.Path(__file__).resolve().parent.parent
 html     = (root / "index.html").read_text()
 css      = (root / "assets/rig.css").read_text()
 js       = (root / "assets/rig.js").read_text()
-engine   = (root.parent / "shared/rotation-engine.js").read_text()
-roster   = (root.parent / "shared/demo-roster.js").read_text()
+repo     = root.parent.parent
+engine   = (repo / "packages/engine/rotation-engine.js").read_text()
+roster   = (repo / "packages/demo-roster/demo-roster.js").read_text()
 schedule = json.loads((root / "schedule.json").read_text())
 
 body = re.search(r"<body>\n(.*)\n</body>", html, re.S).group(1)
