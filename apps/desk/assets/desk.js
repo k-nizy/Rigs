@@ -338,6 +338,34 @@ function renderPush(plan) {
   });
   tools.appendChild(copy);
 
+  // Push every rig in one shot. All-or-nothing: the server rejects a mix
+  // of valid and invalid payloads so the floor never runs half-updated.
+  const push = el("button", "btn", "Push to floor");
+  push.type = "button";
+  push.addEventListener("click", async () => {
+    const payloads = [];
+    GROUPS.forEach(g => g.rigs.forEach(r => {
+      const p = RE.rigPayload(plan, r);
+      if (p) payloads.push(p);
+    }));
+    push.disabled = true;
+    try {
+      const res = await fetch("/api/push", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ payloads }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) toast("Pushed " + body.count + " rigs at " + new Date(body.pushedAt).toLocaleTimeString());
+      else toast("Push rejected: " + (body.error || res.status));
+    } catch (e) {
+      toast("Push failed - is the server running?");
+    } finally {
+      push.disabled = false;
+    }
+  });
+  tools.appendChild(push);
+
   const p = RE.rigPayload(plan, cfg.pushRig);
   const head = $("push-head");
   head.textContent = "";
