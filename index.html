@@ -75,18 +75,18 @@ a.app code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0
   </header>
 
   <div class="apps">
-    <a class="app" href="desk/" style="--c: var(--desk)">
+    <a class="app" href="apps/desk/" style="--c: var(--desk)">
       <span class="who">Manager</span>
       <h2>Rotation Desk</h2>
       <p>Assign four operators and a task to each group of three rigs. The rotation is generated, checked against the 6h / 1h / 1h budget, and handed to the rigs.</p>
-      <code>desk/</code>
+      <code>apps/desk/</code>
     </a>
 
-    <a class="app" href="rig/" style="--c: var(--rig)">
+    <a class="app" href="apps/rig/" style="--c: var(--rig)">
       <span class="who">Operator</span>
       <h2>Rig Pedal Loop</h2>
       <p>One full-screen page, three foot pedals, no login and no task picker. It reads the pushed schedule and signs the right operator in when their turn starts.</p>
-      <code>rig/</code>
+      <code>apps/rig/</code>
     </a>
   </div>
 
@@ -95,13 +95,13 @@ a.app code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0
   <p class="flow">
     <span>desk</span><span class="arrow">-&gt;</span>
     <span>rigPayload()</span><span class="arrow">-&gt;</span>
-    <span>rig/schedule.json</span><span class="arrow">-&gt;</span>
+    <span>apps/rig/schedule.json</span><span class="arrow">-&gt;</span>
     <span>whoIsOn()</span><span class="arrow">-&gt;</span>
     <span>the operator is signed in</span>
   </p>
 
   <p class="note">
-    The schedule lives in <code>shared/rotation-engine.js</code>, which both apps load. It has no DOM and no globals, so it runs in the browser and under node alike &mdash; and the rig cannot drift from the desk that scheduled it. Defaults reproduce the reference sheet exactly: 15-minute blocks, 45-minute turns, each operator holding one rig until their break.
+    The schedule lives in <code>packages/engine/rotation-engine.js</code>, which both apps load. It has no DOM and no globals, so it runs in the browser and under node alike &mdash; and the rig cannot drift from the desk that scheduled it. Defaults reproduce the reference sheet exactly: 15-minute blocks, 45-minute turns, each operator holding one rig until their break.
   </p>
 
 </main>
