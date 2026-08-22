@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#ffffff">
+<meta name="description" content="The whole operator app for one teleop rig: one screen, three foot pedals, no login and no task picker. The pushed schedule decides who is here.">
+<title>Rig 03 Pedal Loop</title>
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/icon-light-16.png" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icon-light-32.png" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="16x16" href="assets/icon-dark-16.png" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icon-dark-32.png" media="(prefers-color-scheme: dark)">
+<link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+<link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800;900&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="assets/rig.css">
+<script src="../shared/rotation-engine.js" defer></script>
+<script src="../shared/demo-roster.js" defer></script>
+<script src="assets/rig.js" defer></script>
+</head>
+<body>
+<div id="app">
+  <header class="rail">
+    <span class="rail-id" id="rail-rig">Rig 03</span>
+    <span class="rail-task" id="rail-task">Task — Box transfer, bin to conveyor</span>
+    <span class="rail-right">
+      <span class="rail-cell" id="cell-block"><span>Block</span><b id="rail-block">45:00</b></span>
+      <span class="rail-cell"><span>Next up</span><b id="rail-next">Op 2</b></span>
+      <span class="rail-cell"><span>You go to</span><b id="rail-then">Break</b></span>
+    </span>
+  </header>
+
+  <main class="stage" id="stage" aria-live="polite"></main>
+
+  <nav class="pedals" id="pedals" aria-label="Foot pedals"></nav>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<button class="drawer-tab" id="drawer-tab" aria-expanded="false">Demo controls</button>
+<aside class="drawer" id="drawer" aria-label="Demo controls">
+  <header><span>Demo controls</span><button id="drawer-close">Close</button></header>
+  <div class="drawer-body">
+    <div>
+      <h3>Pedals</h3>
+      <div class="keys">
+        <kbd>1</kbd><span>Left pedal</span>
+        <kbd>2</kbd><span>Middle pedal</span>
+        <kbd>3</kbd><span>Right pedal — hold where the screen says hold</span>
+      </div>
+    </div>
+    <div>
+      <h3>Demo only — not in the app</h3>
+      <div class="keys">
+        <kbd>H</kbd><span>Jump to the next handover</span>
+        <kbd>E</kbd><span>Drop efficiency below the floor</span>
+        <kbd>R</kbd><span>Restart the shift</span>
+      </div>
+    </div>
+    <div>
+      <h3>Jump to a screen</h3>
+      <div class="screens" id="screens"></div>
+    </div>
+    <div>
+      <h3>Which rig is this</h3>
+      <div class="screens" id="rigs"></div>
+      <p style="color:#8d9199;margin-top:.5rem">The desk pushes a schedule per rig. Switching here reads it as that rig would.</p>
+    </div>
+    <div>
+      <h3>Clock speed</h3>
+      <div class="speeds" id="speeds"></div>
+      <p style="color:#8d9199;margin-top:.5rem">Blocks are 15 real minutes; a turn at one rig is three of them.</p>
+      <div class="speeds" style="margin-top:.5rem">
+        <button id="live-toggle" aria-pressed="false">Follow the wall clock</button>
+      </div>
+    </div>
+    <div>
+      <h3>What the rig would send the backend</h3>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+</aside>
+</body>
+</html>

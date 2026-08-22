@@ -1,0 +1,306 @@
+/* ------------------------------------------------------------------ *
+ * The rig screen commits to one visual world on purpose: a bright
+ * white wall, black type, one signal colour. It is read from two
+ * metres away by someone holding two robot arms. No dark theme —
+ * every colour below is painted explicitly so the page never borrows
+ * the host's ground.
+ * ------------------------------------------------------------------ */
+:root {
+  --ground: #ffffff;
+  --ink:    #0b0b0c;
+  --grey:   #74787e;
+  --grey-2: #c9cdd2;
+  --hairline: #e4e7ea;
+  --hail:   #ffc400;   /* handover — reads at distance, keeps black legible */
+  --alarm:  #e11d14;   /* fault + rig down only */
+  --pane:   #0e1013;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+  font-synthesis-weight: none;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+#app {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--ground);
+}
+
+/* ---------------------------------------------------------------- rail */
+
+.rail {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 0.7rem 1.4rem;
+  border-bottom: 2px solid var(--ink);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: clamp(0.68rem, 1.05vw, 0.9rem);
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.rail-id { font-weight: 600; }
+.rail-task { color: var(--grey); overflow: hidden; text-overflow: ellipsis; }
+.rail-right { margin-left: auto; display: flex; align-items: center; gap: 1.6rem; }
+.rail-cell { display: flex; align-items: baseline; gap: 0.5rem; }
+.rail-cell b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.rail-cell span { color: var(--grey); }
+.rail-cell.due b { color: var(--alarm); }
+
+/* --------------------------------------------------------------- stage */
+
+.stage {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(1rem, 3vh, 2.4rem) clamp(1.2rem, 3vw, 3rem);
+  gap: clamp(0.8rem, 2.2vh, 1.8rem);
+}
+.stage.tight { justify-content: flex-start; gap: clamp(0.6rem, 1.6vh, 1.2rem); }
+.stage.tight .metrics { flex: 1 1 auto; align-items: center; }
+
+.kicker {
+  font-style: normal;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: clamp(0.7rem, 1.1vw, 0.95rem);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--grey);
+}
+
+.headline {
+  font-weight: 900;
+  letter-spacing: -0.035em;
+  line-height: 0.92;
+  text-wrap: balance;
+  font-size: clamp(2.6rem, 7.5vw, 6rem);
+}
+
+/* the one piece of type the whole floor is meant to read */
+.name {
+  font-weight: 900;
+  letter-spacing: -0.055em;
+  line-height: 0.8;
+  font-size: clamp(4.5rem, 22vw, 18rem);
+  text-transform: uppercase;
+}
+
+.figure {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  line-height: 0.86;
+  font-size: clamp(5rem, 24vw, 19rem);
+}
+.figure.alarm { color: var(--alarm); }
+
+/* Sized by script to fill the stage — the spec asks for the name and the
+   reset timer to take up the whole app, and no clamp() gets there for
+   both "OP 1" and "Aleksandr Petrov". */
+.fit { white-space: nowrap; font-size: 1rem; }
+
+.lede { font-size: clamp(1.1rem, 2.6vw, 2.1rem); font-weight: 600; }
+.sub  { font-size: clamp(0.9rem, 1.5vw, 1.15rem); color: var(--grey); font-weight: 400; }
+
+.split { display: flex; align-items: flex-start; justify-content: space-between; gap: 2rem; }
+
+/* checklist */
+.checks { display: flex; flex-direction: column; gap: clamp(0.4rem, 1.4vh, 0.9rem); }
+.check {
+  display: flex; align-items: center; gap: 1rem;
+  font-size: clamp(1rem, 2.3vw, 1.8rem); font-weight: 600;
+}
+.check i {
+  flex: none; width: 1.1em; height: 1.1em;
+  border: 3px solid var(--ink); border-radius: 2px;
+}
+
+/* metric row under the cameras */
+.metrics { display: flex; gap: clamp(1.5rem, 5vw, 4rem); align-items: flex-end; }
+.metric { display: flex; flex-direction: column; gap: 0.25rem; }
+.metric b {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-weight: 600; font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em; line-height: 0.9;
+  /* Three camera panes across a 16:9 wall are always width-limited, so the
+     height left under them belongs to the numbers. */
+  font-size: min(7.5vw, 22vh);
+}
+.metric.lead b { font-size: min(12vw, 32vh); }
+.metric.behind b { color: var(--alarm); }
+
+/* cameras */
+.cams { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; min-height: 0; flex: 0 1 auto; }
+.cam {
+  position: relative; background: var(--pane);
+  aspect-ratio: 16 / 10; max-height: 48vh; min-height: 0; overflow: hidden;
+}
+.cam canvas { display: block; width: 100%; height: 100%; }
+.cam figcaption {
+  position: absolute; inset: auto 0 0 0;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.4rem 0.6rem;
+  background: linear-gradient(to top, rgba(11,11,12,0.88), rgba(11,11,12,0));
+  color: #fff;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: clamp(0.6rem, 1vw, 0.8rem);
+  letter-spacing: 0.14em; text-transform: uppercase;
+}
+.rec { display: flex; align-items: center; gap: 0.35rem; color: var(--alarm); font-weight: 600; }
+.rec::before {
+  content: ""; width: 0.55em; height: 0.55em; border-radius: 50%;
+  background: var(--alarm); animation: blip 1.4s steps(1, end) infinite;
+}
+@keyframes blip { 0%, 60% { opacity: 1 } 61%, 100% { opacity: 0.15 } }
+
+/* review choices */
+.choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.8rem; }
+.choice { border: 3px solid var(--ink); padding: clamp(0.8rem, 2.2vh, 1.4rem); display: flex; flex-direction: column; gap: 0.4rem; }
+.choice em {
+  font-style: normal;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: clamp(0.65rem, 1vw, 0.82rem); letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--grey);
+}
+.choice strong { font-size: clamp(1.3rem, 3.4vw, 2.6rem); font-weight: 900; letter-spacing: -0.03em; }
+.choice span { font-size: clamp(0.8rem, 1.35vw, 1.05rem); color: var(--grey); }
+.choice.rare { background: var(--ink); color: var(--ground); }
+.choice.rare em, .choice.rare span { color: var(--grey-2); }
+
+/* --------------------------------------------------------------- pedals */
+
+.pedals {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  border-top: 4px solid var(--ink);
+  background: var(--hairline);
+  gap: 2px;
+}
+.pedal {
+  position: relative; overflow: hidden;
+  background: var(--ground);
+  border: 0; margin: 0;
+  padding: clamp(0.6rem, 1.8vh, 1.1rem) 0.75rem;
+  font: inherit; color: inherit; text-align: center; cursor: pointer;
+  display: flex; flex-direction: column; gap: 0.22rem; align-items: center;
+}
+.pedal:disabled { cursor: default; }
+.pedal em {
+  font-style: normal;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: clamp(0.58rem, 0.92vw, 0.76rem);
+  letter-spacing: 0.2em; text-transform: uppercase; color: var(--grey);
+}
+.pedal strong {
+  font-size: clamp(1rem, 2.6vw, 2rem); font-weight: 800;
+  letter-spacing: -0.02em; line-height: 1;
+}
+.pedal.inert strong { color: var(--grey-2); }
+.pedal .hold {
+  position: absolute; inset: 0 auto 0 0; width: 0;
+  background: var(--ink); opacity: 0.12; pointer-events: none;
+}
+.pedal:focus-visible { outline: 4px solid var(--hail); outline-offset: -4px; }
+.pedal.hit { background: var(--ink); color: var(--ground); }
+.pedal.hit em { color: var(--grey-2); }
+
+/* --------------------------------------------------------------- states */
+
+/* Handover, fault and rig down used to flash the whole wall — yellow for
+   the handover, red for the two fault states. Both are gone, colour and
+   all: every screen is now the same white wall and black type, and the
+   state is carried by the words and the pedals alone. #app still gets
+   .hail and .alarm as state hooks; they paint nothing. */
+
+@media (prefers-reduced-motion: reduce) {
+  .rec::before { animation: none; }
+}
+
+/* --------------------------------------------------------------- toast */
+
+.toast {
+  position: fixed; left: 1.4rem; bottom: calc(1.4rem + 6.5rem);
+  max-width: 34ch;
+  background: var(--ink); color: var(--ground);
+  padding: 0.7rem 1rem;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.8rem; letter-spacing: 0.04em;
+  opacity: 0; transform: translateY(6px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+}
+.toast.on { opacity: 1; transform: none; }
+
+/* ---------------------------------------------------------------- drawer */
+
+.drawer-tab {
+  position: fixed; right: 0; top: 50%; transform: translateY(-50%);
+  writing-mode: vertical-rl;
+  background: var(--ink); color: var(--ground);
+  border: 0; cursor: pointer;
+  padding: 1rem 0.45rem;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.7rem; letter-spacing: 0.22em; text-transform: uppercase;
+}
+.drawer {
+  position: fixed; inset: 0 0 0 auto; width: min(30rem, 92vw);
+  background: var(--ink); color: var(--ground);
+  transform: translateX(100%); transition: transform 220ms ease;
+  display: flex; flex-direction: column;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.78rem; line-height: 1.55;
+}
+.drawer.open { transform: none; }
+.drawer header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1rem 1.2rem; border-bottom: 1px solid #2a2c30;
+  letter-spacing: 0.2em; text-transform: uppercase; font-size: 0.72rem;
+}
+.drawer header button {
+  background: none; border: 1px solid #4a4d53; color: inherit;
+  font: inherit; cursor: pointer; padding: 0.25rem 0.6rem;
+}
+.drawer-body { overflow-y: auto; padding: 1.2rem; display: flex; flex-direction: column; gap: 1.4rem; }
+.drawer h3 {
+  font-size: 0.68rem; letter-spacing: 0.22em; text-transform: uppercase;
+  color: #8d9199; font-weight: 400; margin-bottom: 0.5rem;
+}
+.keys { display: grid; grid-template-columns: 4.5rem 1fr; gap: 0.35rem 0.8rem; }
+.keys kbd {
+  font: inherit; background: #26282c; border: 1px solid #3c3f44;
+  padding: 0.05rem 0.4rem; text-align: center;
+}
+.screens { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
+.screens button, .speeds button {
+  background: none; border: 1px solid #4a4d53; color: inherit;
+  font: inherit; cursor: pointer; padding: 0.35rem 0.5rem; text-align: left;
+}
+.screens button:hover, .speeds button:hover { background: #26282c; }
+.speeds { display: flex; gap: 0.4rem; }
+.speeds button { flex: 1; text-align: center; }
+.speeds button[aria-pressed="true"] { background: var(--ground); color: var(--ink); border-color: var(--ground); }
+.log { display: flex; flex-direction: column-reverse; gap: 0.3rem; max-height: 17rem; overflow-y: auto; }
+.log p { display: flex; gap: 0.7rem; border-bottom: 1px solid #1e2023; padding-bottom: 0.3rem; }
+.log time { color: #8d9199; flex: none; }
+.log b { font-weight: 400; }
+.log .bucket { color: var(--hail); }
+.drawer-body ul { padding-left: 1.1rem; color: #b6b9bf; }
+
+@media (max-width: 720px) {
+  .cams { grid-template-columns: 1fr; }
+  .cams .cam:nth-child(n+2) { display: none; }
+  .rail { gap: 1rem; font-size: 0.62rem; }
+  .rail-right { gap: 0.9rem; }
+}

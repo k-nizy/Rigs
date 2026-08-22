@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teleop Floor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+:root {
+  --ground: #f4f6f7; --panel: #ffffff; --ink: #0f1418; --ink-2: #414c57;
+  --muted: #6f7b87; --line: #dbe1e7; --line-2: #bfc8d1; --accent: #b06d00;
+  --desk: #1f6f9a; --rig: #c2571b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0c0f12; --panel: #14181d; --ink: #e9edf1; --ink-2: #b0bac4;
+    --muted: #7c8794; --line: #242b33; --line-2: #384250; --accent: #ffc400;
+    --desk: #63aad4; --rig: #e5895a;
+  }
+}
+:root[data-theme="dark"] {
+  --ground: #0c0f12; --panel: #14181d; --ink: #e9edf1; --ink-2: #b0bac4;
+  --muted: #7c8794; --line: #242b33; --line-2: #384250; --accent: #ffc400;
+  --desk: #63aad4; --rig: #e5895a;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: var(--ground); color: var(--ink);
+  font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.5; padding: clamp(1.5rem, 6vw, 4rem);
+}
+main { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem; }
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.7rem;
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted);
+}
+h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); font-weight: 800; letter-spacing: -0.035em; line-height: 1; margin-top: 0.4rem; }
+header p { color: var(--ink-2); margin-top: 0.8rem; max-width: 60ch; font-size: 0.95rem; }
+.apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+a.app {
+  display: block; text-decoration: none; color: inherit; background: var(--panel);
+  border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 4px;
+  padding: 1.1rem 1.2rem 1.2rem;
+}
+a.app:hover { border-color: var(--c); }
+a.app:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+a.app h2 { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
+a.app .who { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--c); }
+a.app p { color: var(--ink-2); font-size: 0.86rem; margin-top: 0.5rem; }
+a.app code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.76rem; color: var(--muted); display: block; margin-top: 0.7rem; }
+.rule { border: 0; border-top: 1px solid var(--line); }
+.note { font-size: 0.86rem; color: var(--ink-2); }
+.note b { font-weight: 600; color: var(--ink); }
+.note code, .flow code {
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.82rem;
+  background: var(--panel); border: 1px solid var(--line); padding: 0.05rem 0.3rem; border-radius: 3px;
+}
+.flow {
+  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+  font-size: 0.8rem; color: var(--muted);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+.flow span.arrow { color: var(--line-2); }
+</style>
+</head>
+<body>
+<main>
+
+  <header>
+    <p class="eyebrow">16 operators &middot; 12 rigs &middot; 4 groups</p>
+    <h1>Teleop Floor</h1>
+    <p>Two screens and one schedule between them. The desk generates the rotation and pushes it out; each rig reads its own copy and already knows who is standing there. Neither can compute a different answer, because both run the same engine.</p>
+  </header>
+
+  <div class="apps">
+    <a class="app" href="desk/" style="--c: var(--desk)">
+      <span class="who">Manager</span>
+      <h2>Rotation Desk</h2>
+      <p>Assign four operators and a task to each group of three rigs. The rotation is generated, checked against the 6h / 1h / 1h budget, and handed to the rigs.</p>
+      <code>desk/</code>
+    </a>
+
+    <a class="app" href="rig/" style="--c: var(--rig)">
+      <span class="who">Operator</span>
+      <h2>Rig Pedal Loop</h2>
+      <p>One full-screen page, three foot pedals, no login and no task picker. It reads the pushed schedule and signs the right operator in when their turn starts.</p>
+      <code>rig/</code>
+    </a>
+  </div>
+
+  <hr class="rule">
+
+  <p class="flow">
+    <span>desk</span><span class="arrow">-&gt;</span>
+    <span>rigPayload()</span><span class="arrow">-&gt;</span>
+    <span>rig/schedule.json</span><span class="arrow">-&gt;</span>
+    <span>whoIsOn()</span><span class="arrow">-&gt;</span>
+    <span>the operator is signed in</span>
+  </p>
+
+  <p class="note">
+    The schedule lives in <code>shared/rotation-engine.js</code>, which both apps load. It has no DOM and no globals, so it runs in the browser and under node alike &mdash; and the rig cannot drift from the desk that scheduled it. Defaults reproduce the reference sheet exactly: 15-minute blocks, 45-minute turns, each operator holding one rig until their break.
+  </p>
+
+</main>
+</body>
+</html>

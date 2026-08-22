@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rotation Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="assets/desk.css">
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div>
+      <p class="eyebrow">Teleop floor / shift planning</p>
+      <h1>Rotation Desk</h1>
+      <p>Assign people and a task to each group of three rigs. The rotation is arithmetic - it is generated, checked against the shift budget, and pushed to the rigs.</p>
+    </div>
+    <div class="floor-stats mono">
+      <div><b id="stat-ops">16</b><small class="eyebrow">operators</small></div>
+      <div><b id="stat-rigs">12</b><small class="eyebrow">rigs</small></div>
+      <div><b id="stat-groups">4</b><small class="eyebrow">groups</small></div>
+    </div>
+  </header>
+
+  <!-- ------------------------------------------------------ console -->
+  <section>
+    <div class="console">
+      <div class="field">
+        <label class="eyebrow" id="lbl-shift">Shift</label>
+        <div class="seg" id="seg-shift" role="group" aria-labelledby="lbl-shift"></div>
+        <p class="hint" id="shift-hint">08:00  to  16:00</p>
+      </div>
+
+      <div class="field">
+        <label class="eyebrow" for="in-date">Date</label>
+        <input type="date" id="in-date">
+        <p class="hint">Stamped onto what every rig receives.</p>
+      </div>
+
+      <div class="field">
+        <label class="eyebrow" for="in-block">Grid resolution</label>
+        <select id="in-block">
+          <option value="10">10 min - 48 a shift</option>
+          <option value="15">15 min - 32 a shift</option>
+          <option value="20" selected>20 min - 24 a shift</option>
+          <option value="30">30 min - 16 a shift</option>
+          <option value="40">40 min - 12 a shift</option>
+        </select>
+        <p class="hint">How finely the day is sliced. This does not decide the schedule - the time on rig does.</p>
+      </div>
+
+      <div class="field">
+        <label class="eyebrow" for="in-stint">Time on one rig</label>
+        <select id="in-stint"></select>
+        <p class="hint" id="stint-hint"></p>
+      </div>
+
+      <div class="field">
+        <label class="eyebrow" id="lbl-mode">Between breaks</label>
+        <div class="seg" id="seg-mode" role="group" aria-labelledby="lbl-mode">
+          <button type="button" data-mode="hold">Hold rig</button>
+          <button type="button" data-mode="rotate">Rotate rigs</button>
+        </div>
+        <p class="hint" id="mode-hint"></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------- fit check -->
+  <section>
+    <div class="fit">
+      <div class="fit-left">
+        <p class="eyebrow">Shift fit</p>
+        <div class="verdict"><span class="dot" id="v-dot"></span><span id="v-text"></span></div>
+        <p class="verdict-note" id="v-note"></p>
+        <div class="budget" id="budget"></div>
+        <div class="opts" id="opts"></div>
+      </div>
+      <div class="fit-right">
+        <p class="eyebrow">What was checked</p>
+        <div class="checks" id="checks"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------ rosters -->
+  <section>
+    <h2>Groups</h2>
+    <p>Each group keeps one task for the whole shift, so an operator works one skill all day. Three rigs, four operators - three on the rigs at any moment, one off.</p>
+    <div class="rosters" id="rosters"></div>
+  </section>
+
+  <!-- ------------------------------------------------------- output -->
+  <section class="stack">
+    <div class="tabs" role="tablist" id="tabs">
+      <button type="button" role="tab" data-tab="ops" aria-selected="true">Operator schedule</button>
+      <button type="button" role="tab" data-tab="rigs" aria-selected="false">Rig timeline</button>
+      <button type="button" role="tab" data-tab="push" aria-selected="false">What each rig gets</button>
+      <div class="tab-tools" id="tab-tools"></div>
+    </div>
+    <div id="panel-ops" class="stack">
+      <div class="scroller"><table class="sched" id="tbl-ops"></table></div>
+      <div class="legend">
+        <span><i class="swatch w"></i>On a rig. The bar marks a handover</span>
+        <span><i class="swatch b"></i>Break</span>
+        <span><i class="swatch t"></i>Think</span>
+      </div>
+    </div>
+    <div id="panel-rigs" hidden>
+      <div class="scroller"><table class="sched" id="tbl-rigs"></table></div>
+    </div>
+    <div id="panel-push" hidden>
+      <div class="scroller">
+        <div class="payload-head" id="push-head"></div>
+        <pre class="json" id="push-body"></pre>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="../shared/rotation-engine.js"></script>
+<script src="../shared/demo-roster.js"></script>
+<script src="assets/desk.js"></script>
+</body>
+</html>

@@ -1,0 +1,1885 @@
+<meta charset="utf-8">
+<title>RIG-03 Pedal Loop</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800;900&family=IBM+Plex+Mono:wght@400;600&display=swap">
+
+<style>
+/* ------------------------------------------------------------------ *
+ * The rig screen commits to one visual world on purpose: a bright
+ * white wall, black type, one signal colour. It is read from two
+ * metres away by someone holding two robot arms. No dark theme —
+ * every colour below is painted explicitly so the page never borrows
+ * the host's ground.
+ * ------------------------------------------------------------------ */
+:root {
+  --ground: #ffffff;
+  --ink:    #0b0b0c;
+  --grey:   #74787e;
+  --grey-2: #c9cdd2;
+  --hairline: #e4e7ea;
+  --hail:   #ffc400;   /* handover — reads at distance, keeps black legible */
+  --alarm:  #e11d14;   /* fault + rig down only */
+  --pane:   #0e1013;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+  font-synthesis-weight: none;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+#app {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  background: var(--ground);
+}
+
+/* ---------------------------------------------------------------- rail */
+
+.rail {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding: 0.7rem 1.4rem;
+  border-bottom: 2px solid var(--ink);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: clamp(0.68rem, 1.05vw, 0.9rem);
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.rail-id { font-weight: 600; }
+.rail-task { color: var(--grey); overflow: hidden; text-overflow: ellipsis; }
+.rail-right { margin-left: auto; display: flex; align-items: center; gap: 1.6rem; }
+.rail-cell { display: flex; align-items: baseline; gap: 0.5rem; }
+.rail-cell b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.rail-cell span { color: var(--grey); }
+.rail-cell.due b { color: var(--alarm); }
+
+/* --------------------------------------------------------------- stage */
+
+.stage {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(1rem, 3vh, 2.4rem) clamp(1.2rem, 3vw, 3rem);
+  gap: clamp(0.8rem, 2.2vh, 1.8rem);
+}
+.stage.tight { justify-content: flex-start; gap: clamp(0.6rem, 1.6vh, 1.2rem); }
+.stage.tight .metrics { flex: 1 1 auto; align-items: center; }
+
+.kicker {
+  font-style: normal;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: clamp(0.7rem, 1.1vw, 0.95rem);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--grey);
+}
+
+.headline {
+  font-weight: 900;
+  letter-spacing: -0.035em;
+  line-height: 0.92;
+  text-wrap: balance;
+  font-size: clamp(2.6rem, 7.5vw, 6rem);
+}
+
+/* the one piece of type the whole floor is meant to read */
+.name {
+  font-weight: 900;
+  letter-spacing: -0.055em;
+  line-height: 0.8;
+  font-size: clamp(4.5rem, 22vw, 18rem);
+  text-transform: uppercase;
+}
+
+.figure {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.04em;
+  line-height: 0.86;
+  font-size: clamp(5rem, 24vw, 19rem);
+}
+.figure.alarm { color: var(--alarm); }
+
+/* Sized by script to fill the stage — the spec asks for the name and the
+   reset timer to take up the whole app, and no clamp() gets there for
+   both "OP 1" and "Aleksandr Petrov". */
+.fit { white-space: nowrap; font-size: 1rem; }
+
+.lede { font-size: clamp(1.1rem, 2.6vw, 2.1rem); font-weight: 600; }
+.sub  { font-size: clamp(0.9rem, 1.5vw, 1.15rem); color: var(--grey); font-weight: 400; }
+
+.split { display: flex; align-items: flex-start; justify-content: space-between; gap: 2rem; }
+
+/* checklist */
+.checks { display: flex; flex-direction: column; gap: clamp(0.4rem, 1.4vh, 0.9rem); }
+.check {
+  display: flex; align-items: center; gap: 1rem;
+  font-size: clamp(1rem, 2.3vw, 1.8rem); font-weight: 600;
+}
+.check i {
+  flex: none; width: 1.1em; height: 1.1em;
+  border: 3px solid var(--ink); border-radius: 2px;
+}
+
+/* metric row under the cameras */
+.metrics { display: flex; gap: clamp(1.5rem, 5vw, 4rem); align-items: flex-end; }
+.metric { display: flex; flex-direction: column; gap: 0.25rem; }
+.metric b {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-weight: 600; font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em; line-height: 0.9;
+  /* Three camera panes across a 16:9 wall are always width-limited, so the
+     height left under them belongs to the numbers. */
+  font-size: min(7.5vw, 22vh);
+}
+.metric.lead b { font-size: min(12vw, 32vh); }
+.metric.behind b { color: var(--alarm); }
+
+/* cameras */
+.cams { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.6rem; min-height: 0; flex: 0 1 auto; }
+.cam {
+  position: relative; background: var(--pane);
+  aspect-ratio: 16 / 10; max-height: 48vh; min-height: 0; overflow: hidden;
+}
+.cam canvas { display: block; width: 100%; height: 100%; }
+.cam figcaption {
+  position: absolute; inset: auto 0 0 0;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.4rem 0.6rem;
+  background: linear-gradient(to top, rgba(11,11,12,0.88), rgba(11,11,12,0));
+  color: #fff;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: clamp(0.6rem, 1vw, 0.8rem);
+  letter-spacing: 0.14em; text-transform: uppercase;
+}
+.rec { display: flex; align-items: center; gap: 0.35rem; color: var(--alarm); font-weight: 600; }
+.rec::before {
+  content: ""; width: 0.55em; height: 0.55em; border-radius: 50%;
+  background: var(--alarm); animation: blip 1.4s steps(1, end) infinite;
+}
+@keyframes blip { 0%, 60% { opacity: 1 } 61%, 100% { opacity: 0.15 } }
+
+/* review choices */
+.choices { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.8rem; }
+.choice { border: 3px solid var(--ink); padding: clamp(0.8rem, 2.2vh, 1.4rem); display: flex; flex-direction: column; gap: 0.4rem; }
+.choice em {
+  font-style: normal;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: clamp(0.65rem, 1vw, 0.82rem); letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--grey);
+}
+.choice strong { font-size: clamp(1.3rem, 3.4vw, 2.6rem); font-weight: 900; letter-spacing: -0.03em; }
+.choice span { font-size: clamp(0.8rem, 1.35vw, 1.05rem); color: var(--grey); }
+.choice.rare { background: var(--ink); color: var(--ground); }
+.choice.rare em, .choice.rare span { color: var(--grey-2); }
+
+/* --------------------------------------------------------------- pedals */
+
+.pedals {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  border-top: 4px solid var(--ink);
+  background: var(--hairline);
+  gap: 2px;
+}
+.pedal {
+  position: relative; overflow: hidden;
+  background: var(--ground);
+  border: 0; margin: 0;
+  padding: clamp(0.6rem, 1.8vh, 1.1rem) 0.75rem;
+  font: inherit; color: inherit; text-align: center; cursor: pointer;
+  display: flex; flex-direction: column; gap: 0.22rem; align-items: center;
+}
+.pedal:disabled { cursor: default; }
+.pedal em {
+  font-style: normal;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: clamp(0.58rem, 0.92vw, 0.76rem);
+  letter-spacing: 0.2em; text-transform: uppercase; color: var(--grey);
+}
+.pedal strong {
+  font-size: clamp(1rem, 2.6vw, 2rem); font-weight: 800;
+  letter-spacing: -0.02em; line-height: 1;
+}
+.pedal.inert strong { color: var(--grey-2); }
+.pedal .hold {
+  position: absolute; inset: 0 auto 0 0; width: 0;
+  background: var(--ink); opacity: 0.12; pointer-events: none;
+}
+.pedal:focus-visible { outline: 4px solid var(--hail); outline-offset: -4px; }
+.pedal.hit { background: var(--ink); color: var(--ground); }
+.pedal.hit em { color: var(--grey-2); }
+
+/* --------------------------------------------------------------- states */
+
+/* Handover, fault and rig down used to flash the whole wall — yellow for
+   the handover, red for the two fault states. Both are gone, colour and
+   all: every screen is now the same white wall and black type, and the
+   state is carried by the words and the pedals alone. #app still gets
+   .hail and .alarm as state hooks; they paint nothing. */
+
+@media (prefers-reduced-motion: reduce) {
+  .rec::before { animation: none; }
+}
+
+/* --------------------------------------------------------------- toast */
+
+.toast {
+  position: fixed; left: 1.4rem; bottom: calc(1.4rem + 6.5rem);
+  max-width: 34ch;
+  background: var(--ink); color: var(--ground);
+  padding: 0.7rem 1rem;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.8rem; letter-spacing: 0.04em;
+  opacity: 0; transform: translateY(6px);
+  transition: opacity 160ms ease, transform 160ms ease;
+  pointer-events: none;
+}
+.toast.on { opacity: 1; transform: none; }
+
+/* ---------------------------------------------------------------- drawer */
+
+.drawer-tab {
+  position: fixed; right: 0; top: 50%; transform: translateY(-50%);
+  writing-mode: vertical-rl;
+  background: var(--ink); color: var(--ground);
+  border: 0; cursor: pointer;
+  padding: 1rem 0.45rem;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.7rem; letter-spacing: 0.22em; text-transform: uppercase;
+}
+.drawer {
+  position: fixed; inset: 0 0 0 auto; width: min(30rem, 92vw);
+  background: var(--ink); color: var(--ground);
+  transform: translateX(100%); transition: transform 220ms ease;
+  display: flex; flex-direction: column;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.78rem; line-height: 1.55;
+}
+.drawer.open { transform: none; }
+.drawer header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 1rem 1.2rem; border-bottom: 1px solid #2a2c30;
+  letter-spacing: 0.2em; text-transform: uppercase; font-size: 0.72rem;
+}
+.drawer header button {
+  background: none; border: 1px solid #4a4d53; color: inherit;
+  font: inherit; cursor: pointer; padding: 0.25rem 0.6rem;
+}
+.drawer-body { overflow-y: auto; padding: 1.2rem; display: flex; flex-direction: column; gap: 1.4rem; }
+.drawer h3 {
+  font-size: 0.68rem; letter-spacing: 0.22em; text-transform: uppercase;
+  color: #8d9199; font-weight: 400; margin-bottom: 0.5rem;
+}
+.keys { display: grid; grid-template-columns: 4.5rem 1fr; gap: 0.35rem 0.8rem; }
+.keys kbd {
+  font: inherit; background: #26282c; border: 1px solid #3c3f44;
+  padding: 0.05rem 0.4rem; text-align: center;
+}
+.screens { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; }
+.screens button, .speeds button {
+  background: none; border: 1px solid #4a4d53; color: inherit;
+  font: inherit; cursor: pointer; padding: 0.35rem 0.5rem; text-align: left;
+}
+.screens button:hover, .speeds button:hover { background: #26282c; }
+.speeds { display: flex; gap: 0.4rem; }
+.speeds button { flex: 1; text-align: center; }
+.speeds button[aria-pressed="true"] { background: var(--ground); color: var(--ink); border-color: var(--ground); }
+.log { display: flex; flex-direction: column-reverse; gap: 0.3rem; max-height: 17rem; overflow-y: auto; }
+.log p { display: flex; gap: 0.7rem; border-bottom: 1px solid #1e2023; padding-bottom: 0.3rem; }
+.log time { color: #8d9199; flex: none; }
+.log b { font-weight: 400; }
+.log .bucket { color: var(--hail); }
+.drawer-body ul { padding-left: 1.1rem; color: #b6b9bf; }
+
+@media (max-width: 720px) {
+  .cams { grid-template-columns: 1fr; }
+  .cams .cam:nth-child(n+2) { display: none; }
+  .rail { gap: 1rem; font-size: 0.62rem; }
+  .rail-right { gap: 0.9rem; }
+}
+</style>
+
+<div id="app">
+  <header class="rail">
+    <span class="rail-id" id="rail-rig">Rig 03</span>
+    <span class="rail-task" id="rail-task">Task — Box transfer, bin to conveyor</span>
+    <span class="rail-right">
+      <span class="rail-cell" id="cell-block"><span>Block</span><b id="rail-block">45:00</b></span>
+      <span class="rail-cell"><span>Next up</span><b id="rail-next">Op 2</b></span>
+      <span class="rail-cell"><span>You go to</span><b id="rail-then">Break</b></span>
+    </span>
+  </header>
+
+  <main class="stage" id="stage" aria-live="polite"></main>
+
+  <nav class="pedals" id="pedals" aria-label="Foot pedals"></nav>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<button class="drawer-tab" id="drawer-tab" aria-expanded="false">Demo controls</button>
+<aside class="drawer" id="drawer" aria-label="Demo controls">
+  <header><span>Demo controls</span><button id="drawer-close">Close</button></header>
+  <div class="drawer-body">
+    <div>
+      <h3>Pedals</h3>
+      <div class="keys">
+        <kbd>1</kbd><span>Left pedal</span>
+        <kbd>2</kbd><span>Middle pedal</span>
+        <kbd>3</kbd><span>Right pedal — hold where the screen says hold</span>
+      </div>
+    </div>
+    <div>
+      <h3>Demo only — not in the app</h3>
+      <div class="keys">
+        <kbd>H</kbd><span>Jump to the next handover</span>
+        <kbd>E</kbd><span>Drop efficiency below the floor</span>
+        <kbd>R</kbd><span>Restart the shift</span>
+      </div>
+    </div>
+    <div>
+      <h3>Jump to a screen</h3>
+      <div class="screens" id="screens"></div>
+    </div>
+    <div>
+      <h3>Which rig is this</h3>
+      <div class="screens" id="rigs"></div>
+      <p style="color:#8d9199;margin-top:.5rem">The desk pushes a schedule per rig. Switching here reads it as that rig would.</p>
+    </div>
+    <div>
+      <h3>Clock speed</h3>
+      <div class="speeds" id="speeds"></div>
+      <p style="color:#8d9199;margin-top:.5rem">Blocks are 15 real minutes; a turn at one rig is three of them.</p>
+      <div class="speeds" style="margin-top:.5rem">
+        <button id="live-toggle" aria-pressed="false">Follow the wall clock</button>
+      </div>
+    </div>
+    <div>
+      <h3>What the rig would send the backend</h3>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+</aside>
+
+<script>
+/* =====================================================================
+ * rotation-engine.js
+ *
+ * The schedule itself, with no screen attached. Nothing in this file
+ * touches the DOM or reads a global, so the manager desk and the rig
+ * platform can run the identical code and be guaranteed to agree about
+ * who is where. The rig cannot be allowed to compute a different answer
+ * from the desk that scheduled it.
+ *
+ * Everything takes an explicit config:
+ *
+ *   { shift, date, blockMin, stintBlocks, mode }
+ *
+ * mode is "hold" or "rotate". Times are minutes-since-midnight.
+ * ===================================================================== */
+
+(function (root) {
+  "use strict";
+
+  // ---------------------------------------------------------- the floor
+
+  var SHIFTS = [
+    { id: "morning", label: "Morning", start: 8 * 60 },
+    { id: "day",     label: "Day",     start: 16 * 60 },
+    { id: "night",   label: "Night",   start: 0 },
+  ];
+
+  var SHIFT_MINUTES = 480;   // all three shifts are eight hours
+  var HOLD_STINT    = 3;     // "hold" is forced to a 3-block on-run by the 3:1 duty
+
+  /* The one rule that decides whether a schedule works.
+   *
+   * An operator's cycle is four stints - three on a rig, one off. Break
+   * and think alternate across the off-stints, so an operator needs an
+   * even number of them: eight stints per cycle. Eight stints must fit
+   * the 480-minute shift a whole number of times, so
+   *
+   *     stint x 8  divides  480     <=>     stint divides 60
+   *
+   * That is all of it. Any time-on-rig that divides an hour works; any
+   * that does not cannot, at any block size. Block length only sets the
+   * resolution of the grid - 15min x 4 and 20min x 3 are the same
+   * schedule, because both are 60. */
+  var HOUR_DIVISORS = [5, 10, 12, 15, 20, 30, 60];
+
+  var OFF   = -1;          // this operator is not on a rig this block
+  var BREAK = "BREAK";
+  var THINK = "THINK";
+
+  // ------------------------------------------------------------- config
+
+  function shiftById(id) {
+    for (var i = 0; i < SHIFTS.length; i++) if (SHIFTS[i].id === id) return SHIFTS[i];
+    return SHIFTS[0];
+  }
+
+  function stintBlocksFor(cfg) {
+    return cfg.mode === "hold" ? HOLD_STINT : cfg.stintBlocks;
+  }
+
+  function stintMinutes(cfg) {
+    return stintBlocksFor(cfg) * cfg.blockMin;
+  }
+
+  /* Times-on-rig that divide the hour and are a whole number of blocks. */
+  function cleanStints(blockMin) {
+    return HOUR_DIVISORS.filter(function (m) {
+      return m % blockMin === 0 && m >= blockMin;
+    });
+  }
+
+  // --------------------------------------------------------- generation
+
+  /* "hold" - an operator keeps one rig for the whole on-run and steps
+   * off for a single block. The rig changes hands every third block.
+   *
+   * This mode can never produce equal-length turns when the whole crew
+   * starts together: at block 0 three operators take three rigs, but only
+   * one operator can be off per block, so those three must step off on
+   * three different blocks. Their opening turns are therefore 1, 2 and 3
+   * blocks long, whatever the block size. The stubs are a property of the
+   * simultaneous crew change, not of the arithmetic. */
+  function planHold(nBlocks, nOps, nRigs) {
+    var rows = [], held = [], i, b;
+    for (i = 0; i < nOps; i++) { rows.push(new Array(nBlocks).fill(OFF)); held.push(OFF); }
+
+    for (b = 0; b < nBlocks; b++) {
+      var offOp = b % nOps;
+      var free = [];
+
+      if (held[offOp] !== OFF) { free.push(held[offOp]); held[offOp] = OFF; }
+
+      var taken = {};
+      for (i = 0; i < nOps; i++) if (held[i] !== OFF) taken[held[i]] = true;
+      for (var r = 0; r < nRigs; r++) if (!taken[r] && free.indexOf(r) === -1) free.push(r);
+
+      for (i = 0; i < nOps; i++) {
+        if (i === offOp) continue;
+        if (held[i] === OFF) held[i] = free.length ? free.shift() : OFF;
+      }
+      for (i = 0; i < nOps; i++) rows[i][b] = (i === offOp) ? OFF : held[i];
+    }
+
+    /* The reference sheet counts the other way round: at block 0 it is the
+     * LAST operator who is off, and rigs fill from the far end. Mirroring
+     * both indexes reproduces that sheet cell for cell instead of merely
+     * isomorphically, so a generated grid can be diffed against it. */
+    var mirrored = [];
+    for (i = 0; i < nOps; i++) mirrored.push(new Array(nBlocks).fill(OFF));
+    for (i = 0; i < nOps; i++) {
+      for (b = 0; b < nBlocks; b++) {
+        var v = rows[i][b];
+        mirrored[nOps - 1 - i][b] = (v === OFF) ? OFF : (nRigs - 1 - v);
+      }
+    }
+    return mirrored;
+  }
+
+  /* Turn lengths ignoring the first and last turn on each rig - the two
+   * that a simultaneous crew change necessarily makes short. */
+  function interiorStintLengths(plan) {
+    var lens = {};
+    plan.groups.forEach(function (g) {
+      for (var ri = 0; ri < g.rigs.length; ri++) {
+        var runs = [], prev = null, run = 0;
+        for (var b = 0; b < plan.nBlocks; b++) {
+          var who = holderAt(g, ri, b);
+          if (who === prev) { run++; }
+          else { if (prev !== null) runs.push(run); prev = who; run = 1; }
+        }
+        runs.push(run);
+        var inner = runs.length > 2 ? runs.slice(1, -1) : runs;
+        inner.forEach(function (r) { lens[r * plan.blockMin] = true; });
+      }
+    });
+    return Object.keys(lens).map(Number).sort(function (a, b) { return a - b; });
+  }
+
+  /* Block lengths that give an operator an even number of off-turns, which
+   * is what "hold" needs for break and think to come out equal. */
+  function cleanBlocks(options) {
+    return (options || [5, 10, 12, 15, 20, 30, 40]).filter(function (bm) {
+      var n = SHIFT_MINUTES / bm;
+      return n === Math.round(n) && n % 8 === 0;
+    });
+  }
+
+  /* "rotate" - the shift is cut into equal stints first, and an operator
+   * moves to the next rig each stint, taking a whole stint off. Every rig
+   * hands over on the stint boundary, so nothing dangles at shift end
+   * provided the stint divides the hour. */
+  function planRotate(nBlocks, nOps, nRigs, stintBlocks) {
+    var rows = [], i, b;
+    for (i = 0; i < nOps; i++) rows.push(new Array(nBlocks).fill(OFF));
+
+    for (b = 0; b < nBlocks; b++) {
+      var stint = Math.floor(b / stintBlocks);
+      var offOp = stint % nOps;
+      for (i = 0; i < nOps; i++) {
+        rows[i][b] = (i === offOp) ? OFF : ((i - offOp - 1 + nOps) % nOps) % nRigs;
+      }
+    }
+    return rows;
+  }
+
+  /* Off-runs alternate: rest, think, rest, think. Alternating is what
+   * keeps the two budgets equal without needing a second rule. */
+  function labelOffRuns(row) {
+    var out = row.slice(), runIndex = 0, b = 0;
+    while (b < out.length) {
+      if (out[b] !== OFF) { b++; continue; }
+      var label = runIndex % 2 === 0 ? BREAK : THINK;
+      while (b < out.length && out[b] === OFF) { out[b] = label; b++; }
+      runIndex++;
+    }
+    return out;
+  }
+
+  /* groups: [{ key, task, rigs:[id], ops:[name] }] */
+  function buildPlan(cfg, groups) {
+    var blockMin    = cfg.blockMin;
+    var nBlocks     = Math.round(SHIFT_MINUTES / blockMin);
+    var stintBlocks = stintBlocksFor(cfg);
+
+    var planned = groups.map(function (g) {
+      var raw = cfg.mode === "rotate"
+        ? planRotate(nBlocks, g.ops.length, g.rigs.length, stintBlocks)
+        : planHold(nBlocks, g.ops.length, g.rigs.length);
+
+      var rows = raw.map(labelOffRuns);
+
+      var totals = rows.map(function (r) {
+        var t = { work: 0, brk: 0, think: 0 };
+        r.forEach(function (c) {
+          if (c === BREAK) t.brk += blockMin;
+          else if (c === THINK) t.think += blockMin;
+          else t.work += blockMin;
+        });
+        return t;
+      });
+
+      return { key: g.key, task: g.task, rigs: g.rigs.slice(), ops: g.ops.slice(),
+               rows: rows, totals: totals };
+    });
+
+    return {
+      blockMin: blockMin,
+      stintBlocks: stintBlocks,
+      stintMin: stintBlocks * blockMin,
+      mode: cfg.mode,
+      shift: shiftById(cfg.shift),
+      date: cfg.date,
+      nBlocks: nBlocks,
+      groups: planned,
+    };
+  }
+
+  // --------------------------------------------------------------- time
+
+  function hhmm(mins) {
+    var h = Math.floor(mins / 60) % 24, m = mins % 60;
+    return (h < 10 ? "0" : "") + h + ":" + (m < 10 ? "0" : "") + m;
+  }
+  function blockStart(plan, b)  { return (plan.shift.start + b * plan.blockMin) % 1440; }
+  function blockEnd(plan, b)    { return (plan.shift.start + (b + 1) * plan.blockMin) % 1440; }
+  function isHourMark(plan, b)  { return blockStart(plan, b) % 60 === 0; }
+  function shiftEnd(plan)       { return (plan.shift.start + SHIFT_MINUTES) % 1440; }
+
+  // ---------------------------------------------------------- fit check
+
+  /* Measure the turns the plan actually produces. Divisibility is not a
+   * proxy for this - a plan can divide cleanly and still open and close
+   * the shift on a stub. */
+  function rigStintLengths(plan) {
+    var lens = {};
+    plan.groups.forEach(function (g) {
+      for (var ri = 0; ri < g.rigs.length; ri++) {
+        var prev = null, run = 0;
+        for (var b = 0; b < plan.nBlocks; b++) {
+          var who = holderAt(g, ri, b);
+          if (who === prev) { run++; }
+          else { if (prev !== null) lens[run * plan.blockMin] = true; prev = who; run = 1; }
+        }
+        lens[run * plan.blockMin] = true;
+      }
+    });
+    return Object.keys(lens).map(Number).sort(function (a, b) { return a - b; });
+  }
+
+  function holderAt(group, rigIndex, block) {
+    for (var i = 0; i < group.rows.length; i++) if (group.rows[i][block] === rigIndex) return i;
+    return -1;
+  }
+
+  function auditPlan(plan) {
+    var sMin        = plan.stintMin;
+    var dividesHour = 60 % sMin === 0;
+    var stintLens   = rigStintLengths(plan);
+    var stintFits   = stintLens.length === 1;
+
+    var every = [];
+    plan.groups.forEach(function (g) { every = every.concat(g.totals); });
+    var uniq = function (key) {
+      var seen = {}, out = [];
+      every.forEach(function (t) { if (!seen[t[key]]) { seen[t[key]] = true; out.push(t[key]); } });
+      return out.sort(function (a, b) { return a - b; });
+    };
+    var work = uniq("work"), brk = uniq("brk"), think = uniq("think");
+
+    var budgetOk = work.length === 1 && work[0] === 360
+                && brk.length === 1 && brk[0] === 60
+                && think.length === 1 && think[0] === 60;
+
+    var budgetCheck = { ok: budgetOk, soft: false,
+      label: "Every operator gets 6h work, 1h break, 1h think",
+      note: work.join("/") + " / " + brk.join("/") + " / " + think.join("/") };
+
+    var checks, inner = [], ends = [];
+
+    if (plan.mode === "hold") {
+      /* Holding one rig is not governed by the hour at all. Its structure
+       * comes from the operator cycle: three blocks on, one off. Break and
+       * think alternate across those off-blocks, so an operator needs an
+       * even number of them - eight per shift - which is nBlocks % 8 === 0.
+       * The short turns at each end are inherent to a simultaneous crew
+       * change and are not a defect, so they are reported, not failed. */
+      var cycleFits = plan.nBlocks % 8 === 0;
+      inner = interiorStintLengths(plan);
+      ends  = stintLens.filter(function (l) { return inner.indexOf(l) === -1; });
+
+      checks = [
+        { ok: cycleFits, soft: false,
+          label: "Operator cycle fits the shift",
+          note: plan.nBlocks + " blocks / 8 = "
+              + (cycleFits ? (plan.nBlocks / 8) : (plan.nBlocks / 8).toFixed(2)) },
+        { ok: inner.length === 1, soft: true,
+          label: "Turns are equal through the shift",
+          note: inner.join(" / ") + " min"
+              + (ends.length ? ", " + ends.join(" and ") + " at the ends" : "") },
+        budgetCheck,
+      ];
+    } else {
+      checks = [
+        { ok: dividesHour, soft: false,
+          label: "Time on rig divides the hour",
+          note: sMin + " min into 60 = " + (dividesHour ? (60 / sMin) : (60 / sMin).toFixed(2)) },
+        { ok: stintFits, soft: true,
+          label: "Every turn on a rig is the same length",
+          note: stintLens.join(" / ") + " min" },
+        budgetCheck,
+      ];
+    }
+
+    if (plan.mode === "rotate") {
+      var offCounts = plan.groups[0].rows.map(function (r) {
+        var runs = 0;
+        for (var b = 0; b < r.length; b++) {
+          var isOff   = r[b] === BREAK || r[b] === THINK;
+          var prevOff = b > 0 && (r[b - 1] === BREAK || r[b - 1] === THINK);
+          if (isOff && !prevOff) runs++;
+        }
+        return runs;
+      });
+      var balanced = offCounts.every(function (c) { return c === offCounts[0]; });
+      checks.push({ ok: balanced, soft: false,
+        label: "Time off splits evenly between the four",
+        note: offCounts.join(" / ") + " per operator" });
+    }
+
+    var failed = checks.filter(function (c) { return !c.ok; });
+    var hard   = failed.filter(function (c) { return !c.soft; });
+
+    var level, text, note;
+    if (failed.length === 0) {
+      level = "ok";
+      text  = "Clean fit";
+      note  = plan.mode === "hold"
+        ? "Every operator works 6 hours, breaks for 60 minutes and thinks for 60. Rigs change hands "
+          + "every " + inner[0] + " minutes"
+          + (ends.length ? ", with a " + ends.join(" and ") + " minute turn at each end of the shift "
+                         + "- unavoidable when the whole crew changes at once." : ".")
+        : "Every operator works 6 hours, breaks for 60 minutes and thinks for 60. Every rig hands "
+          + "over on a " + stintLens[0] + "-minute turn, and the last handover lands exactly on the "
+          + "shift boundary.";
+    } else if (hard.length === 0) {
+      level = "warn";
+      text  = "Fits, with uneven turns";
+      note  = "The operator budget is exact, but turns come out at " + stintLens.join(", ")
+            + " minutes and the middle of the shift is not uniform either. Worth a look before "
+            + "you push this to the floor.";
+    } else {
+      level = "crit";
+      text  = "Does not fit";
+      note  = "This breaks the shift budget - " + hard[0].label.toLowerCase() + " fails. "
+            + (plan.mode === "hold"
+                ? "Holding one rig needs an even number of off-turns per operator. Pick one of the grid sizes below."
+                : "A time on rig only works if it divides an hour. Pick one of the options below.");
+    }
+
+    return { level: level, text: text, note: note, checks: checks,
+             work: work, brk: brk, think: think, stintLens: stintLens };
+  }
+
+  // ------------------------------------------------- what a rig receives
+
+  /* The rig does not need the grid. It needs to know who holds it, from
+   * when, who arrives next, and where the outgoing operator goes - which
+   * is exactly the top rail on the rig screen, and why the login and the
+   * task picker can be deleted. */
+  function rigPayload(plan, rigId) {
+    var gi = -1, ri = -1;
+    plan.groups.forEach(function (g, i) {
+      var j = g.rigs.indexOf(rigId);
+      if (j !== -1) { gi = i; ri = j; }
+    });
+    if (gi === -1) return null;
+
+    var g = plan.groups[gi], b, e;
+
+    var holders = [];
+    for (b = 0; b < plan.nBlocks; b++) holders.push(holderAt(g, ri, b));
+
+    var turns = [];
+    b = 0;
+    while (b < plan.nBlocks) {
+      var who = holders[b];
+      e = b;
+      while (e + 1 < plan.nBlocks && holders[e + 1] === who) e++;
+
+      var after = e + 1 < plan.nBlocks ? g.rows[who][e + 1] : null;
+      var goesTo = "End of shift";
+      if (after === BREAK) goesTo = "Break";
+      else if (after === THINK) goesTo = "Think";
+      else if (typeof after === "number") goesTo = g.rigs[after];
+
+      turns.push({
+        from: hhmm(blockStart(plan, b)),
+        to: hhmm(blockEnd(plan, e)),
+        minutes: (e - b + 1) * plan.blockMin,
+        operator: { id: "op-" + g.key.toLowerCase() + (who + 1), name: g.ops[who] || null },
+        relievedBy: e + 1 < plan.nBlocks ? (g.ops[holders[e + 1]] || null) : null,
+        theyGoTo: goesTo,
+      });
+      b = e + 1;
+    }
+
+    return {
+      rigId: rigId,
+      group: g.key,
+      task: g.task,
+      shift: {
+        label: plan.shift.label,
+        date: plan.date,
+        start: hhmm(plan.shift.start),
+        end: hhmm(shiftEnd(plan)),
+      },
+      blockMinutes: plan.blockMin,
+      rotation: plan.mode,
+      autoSignIn: true,
+      turns: turns,
+    };
+  }
+
+  /* Who is on this rig at a given wall-clock minute. This is the call the
+   * rig platform makes on a timer - it is why the rig never needs a login. */
+  function whoIsOn(payload, minutesSinceMidnight) {
+    var t = ((minutesSinceMidnight % 1440) + 1440) % 1440;
+    var toMin = function (s) { return Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5)); };
+    for (var i = 0; i < payload.turns.length; i++) {
+      var turn = payload.turns[i];
+      var from = toMin(turn.from), to = toMin(turn.to);
+      var inside = from < to ? (t >= from && t < to) : (t >= from || t < to);  // wraps midnight
+      if (inside) {
+        var endsIn = (to - t + 1440) % 1440;
+        return { turn: turn, minutesLeft: endsIn === 0 ? payload.blockMinutes : endsIn };
+      }
+    }
+    return null;
+  }
+
+  // ------------------------------------------------------------- export
+
+  root.RotationEngine = {
+    SHIFTS: SHIFTS,
+    SHIFT_MINUTES: SHIFT_MINUTES,
+    HOLD_STINT: HOLD_STINT,
+    HOUR_DIVISORS: HOUR_DIVISORS,
+    OFF: OFF, BREAK: BREAK, THINK: THINK,
+
+    shiftById: shiftById,
+    stintBlocksFor: stintBlocksFor,
+    stintMinutes: stintMinutes,
+    cleanStints: cleanStints,
+
+    buildPlan: buildPlan,
+    auditPlan: auditPlan,
+    rigStintLengths: rigStintLengths,
+    interiorStintLengths: interiorStintLengths,
+    cleanBlocks: cleanBlocks,
+    holderAt: holderAt,
+
+    rigPayload: rigPayload,
+    whoIsOn: whoIsOn,
+
+    hhmm: hhmm,
+    blockStart: blockStart,
+    blockEnd: blockEnd,
+    isHourMark: isHourMark,
+    shiftEnd: shiftEnd,
+  };
+
+  if (typeof module === "object" && module.exports) module.exports = root.RotationEngine;
+
+})(typeof window !== "undefined" ? window : globalThis);
+</script>
+<script>
+/* =====================================================================
+ * demo-roster.js
+ *
+ * The floor both apps open with, and the settings that reproduce the
+ * reference sheet exactly: 15-minute blocks, three-block turns, each
+ * operator holding one rig until their break.
+ *
+ * This is demo data. In a deployment the desk gets the roster from
+ * whatever holds staff records, and the rig gets nothing but the payload
+ * the desk pushes it - it never needs this file. It lives in shared/ so
+ * the two apps cannot drift into disagreeing about the example floor.
+ * ===================================================================== */
+
+(function (root) {
+  "use strict";
+
+  root.DEMO_ROSTER = {
+    /* Settings that regenerate the reference sheet cell for cell. */
+    defaults: {
+      shift: "morning",
+      blockMin: 15,
+      stintBlocks: 3,
+      mode: "hold",
+    },
+
+    /* Four groups: three rigs and four operators each, one task per group
+     * for the whole shift so an operator works one skill all day. */
+    groups: [
+      { key: "A", task: "Box transfer - bin to conveyor",
+        rigs: ["RIG-01", "RIG-02", "RIG-03"],
+        ops:  ["Aleksandr Petrov", "Mei Chen", "Tomas Rivera", "Nadia Haddad"] },
+      { key: "B", task: "Cable routing - harness to clip",
+        rigs: ["RIG-04", "RIG-05", "RIG-06"],
+        ops:  ["Grace Okonkwo", "Ivan Novak", "Priya Raman", "Ben Carter"] },
+      { key: "C", task: "Cloth fold - flat to quarters",
+        rigs: ["RIG-07", "RIG-08", "RIG-09"],
+        ops:  ["Sofia Lindqvist", "Hassan Dawood", "Yuki Tanaka", "Marcus Bell"] },
+      { key: "D", task: "Cup stacking - tray to rack",
+        rigs: ["RIG-10", "RIG-11", "RIG-12"],
+        ops:  ["Lena Vogel", "Diego Salas", "Amara Nwosu", "Kai Nakamura"] },
+    ],
+  };
+
+  root.DEMO_ROSTER.allRigs = root.DEMO_ROSTER.groups
+    .reduce(function (all, g) { return all.concat(g.rigs); }, []);
+
+  if (typeof module === "object" && module.exports) module.exports = root.DEMO_ROSTER;
+
+})(typeof window !== "undefined" ? window : globalThis);
+</script>
+<script>
+/* The schedule the desk pushed to this rig, baked in at build time. */
+window.PUSHED_SCHEDULE = {
+  "rigId": "RIG-03",
+  "group": "A",
+  "task": "Box transfer - bin to conveyor",
+  "shift": {
+    "label": "Morning",
+    "date": "2026-08-22",
+    "start": "08:00",
+    "end": "16:00"
+  },
+  "blockMinutes": 15,
+  "rotation": "hold",
+  "autoSignIn": true,
+  "turns": [
+    {
+      "from": "08:00",
+      "to": "08:15",
+      "minutes": 15,
+      "operator": {
+        "id": "op-a3",
+        "name": "Tomas Rivera"
+      },
+      "relievedBy": "Nadia Haddad",
+      "theyGoTo": "Break"
+    },
+    {
+      "from": "08:15",
+      "to": "09:00",
+      "minutes": 45,
+      "operator": {
+        "id": "op-a4",
+        "name": "Nadia Haddad"
+      },
+      "relievedBy": "Aleksandr Petrov",
+      "theyGoTo": "Think"
+    },
+    {
+      "from": "09:00",
+      "to": "09:45",
+      "minutes": 45,
+      "operator": {
+        "id": "op-a1",
+        "name": "Aleksandr Petrov"
+      },
+      "relievedBy": "Mei Chen",
+      "theyGoTo": "Think"
+    },
+    {
+      "from": "09:45",
+      "to": "10:30",
+      "minutes": 45,
+      "operator": {
+        "id": "op-a2",
+        "name": "Mei Chen"
+      },
+      "relievedBy": "Tomas Rivera",
+      "theyGoTo": "Break"
+    },
+    {
+      "from": "10:30",
+      "to": "11:15",
+      "minutes": 45,
+      "operator": {
+        "id": "op-a3",
+        "name": "Tomas Rivera"
+      },
+      "relievedBy": "Nadia Haddad",
+      "theyGoTo": "Think"
+    },
+    {
+      "from": "11:15",
+      "to": "12:00",
+      "minutes": 45,
+      "operator": {
+        "id": "op-a4",
+        "name": "Nadia Haddad"
+      },
+      "relievedBy": "Aleksandr Petrov",
+      "theyGoTo": "Break"
+    },
+    {
+      "from": "12:00",
+      "to": "12:45",
+      "minutes": 45,
+      "operator": {
+        "id": "op-a1",
+        "name": "Aleksandr Petrov"
+      },
+      "relievedBy": "Mei Chen",
+      "theyGoTo": "Break"
+    },
+    {
+      "from": "12:45",
+      "to": "13:30",
+      "minutes": 45,
+      "operator": {
+        "id": "op-a2",
+        "name": "Mei Chen"
+      },
+      "relievedBy": "Tomas Rivera",
+      "theyGoTo": "Think"
+    },
+    {
+      "from": "13:30",
+      "to": "14:15",
+      "minutes": 45,
+      "operator": {
+        "id": "op-a3",
+        "name": "Tomas Rivera"
+      },
+      "relievedBy": "Nadia Haddad",
+      "theyGoTo": "Break"
+    },
+    {
+      "from": "14:15",
+      "to": "15:00",
+      "minutes": 45,
+      "operator": {
+        "id": "op-a4",
+        "name": "Nadia Haddad"
+      },
+      "relievedBy": "Aleksandr Petrov",
+      "theyGoTo": "Think"
+    },
+    {
+      "from": "15:00",
+      "to": "15:45",
+      "minutes": 45,
+      "operator": {
+        "id": "op-a1",
+        "name": "Aleksandr Petrov"
+      },
+      "relievedBy": "Mei Chen",
+      "theyGoTo": "Think"
+    },
+    {
+      "from": "15:45",
+      "to": "16:00",
+      "minutes": 15,
+      "operator": {
+        "id": "op-a2",
+        "name": "Mei Chen"
+      },
+      "relievedBy": null,
+      "theyGoTo": "End of shift"
+    }
+  ]
+};
+</script>
+<script>
+"use strict";
+
+/* =====================================================================
+ * The whole platform app is this file: one screen, three pedals, no
+ * login and no task picker. The schedule decides who is at the rig, so
+ * there is nothing left for the operator to choose — only to do.
+ *
+ * Every duration below is in *shift seconds*. The demo runs that clock
+ * faster than wall time so a 45-minute stint is watchable; on a rig
+ * SPEED is 1.
+ * ===================================================================== */
+
+// ------------------------------------------------------------ schedule
+
+/* The rig decides nothing about the schedule any more. The desk pushes it
+   one - rig id, task, and every turn in the shift - and the rig reads it.
+   That is what removed the login screen and the task picker: given the
+   payload and the clock there is nothing left to ask the operator.
+
+   RotationEngine is the same file the desk runs, so the rig cannot
+   compute a different answer from the desk that scheduled it. */
+
+const RE = window.RotationEngine;
+
+let PAYLOAD = null;            // what was pushed to this rig
+let RIG_ID  = "RIG-03";        // until the payload says otherwise
+let live    = false;           // true = follow the wall clock, not the demo clock
+let turnKey = null;            // "HH:MM" of the turn currently in progress
+
+const CAMERAS = ["Front", "Wrist L", "Overhead"];
+
+// ------------------------------------------------------------ constants
+
+const CHECKLIST_SECS = 60;
+const CHECKLIST_ITEMS = [
+  "Grippers tight on both arms",
+  "Camera mounts firm, nothing loose",
+  "Camera assignment and orientation correct",
+  "Arm CAN cables secure to the table",
+];
+const HOLD_MS = 900;            // press-and-hold to abandon a fault report
+const RESET_URGENT_SECS = 45;   // past this the reset timer turns red
+const EFFICIENCY_FLOOR = 0.60;
+const EFFICIENCY_WARMUP = 300;  // don't shout before the sample means anything
+
+const FAULTS = { left: "Gripper", middle: "Camera", right: "CAN bus" };
+
+/* Exactly three options per level, so a level always maps onto the three
+   pedals — and "other" is always the right pedal, so the operator learns
+   one rule instead of three menus. */
+const ISSUE_TREE = {
+  id: "root", label: "Hardware issue",
+  children: [
+    { id: "gripper_broken",      label: "Gripper broken" },
+    { id: "camera_mount_broken", label: "Camera mount" },
+    { id: "other", label: "Other", children: [
+      { id: "software_problem", label: "Software" },
+      { id: "robot_problem",    label: "Robot" },
+      { id: "other_hardware", label: "Other hardware", children: [
+        { id: "gello_problem", label: "Gello" },
+        { id: "cable_problem", label: "Cable" },
+        { id: "unknown",       label: "Other", needsManager: true },
+      ]},
+    ]},
+  ],
+};
+
+// ----------------------------------------------------------------- state
+
+let S;
+function boot(screen) {
+  S = {
+    phase: "checklist",
+    t: 0,               // shift seconds since the rig came up
+    phaseAt: 0,         // shift seconds when the current phase began
+    stint: 0,           // which 45-minute stint we are in
+    stintAt: 0,         // shift seconds when this operator took the rig
+    episode: 0,
+    recordedSecs: 0,
+    faultSecs: 0,
+    downSecs: 0,
+    fault: null,
+    issueNode: null,
+    reportedIssue: null,
+    reportedAtHandover: false,
+    handoverDue: false, // block ended mid-episode; hand over when it lands
+    pendingSecs: 0,
+    demoWarm: false,    // demo only — skips the efficiency warm-up period
+  };
+  logLines.length = 0;
+  lastViewKey = null;
+  lastPedalKey = null;
+  holding = null;
+  emit("shift_check", "rig_shift_checks", "shift started, checklist raised");
+  if (screen && screen !== "checklist") seed(screen);
+  render();
+}
+
+/* Every screen is addressable — `#recording`, `#rig-down` and so on, or
+   the buttons in the demo drawer. Reviewing the app with someone means
+   jumping straight to the screen you want to argue about, not waiting
+   forty-five minutes for a handover to come round. */
+const SCREENS = [
+  ["checklist",  "Shift check"],
+  ["fault-class","Report a fault"],
+  ["fault-fixing","Fixing a fault"],
+  ["handover",   "Handover"],
+  ["recording",  "Recording"],
+  ["review",     "Self review"],
+  ["resetting",  "Resetting"],
+  ["issue-menu", "Hardware issue"],
+  ["rig-down",   "Rig down"],
+];
+
+function seed(screen) {
+  // Enough plausible history that each screen shows real numbers.
+  S.t = 22 * 60;
+  S.stintAt = 0;
+  S.episode = 14;
+  S.recordedSecs = 15 * 60;
+  const phase = screen.replace(/-/g, "_");
+  switch (phase) {
+    case "fault_class":  break;
+    case "fault_fixing": S.fault = "Camera"; break;
+    case "recording":    break;
+    case "review":       S.pendingSecs = 47; break;
+    case "issue_menu":   S.issueNode = ISSUE_TREE; break;
+    case "rig_down":
+      S.reportedIssue = ISSUE_TREE.children[0];
+      S.reportedAtHandover = false;
+      break;
+  }
+  S.phase = phase;
+  S.phaseAt = S.t - (phase === "resetting" ? 38 : phase === "recording" ? 26 : 0);
+}
+
+/* Minutes since midnight as this rig sees the clock. Live mode follows
+   the wall clock, which is what a real rig does; demo mode runs the
+   accelerated shift clock so a 45-minute turn is watchable. */
+function shiftStartMin() {
+  if (!PAYLOAD) return 0;
+  const p = PAYLOAD.shift.start.split(":");
+  return Number(p[0]) * 60 + Number(p[1]);
+}
+function nowMin() {
+  if (live) {
+    const d = new Date();
+    return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
+  }
+  return shiftStartMin() + S.t / 60;
+}
+
+/* The whole of "who is at this rig right now" is this one call. */
+const current = () => (PAYLOAD ? RE.whoIsOn(PAYLOAD, nowMin()) : null);
+
+const operator     = () => { const c = current(); return c ? c.turn.operator.name : "—"; };
+const nextOperator = () => { const c = current(); return c && c.turn.relievedBy ? c.turn.relievedBy : "End of shift"; };
+/* Where the outgoing operator goes is a fact about their day, not about
+   this rig - which is exactly why the rig cannot work it out alone and
+   the payload has to carry it. */
+const nextPeriod   = () => { const c = current(); return c ? c.turn.theyGoTo : "End of shift"; };
+
+const phaseSecs  = () => S.t - S.phaseAt;
+const stintLeft  = () => { const c = current(); return c ? Math.max(0, c.minutesLeft * 60) : 0; };
+const assignedSecs = () => S.t - S.stintAt;
+
+/* Data time over the time the operator has held the rig. Reset, review
+   and idle all land in the denominator — that is the point of the
+   number. Fault and downtime do not: a loose mount is not the
+   operator's productivity problem. */
+function efficiency() {
+  const chargeable = assignedSecs() - S.faultSecs - S.downSecs;
+  if (chargeable <= 0) return 0;
+  return Math.max(0, Math.min(1, S.recordedSecs / chargeable));
+}
+function isBehind() {
+  // Don't shout before the sample means anything — the first episode of
+  // a stint always looks terrible.
+  if (!S.demoWarm && assignedSecs() < EFFICIENCY_WARMUP) return false;
+  return efficiency() < EFFICIENCY_FLOOR;
+}
+/* Never while recording. Red means "you are burning time"; during an
+   episode the operator is doing exactly what we want, and turning the
+   clock red mid-take pressures the demonstration itself. */
+const urgencyApplies = (p) => p === "resetting" || p === "handover";
+
+// ------------------------------------------------------------ pedal map
+
+function pedals() {
+  switch (S.phase) {
+    case "checklist":
+      return [act("Problem", "report_fault"), act("All good", "checklist_pass"), null];
+    case "fault_class":
+      return [act("Gripper", "fault_left"), act("Camera", "fault_middle"), act("CAN", "fault_right")];
+    case "fault_fixing":
+      return [act("Back", "fault_back"), act("Fixed", "fault_fixed"),
+              { ...act("Hold to cancel", "fault_cancel"), hold: true }];
+    case "handover":
+      return [null, act("Start", "start_episode"), act("Hardware issue", "open_issue")];
+    case "recording":
+      // Middle is "go" everywhere else. Leaving it inert here is how an
+      // operator stops ending good takes by muscle memory.
+      return [act("Discard", "discard"), null, act("Save", "save")];
+    case "review":
+      return [act("Usable", "score_3"), act("Good", "score_4"), act("Exemplary", "score_5")];
+    case "resetting":
+      return [null, act("Next episode", "start_episode"), act("Hardware issue", "open_issue")];
+    case "issue_menu": {
+      const c = S.issueNode.children;
+      return [act(c[0].label, "issue_0"), act(c[1].label, "issue_1"), act(c[2].label, "issue_2")];
+    }
+    case "rig_down":
+      return [act("End session", "end_session"), act("Problem solved", "problem_solved"),
+              act("Bug testing", "bug_testing")];
+    case "session_ended":
+      return [null, act("Restart demo", "restart"), null];
+  }
+  return [null, null, null];
+}
+const act = (label, intent) => ({ label, intent });
+
+// --------------------------------------------------------------- intents
+
+function dispatch(intent) {
+  switch (intent) {
+    case "report_fault":  go("fault_class"); break;
+
+    case "fault_left":
+    case "fault_middle":
+    case "fault_right": {
+      S.fault = FAULTS[intent.split("_")[1]];
+      go("fault_fixing");
+      emit("fault_opened", "rig_shift_checks", S.fault + " reported at shift check");
+      break;
+    }
+    case "fault_back":
+      emit("fault_reclassified", "rig_shift_checks", S.fault + " was the wrong subsystem");
+      S.fault = null; go("fault_class");
+      break;
+    case "fault_fixed":
+      emit("fault_closed", "rig_shift_checks",
+           S.fault + " fixed in " + clock(phaseSecs()) + " — not charged");
+      S.fault = null; go("checklist");
+      break;
+    case "fault_cancel":
+      // Abandoning the report deletes the fault record but keeps the
+      // clock — the excluded time is charged back to the operator.
+      S.faultSecs = Math.max(0, S.faultSecs - phaseSecs());
+      emit("fault_cancelled", "rig_shift_checks",
+           "report withdrawn — " + clock(phaseSecs()) + " charged to operator");
+      S.fault = null; go("checklist");
+      break;
+
+    case "checklist_pass":
+      // Measured from the start of the shift, less any fault time — the
+      // phase clock restarts each time the operator returns from a fault.
+      emit("shift_check", "rig_shift_checks", "checklist passed in " + clock(S.t - S.faultSecs));
+      go("handover");
+      break;
+
+    case "start_episode":
+      S.episode += 1;
+      go("recording");
+      break;
+
+    case "discard":
+      emit("episode_discarded", "episodes", "episode " + S.episode + " discarded after " + clock(phaseSecs()));
+      S.episode -= 1;
+      afterEpisode();
+      break;
+
+    case "save":
+      S.pendingSecs = phaseSecs();
+      go("review");
+      break;
+
+    case "score_3": case "score_4": case "score_5": {
+      const score = Number(intent.slice(-1));
+      S.recordedSecs += S.pendingSecs || 0;
+      emit("episode_saved", "episodes",
+           "episode " + S.episode + " · " + clock(S.pendingSecs || 0) + " · scored " + score + "/5");
+      S.pendingSecs = 0;
+      afterEpisode();
+      break;
+    }
+
+    case "open_issue":
+      S.reportedAtHandover = S.phase === "handover";
+      S.issueNode = ISSUE_TREE;
+      go("issue_menu");
+      break;
+
+    case "issue_0": case "issue_1": case "issue_2": {
+      const child = S.issueNode.children[Number(intent.slice(-1))];
+      if (child.children) { S.issueNode = child; render(); break; }
+      S.reportedIssue = child;
+      go("rig_down");
+      emit("rig_down", "rig_downtime_events",
+           child.label + (child.needsManager ? " — manager needed" : "") +
+           (S.reportedAtHandover ? " · found at handover, charged to previous operator" : ""));
+      break;
+    }
+
+    case "problem_solved":
+      // downSecs already accrued frame by frame while the rig was down.
+      emit("rig_up", "rig_downtime_events", "resolved after " + clock(phaseSecs()) + " down");
+      S.reportedIssue = null;
+      go("resetting");
+      break;
+
+    case "bug_testing":
+      toast("Bug testing — reserved for technicians, undefined for now");
+      break;
+
+    case "end_session":
+      emit("session_ended", "sessions", "operator ended session with the rig down");
+      go("session_ended");
+      break;
+
+    case "restart": boot(); break;
+  }
+  render();
+}
+
+function afterEpisode() {
+  // The workspace has to be reset by hand, so the next episode never
+  // starts on its own — but the clock starts the moment this one ends.
+  if (S.handoverDue) { rotate(); return; }
+  go("resetting");
+}
+
+function go(phase) { S.phase = phase; S.phaseAt = S.t; }
+
+function rotate() {
+  emit("stint_ended", "rig_productivity_blocks",
+       operator() + " · " + S.episode + " episodes · " + pct(efficiency()) + " efficiency");
+  S.stint += 1;
+  S.stintAt = S.t;
+  const c = current();
+  turnKey = c ? c.turn.from : null;
+  S.episode = 0;
+  S.recordedSecs = 0;
+  S.faultSecs = 0;
+  S.downSecs = 0;
+  S.demoWarm = false;
+  S.handoverDue = false;
+  go("handover");
+}
+
+// ----------------------------------------------------------------- clock
+
+const SPEEDS = [1, 12, 30, 60];
+let speed = 30;
+let last = null;
+
+function tick(now) {
+  if (last === null) last = now;
+  const dt = Math.min(0.25, (now - last) / 1000) * speed;
+  last = now;
+
+  if (S.phase !== "session_ended") {
+    S.t += dt;
+    if (S.phase === "fault_fixing") S.faultSecs += dt;
+    if (S.phase === "rig_down")     S.downSecs += dt;
+
+    // The turn boundary never interrupts a take. If the operator is
+    // mid-episode the handover waits until the episode lands.
+    const c = current();
+    if (c && c.turn.from !== turnKey && !S.handoverDue) {
+      const busy = S.phase === "recording" || S.phase === "review";
+      if (busy) S.handoverDue = true;
+      else if (S.phase !== "rig_down" && S.phase !== "issue_menu" &&
+               S.phase !== "fault_fixing" && S.phase !== "fault_class") rotate();
+    }
+  }
+  render();
+  paintHold();
+  requestAnimationFrame(tick);
+}
+
+// ---------------------------------------------------------------- render
+
+const $stage     = document.getElementById("stage");
+const $pedals    = document.getElementById("pedals");
+const $app       = document.getElementById("app");
+const $railBlock = document.getElementById("rail-block");
+const $cellBlock = document.getElementById("cell-block");
+const $railNext  = document.getElementById("rail-next");
+const $railThen  = document.getElementById("rail-then");
+
+let lastViewKey = null;
+let lastPedalKey = null;
+
+/* The stage is rebuilt only when what it *says* changes; the numbers on
+   it are patched in place every frame. Rebuilding at 60 Hz blanked the
+   camera canvases and wiped the hold-to-cancel fill mid-press. */
+function render() {
+  const behind = isBehind() && urgencyApplies(S.phase);
+
+  // State hooks only — nothing paints off these any more. Reinstating the
+  // wall colour is a matter of giving #app.hail / #app.alarm a background.
+  $app.className =
+    S.phase === "handover" ? "hail" :
+    (S.phase === "fault_fixing" || S.phase === "rig_down") ? "alarm" : "";
+
+  const due = S.handoverDue || (stintLeft() < 60 && stintLeft() > 0);
+  $railBlock.textContent = S.handoverDue ? "Handover due" : clock(stintLeft());
+  $cellBlock.classList.toggle("due", due);
+  $railNext.textContent = nextOperator();
+  $railThen.textContent = nextPeriod();
+
+  const key = [S.phase, S.issueNode && S.issueNode.id, S.episode, S.fault,
+               S.reportedIssue && S.reportedIssue.id, S.handoverDue, behind].join("|");
+  if (key !== lastViewKey) {
+    lastViewKey = key;
+    $stage.className = "stage" + (S.phase === "recording" ? " tight" : "");
+    $stage.innerHTML = view(behind);
+    fitAll();
+  }
+  refresh(behind);
+  if (S.phase === "recording") mountCameras();
+
+  const pedalKey = pedals().map((a) => (a ? a.label + (a.hold ? "!" : "") : "-")).join("|");
+  if (pedalKey !== lastPedalKey) { lastPedalKey = pedalKey; paintPedals(); }
+}
+
+const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+
+/* Scale every .fit element to the width of the stage, capped so a short
+   name does not grow taller than the room left for it. Measured once per
+   rebuild; tabular figures keep their width as the digits tick over. */
+function fitAll() {
+  const els = $stage.querySelectorAll(".fit");
+  if (!els.length) return;
+  const capPx = $stage.clientHeight * (els.length > 1 ? 0.4 : 0.6);
+  const range = document.createRange();
+  els.forEach((el) => {
+    el.style.fontSize = "100px";
+    const avail = el.clientWidth;
+    // scrollWidth reports clientWidth for an overflow:visible block, so it
+    // cannot measure text wider than its box. A Range can.
+    range.selectNodeContents(el);
+    const wide = range.getBoundingClientRect().width;
+    if (!wide || !avail) return;
+    el.style.fontSize = Math.min(capPx, (100 * avail) / wide * 0.99) + "px";
+  });
+}
+
+function refresh(behind) {
+  const timer = document.getElementById("v-timer");
+  switch (S.phase) {
+    case "checklist": {
+      const left = Math.max(0, CHECKLIST_SECS - phaseSecs());
+      if (timer) { timer.textContent = clock(left); timer.classList.toggle("alarm", left === 0); }
+      break;
+    }
+    case "fault_fixing":
+    case "rig_down":
+      if (timer) timer.textContent = clock(phaseSecs());
+      break;
+    case "resetting":
+      if (timer) {
+        timer.textContent = clock(phaseSecs());
+        timer.classList.toggle("alarm", phaseSecs() > RESET_URGENT_SECS || behind);
+      }
+      break;
+    case "recording": {
+      setText("v-take", clock(phaseSecs()));
+      setText("v-rec", clock(S.recordedSecs));
+      setText("v-eff", pct(efficiency()));
+      const m = document.getElementById("m-eff");
+      if (m) m.classList.toggle("behind", isBehind());
+      break;
+    }
+  }
+}
+
+function view(behind) {
+  switch (S.phase) {
+    case "checklist": {
+      const left = Math.max(0, CHECKLIST_SECS - phaseSecs());
+      return `
+        <div class="split">
+          <div>
+            <p class="kicker">${RIG_ID} — start of shift</p>
+            <h1 class="headline">Check the rig</h1>
+          </div>
+          <p class="figure" id="v-timer" style="font-size:clamp(3rem,11vw,8rem)">${clock(left)}</p>
+        </div>
+        <div class="checks">${CHECKLIST_ITEMS.map((i) => `<p class="check"><i></i>${i}</p>`).join("")}</div>`;
+    }
+
+    case "fault_class":
+      return `
+        <p class="kicker">${RIG_ID} — shift check</p>
+        <h1 class="headline">What is wrong?</h1>
+        <p class="sub">Pick the subsystem. The time you spend fixing it is not charged to you.</p>`;
+
+    case "fault_fixing":
+      return `
+        <p class="kicker">Fixing — not counted against you</p>
+        <h1 class="name" style="font-size:clamp(3rem,13vw,10rem)">${S.fault}</h1>
+        <p class="figure fit" id="v-timer">${clock(phaseSecs())}</p>
+        <p class="sub">Logged so a fault that keeps coming back gets fixed properly.</p>`;
+
+    case "handover":
+      return `
+        <p class="kicker">${RIG_ID} — your rig now</p>
+        <h1 class="name fit">${operator()}</h1>
+        <p class="lede">Press the middle pedal to start</p>`;
+
+    case "recording":
+      return `
+        <div class="cams">${CAMERAS.map((c, i) => `
+          <figure class="cam"><canvas data-cam="${i}" width="320" height="200"></canvas>
+            <figcaption><span>${c}</span><span class="rec">Rec</span></figcaption>
+          </figure>`).join("")}
+        </div>
+        <div class="metrics">
+          <span class="metric lead"><em class="kicker">Episode</em><b>${S.episode}</b></span>
+          <span class="metric"><em class="kicker">This take</em><b id="v-take">${clock(phaseSecs())}</b></span>
+          <span class="metric"><em class="kicker">Recorded</em><b id="v-rec">${clock(S.recordedSecs)}</b></span>
+          <span class="metric" id="m-eff"><em class="kicker">Efficiency</em><b id="v-eff">${pct(efficiency())}</b></span>
+        </div>`;
+
+    case "review":
+      // The three choices are already along the bottom of every screen.
+      // Repeating them as cards is the opposite of what this app is for —
+      // an operator does this hundreds of times a shift in under five
+      // seconds, and reads none of it after the first day.
+      return `
+        <p class="kicker">Episode ${S.episode} — score it</p>
+        <p class="figure fit">${clock(S.pendingSecs || 0)}</p>
+        <p class="sub">Exemplary is about one take in ten. Anything worse than usable
+           should have been discarded during the take.</p>`;
+
+    case "resetting": {
+      const urgent = phaseSecs() > RESET_URGENT_SECS || behind;
+      return `
+        <p class="kicker">Reset the workspace</p>
+        <p class="figure fit${urgent ? " alarm" : ""}" id="v-timer">${clock(phaseSecs())}</p>
+        ${S.handoverDue
+          ? `<p class="lede">${nextOperator()} is waiting — reset and step away</p>`
+          : `<p class="lede">Middle pedal the moment it is ready</p>`}`;
+    }
+
+    case "issue_menu":
+      return `
+        <p class="kicker">${S.issueNode === ISSUE_TREE ? "Hardware issue" : "Hardware issue — " + S.issueNode.label}</p>
+        <h1 class="headline">${S.issueNode === ISSUE_TREE ? "What broke?" : "Narrow it down"}</h1>
+        <p class="sub">Keep going right until it fits.</p>`;
+
+    case "rig_down":
+      return `
+        <p class="kicker">Rig down — your time has stopped</p>
+        <h1 class="name" style="font-size:clamp(2.6rem,10vw,7rem)">${S.reportedIssue.label}</h1>
+        <p class="figure fit" id="v-timer">${clock(phaseSecs())}</p>
+        <p class="sub">${S.reportedIssue.needsManager
+          ? "A manager has to look at this one."
+          : S.reportedAtHandover
+            ? "Found at handover — charged to the previous operator, not you."
+            : "Downtime is charged to the rig, not to you."}</p>`;
+
+    case "session_ended":
+      return `
+        <p class="kicker">${RIG_ID}</p>
+        <h1 class="headline">Session ended</h1>
+        <p class="sub">Downtime and episodes are queued for upload.</p>`;
+  }
+  return "";
+}
+
+// --------------------------------------------------------------- pedal UI
+
+let holding = null;    // { intent, startedAt }
+
+function paintPedals() {
+  const map = pedals();
+  const names = ["Left", "Middle", "Right"];
+  $pedals.innerHTML = map.map((a, i) => `
+    <button class="pedal${a ? "" : " inert"}" data-i="${i}" ${a ? "" : "disabled"}>
+      ${a && a.hold ? '<span class="hold"></span>' : ""}
+      <em>${names[i]}</em>
+      <strong>${a ? a.label : "—"}</strong>
+    </button>`).join("");
+}
+
+function paintHold() {
+  if (!holding) return;
+  const bar = $pedals.querySelector(".hold");
+  if (!bar) return;
+  const p = Math.min(1, (performance.now() - holding.startedAt) / HOLD_MS);
+  bar.style.width = (p * 100) + "%";
+  if (p >= 1) { const it = holding.intent; holding = null; dispatch(it); }
+}
+
+function press(i) {
+  const a = pedals()[i];
+  if (!a) return;
+  const btn = $pedals.querySelector(`[data-i="${i}"]`);
+  if (a.hold) { holding = { intent: a.intent, startedAt: performance.now() }; return; }
+  if (btn) { btn.classList.add("hit"); setTimeout(() => btn.classList.remove("hit"), 110); }
+  dispatch(a.intent);
+}
+function release(i) {
+  const a = pedals()[i];
+  if (a && a.hold && holding) {
+    holding = null;
+    const bar = $pedals.querySelector(".hold");
+    if (bar) bar.style.width = "0";
+  }
+}
+
+/* A tap fires on `click` and a hold is tracked with mousedown/up, rather
+   than everything hanging off pointer events — synthetic and assistive
+   clicks reliably produce `click`, and they do not always produce
+   `pointerdown`. On the rig the pedals arrive as key codes anyway. */
+function pedalAt(target) {
+  const b = target.closest && target.closest(".pedal");
+  if (!b || b.disabled) return null;
+  const i = Number(b.dataset.i);
+  const a = pedals()[i];
+  return a ? { i, a, btn: b } : null;
+}
+
+$pedals.addEventListener("click", (e) => {
+  const hit = pedalAt(e.target);
+  if (hit && !hit.a.hold) press(hit.i);
+});
+$pedals.addEventListener("mousedown", (e) => {
+  const hit = pedalAt(e.target);
+  if (hit && hit.a.hold) press(hit.i);
+});
+$pedals.addEventListener("mouseup", () => { if (holding) release(2); });
+$pedals.addEventListener("mouseleave", () => { if (holding) release(2); });
+$pedals.addEventListener("touchstart", (e) => {
+  const hit = pedalAt(e.target);
+  if (hit && hit.a.hold) { e.preventDefault(); press(hit.i); }
+}, { passive: false });
+$pedals.addEventListener("touchend", () => { if (holding) release(2); });
+
+const KEYS = { "1": 0, "2": 1, "3": 2 };
+addEventListener("keydown", (e) => {
+  if (e.repeat) return;
+  if (e.key in KEYS) { e.preventDefault(); press(KEYS[e.key]); return; }
+  const k = e.key.toLowerCase();
+  if (k === "h") {
+    const c = current();
+    if (c) S.t += c.minutesLeft * 60;
+    toast("Jumped to the handover");
+  }
+  if (k === "e") { S.demoWarm = true; toast("Efficiency warm-up skipped — the floor is live now"); }
+  if (k === "r") { boot(); toast("Shift restarted"); }
+  if (k === "d") toggleDrawer();
+  if (k === "?" || k === "/") toggleDrawer();
+});
+addEventListener("keyup", (e) => { if (e.key in KEYS) release(KEYS[e.key]); });
+
+// ----------------------------------------------------------------- cameras
+
+/* Not video — a cheap moving field so the panes read as live without
+   pretending to be a feed the demo does not have. */
+const camState = [0, 1, 2].map((i) => ({ seed: i * 37 }));
+function mountCameras() {
+  $stage.querySelectorAll("canvas[data-cam]").forEach((cv) => {
+    const ctx = cv.getContext("2d");
+    const i = Number(cv.dataset.cam);
+    const t = S.t * 0.6 + camState[i].seed;
+    const g = ctx.createLinearGradient(0, 0, cv.width, cv.height);
+    g.addColorStop(0, "#0e1013");
+    g.addColorStop(1, "#1b2027");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, cv.width, cv.height);
+    for (let n = 0; n < 3; n++) {
+      const x = cv.width  * (0.5 + 0.32 * Math.sin(t * 0.7 + n * 2.1));
+      const y = cv.height * (0.5 + 0.26 * Math.cos(t * 0.5 + n * 1.3));
+      const r = 26 + n * 16;
+      const rg = ctx.createRadialGradient(x, y, 0, x, y, r);
+      rg.addColorStop(0, `rgba(190,205,220,${0.30 - n * 0.07})`);
+      rg.addColorStop(1, "rgba(190,205,220,0)");
+      ctx.fillStyle = rg;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    }
+  });
+}
+
+// ------------------------------------------------------------------- log
+
+const logLines = [];
+function emit(event, bucket, detail) {
+  logLines.push({ at: clock(S ? S.t : 0), event, bucket, detail });
+  const el = document.getElementById("log");
+  el.innerHTML = logLines.slice(-40).map((l) =>
+    `<p><time>${l.at}</time><b>${l.event} <span class="bucket">→ ${l.bucket}</span><br>${l.detail}</b></p>`).join("");
+}
+
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("on"), 2400);
+}
+
+// ---------------------------------------------------------------- drawer
+
+const $drawer = document.getElementById("drawer");
+const $tab = document.getElementById("drawer-tab");
+function toggleDrawer(force) {
+  const open = force !== undefined ? force : !$drawer.classList.contains("open");
+  $drawer.classList.toggle("open", open);
+  $tab.setAttribute("aria-expanded", String(open));
+}
+$tab.addEventListener("click", () => toggleDrawer());
+document.getElementById("drawer-close").addEventListener("click", () => toggleDrawer(false));
+
+const $screens = document.getElementById("screens");
+$screens.innerHTML = SCREENS.map(([id, label]) =>
+  `<button data-screen="${id}">${label}</button>`).join("");
+$screens.addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  location.hash = b.dataset.screen;
+  boot(b.dataset.screen);
+});
+addEventListener("hashchange", () => boot(location.hash.slice(1)));
+
+const $speeds = document.getElementById("speeds");
+$speeds.innerHTML = SPEEDS.map((s) =>
+  `<button data-s="${s}" aria-pressed="${s === speed}">${s}×</button>`).join("");
+$speeds.addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  speed = Number(b.dataset.s);
+  [...$speeds.children].forEach((c) => c.setAttribute("aria-pressed", String(Number(c.dataset.s) === speed)));
+});
+
+const $rigs = document.getElementById("rigs");
+$rigs.innerHTML = window.DEMO_ROSTER.allRigs
+  .map((r) => `<button data-rig="${r}">${r}</button>`).join("");
+$rigs.addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  window.switchRig(b.dataset.rig);
+  [...$rigs.children].forEach((c) =>
+    c.setAttribute("aria-pressed", String(c.dataset.rig === b.dataset.rig)));
+});
+
+const $live = document.getElementById("live-toggle");
+$live.addEventListener("click", () => {
+  const on = $live.getAttribute("aria-pressed") !== "true";
+  $live.setAttribute("aria-pressed", String(on));
+  window.setLiveClock(on);
+});
+
+// -------------------------------------------------------------------- go
+
+/* ------------------------------------------------------------ the push
+
+   A deployed rig is handed schedule.json by the desk. If it is not there
+   - opened over file://, or before anything has been pushed - the rig
+   falls back to generating the same schedule locally from the shared
+   engine, so the demo still runs and still agrees with the desk. */
+
+async function loadPayload(rigId) {
+  // A single-file build has the push baked in - there is nothing to fetch.
+  if (window.PUSHED_SCHEDULE && (!rigId || window.PUSHED_SCHEDULE.rigId === rigId)) {
+    return window.PUSHED_SCHEDULE;
+  }
+  try {
+    const r = await fetch("schedule.json", { cache: "no-store" });
+    if (r.ok) {
+      const p = await r.json();
+      if (!rigId || p.rigId === rigId) return p;
+    }
+  } catch (e) { /* no server, or nothing pushed yet */ }
+  return generateLocally(rigId || RIG_ID);
+}
+
+function generateLocally(rigId) {
+  const R = window.DEMO_ROSTER;
+  const cfg = Object.assign({}, R.defaults, { date: new Date().toISOString().slice(0, 10) });
+  return RE.rigPayload(RE.buildPlan(cfg, R.groups), rigId);
+}
+
+function applyPayload(p) {
+  PAYLOAD = p;
+  RIG_ID = p.rigId;
+  document.getElementById("rail-rig").textContent = p.rigId;
+  document.getElementById("rail-task").textContent = p.task;
+  document.title = p.rigId + " Pedal Loop";
+}
+
+function clock(secs) {
+  const s = Math.max(0, Math.floor(secs));
+  return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+}
+const pct = (r) => Math.round(r * 100) + "%";
+
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(() => { lastViewKey = null; render(); });
+}
+addEventListener("resize", () => { lastViewKey = null; render(); });
+
+async function start(rigId) {
+  applyPayload(await loadPayload(rigId));
+  boot(location.hash.slice(1));
+  const c = current();
+  turnKey = c ? c.turn.from : null;
+}
+
+/* Demo affordance: watch any rig on the floor. A real rig is only ever
+   itself - it reads the one payload it was pushed. */
+window.switchRig = async function (rigId) {
+  applyPayload(generateLocally(rigId));
+  boot("");
+  const c = current();
+  turnKey = c ? c.turn.from : null;
+  toast("Now showing " + rigId);
+};
+
+window.setLiveClock = function (on) {
+  live = on;
+  const c = current();
+  turnKey = c ? c.turn.from : null;
+  toast(on ? "Following the wall clock" : "Demo clock");
+};
+
+start();
+requestAnimationFrame(tick);
+</script>
