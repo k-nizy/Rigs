@@ -1185,7 +1185,7 @@ section { display: flex; flex-direction: column; }
  *
  * This is demo data. In a deployment the desk gets the roster from
  * whatever holds staff records, and the rig gets nothing but the payload
- * the desk pushes it - it never needs this file. It lives in shared/ so
+ * the desk pushes it - it never needs this file. It lives in packages/ so
  * the two apps cannot drift into disagreeing about the example floor.
  * ===================================================================== */
 
@@ -1243,7 +1243,7 @@ var RE = window.RotationEngine;
 /* Grid sizes offered on the console, in minutes. */
 const BLOCK_OPTIONS = [10, 15, 20, 30, 40];
 
-/* The roster the desk opens with, from shared/. A manager edits these
+/* The roster the desk opens with, from packages/demo-roster/. A manager edits these
  * in place; the shape is what buildPlan expects. */
 const GROUPS = window.DEMO_ROSTER.groups;
 
@@ -1566,6 +1566,34 @@ function renderPush(plan) {
     } catch { toast("Clipboard blocked - select the text instead"); }
   });
   tools.appendChild(copy);
+
+  // Push every rig in one shot. All-or-nothing: the server rejects a mix
+  // of valid and invalid payloads so the floor never runs half-updated.
+  const push = el("button", "btn", "Push to floor");
+  push.type = "button";
+  push.addEventListener("click", async () => {
+    const payloads = [];
+    GROUPS.forEach(g => g.rigs.forEach(r => {
+      const p = RE.rigPayload(plan, r);
+      if (p) payloads.push(p);
+    }));
+    push.disabled = true;
+    try {
+      const res = await fetch("/api/push", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ payloads }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) toast("Pushed " + body.count + " rigs at " + new Date(body.pushedAt).toLocaleTimeString());
+      else toast("Push rejected: " + (body.error || res.status));
+    } catch (e) {
+      toast("Push failed - is the server running?");
+    } finally {
+      push.disabled = false;
+    }
+  });
+  tools.appendChild(push);
 
   const p = RE.rigPayload(plan, cfg.pushRig);
   const head = $("push-head");
