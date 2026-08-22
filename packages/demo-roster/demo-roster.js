@@ -7,7 +7,7 @@
  *
  * This is demo data. In a deployment the desk gets the roster from
  * whatever holds staff records, and the rig gets nothing but the payload
- * the desk pushes it - it never needs this file. It lives in shared/ so
+ * the desk pushes it - it never needs this file. It lives in packages/ so
  * the two apps cannot drift into disagreeing about the example floor.
  * ===================================================================== */
 
