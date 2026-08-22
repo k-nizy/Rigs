@@ -765,14 +765,23 @@ async function loadPayload(rigId) {
   if (window.PUSHED_SCHEDULE && (!rigId || window.PUSHED_SCHEDULE.rigId === rigId)) {
     return window.PUSHED_SCHEDULE;
   }
+  const id = rigId || RIG_ID;
+  // The server serves the pushed payload for this rig. If the server is
+  // not running, or nothing has been pushed to this rig yet, fall back
+  // to the co-located schedule.json (still supported for a plain static
+  // deploy) and then to a locally generated schedule so the demo runs.
+  try {
+    const r = await fetch("/api/rigs/" + encodeURIComponent(id) + "/schedule.json", { cache: "no-store" });
+    if (r.ok) return await r.json();
+  } catch (e) { /* server not up */ }
   try {
     const r = await fetch("schedule.json", { cache: "no-store" });
     if (r.ok) {
       const p = await r.json();
       if (!rigId || p.rigId === rigId) return p;
     }
-  } catch (e) { /* no server, or nothing pushed yet */ }
-  return generateLocally(rigId || RIG_ID);
+  } catch (e) { /* no file, nothing pushed */ }
+  return generateLocally(id);
 }
 
 function generateLocally(rigId) {
@@ -808,9 +817,10 @@ async function start(rigId) {
 }
 
 /* Demo affordance: watch any rig on the floor. A real rig is only ever
-   itself - it reads the one payload it was pushed. */
+   itself - it reads the one payload it was pushed. Tries the server
+   first (so a fresh push shows up) then falls back to a local build. */
 window.switchRig = async function (rigId) {
-  applyPayload(generateLocally(rigId));
+  applyPayload(await loadPayload(rigId));
   boot("");
   const c = current();
   turnKey = c ? c.turn.from : null;
