@@ -13,8 +13,9 @@ root = pathlib.Path(__file__).resolve().parent.parent
 html   = (root / "index.html").read_text()
 css    = (root / "assets/desk.css").read_text()
 js     = (root / "assets/desk.js").read_text()
-engine = (root.parent / "shared/rotation-engine.js").read_text()
-roster = (root.parent / "shared/demo-roster.js").read_text()
+repo   = root.parent.parent
+engine = (repo / "packages/engine/rotation-engine.js").read_text()
+roster = (repo / "packages/demo-roster/demo-roster.js").read_text()
 
 body = re.search(r"<body>\n(.*)\n</body>", html, re.S).group(1)
 # Local script tags are replaced by the inlined sources below.

@@ -14,7 +14,7 @@ var RE = window.RotationEngine;
 /* Grid sizes offered on the console, in minutes. */
 const BLOCK_OPTIONS = [10, 15, 20, 30, 40];
 
-/* The roster the desk opens with, from shared/. A manager edits these
+/* The roster the desk opens with, from packages/demo-roster/. A manager edits these
  * in place; the shape is what buildPlan expects. */
 const GROUPS = window.DEMO_ROSTER.groups;
 
