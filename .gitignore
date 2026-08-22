@@ -7,3 +7,6 @@ Thumbs.db
 # Nothing here is built from dependencies, but keep these out if they appear
 node_modules/
 __pycache__/
+
+# server state - regenerated on every push, not source
+apps/server/state.json
