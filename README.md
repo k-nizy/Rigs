@@ -7,12 +7,15 @@ for the whole shift so an operator works one skill all day.
 ## Run
 
 ```sh
-./serve.sh              # http://127.0.0.1:8765/
+npm run serve           # http://127.0.0.1:8765/
 ```
 
-`/desk/` is the manager's screen, `/rig/` is one rig's screen. No build step
-and no dependencies beyond the Google Fonts stylesheet. `./build.sh`
-regenerates the two single-file distributions.
+That starts `apps/server/`, which serves the whole tree *and* carries the
+push. `/apps/desk/` is the manager's screen, `/apps/rig/` is one rig's
+screen. `./serve.sh` is still there as a plain static server (no push,
+python only) for cases where node is not available. No dependencies on
+either path. `./build.sh` (or `npm run build`) regenerates the two
+single-file distributions.
 
 ## Layout
 
@@ -20,41 +23,55 @@ regenerates the two single-file distributions.
 index.html                     landing page linking the two apps
 serve.sh                       serve the whole tree
 build.sh                       rebuild both dist/ files
+package.json                   just for `npm test` - no runtime deps
 
-shared/
-  rotation-engine.js           THE SCHEDULE. no DOM, no globals, runs under node too
-  demo-roster.js               the example floor both apps open with
+packages/                      code that is imported, not deployed
+  engine/rotation-engine.js    THE SCHEDULE. no DOM, no globals, runs under node too
+  engine/engine.test.js        headless assertions on the engine
+  demo-roster/demo-roster.js   the example floor both apps open with
+  schema/payload.js            the shape the desk pushes and the rig consumes
+  schema/schema.test.js        every demo payload has to validate
 
-desk/                          the manager's app
-  index.html
-  assets/desk.css
-  assets/desk.js               roster state and rendering only
-  dist/rotation-desk.html      single-file build, for publishing
-  tools/make-single-file.py
-
-rig/                           the operator's app, one per rig
-  index.html
-  assets/rig.css
-  assets/rig.js                screen state machine, pedal map, event log
-  schedule.json                what the desk pushed to this rig
-  dist/rig.html                single-file build, push baked in
-  manifest.webmanifest         installs full-screen landscape on the rig display
-  tools/make-icons.py
-  tools/make-single-file.py
+apps/                          things that are deployed
+  desk/                        the manager's app
+    index.html
+    assets/desk.css
+    assets/desk.js             roster state, rendering, "Push to floor"
+    dist/rotation-desk.html    single-file build, for publishing
+    tools/make-single-file.py
+  rig/                         the operator's app, one per rig
+    index.html
+    assets/rig.css
+    assets/rig.js              screen state machine, pedal map, event log
+    schedule.json              fallback payload for a plain static deploy
+    dist/rig.html              single-file build, push baked in
+    manifest.webmanifest       installs full-screen landscape on the rig display
+    tools/make-icons.py
+    tools/make-single-file.py
+  server/                      the push transport
+    server.js                  plain-node http, serves the tree and the push
+    server.test.js             end-to-end: push a full floor, read each rig back
+    state.json                 current pushed state, regenerated on every push
 ```
 
 ## Why the engine is shared
 
-`shared/rotation-engine.js` is loaded by both apps. The rig must never
-compute a different answer from the desk that scheduled it, so there is
-exactly one implementation and neither app owns it.
+`packages/engine/rotation-engine.js` is loaded by both apps. The rig must
+never compute a different answer from the desk that scheduled it, so there
+is exactly one implementation and neither app owns it.
 
 It is also plain enough to run headlessly, which is how it gets tested:
 
 ```js
 global.window = global;
-require("./shared/rotation-engine.js");
+require("./packages/engine/rotation-engine.js");
 const plan = window.RotationEngine.buildPlan(cfg, groups);
+```
+
+Run the tests:
+
+```sh
+npm test
 ```
 
 ### API
@@ -74,12 +91,20 @@ cleanBlocks(options)       -> grid sizes that give equal break and think
 ## How a schedule reaches a rig
 
 ```
-desk  ->  rigPayload()  ->  rig/schedule.json  ->  whoIsOn()  ->  operator signed in
+desk  ->  POST /api/push  ->  server  ->  GET /api/rigs/:id/schedule.json  ->  whoIsOn()
 ```
 
-The desk emits one payload per rig: its id, its group's task, and every turn
-in the shift with who holds it, who relieves them, and where the outgoing
-operator goes.
+The desk builds one payload per rig with `RE.rigPayload(plan, rigId)`, then
+sends the whole floor in a single POST. The server validates every payload
+against `packages/schema/payload.js` before accepting *any* of them - a bad
+push is rejected at the door, so the floor never runs half-updated.
+
+Each rig fetches its own payload from
+`/api/rigs/:rigId/schedule.json`. The rig calls `whoIsOn(payload, now)` on a
+timer. Given the payload and the clock there is nothing left to ask the
+operator, which is what removed the login screen and the task picker.
+
+A payload looks like this:
 
 ```json
 { "from": "08:15", "to": "09:00", "minutes": 45,
@@ -88,12 +113,16 @@ operator goes.
   "theyGoTo": "Think" }
 ```
 
-The rig calls `whoIsOn(payload, now)` on a timer. Given the payload and the
-clock there is nothing left to ask the operator, which is what removed the
-login screen and the task picker.
-
 `theyGoTo` has to travel in the payload: where an outgoing operator goes is
 a fact about *their* day, not about this rig, and the rig cannot derive it.
+
+### Endpoints
+
+```
+POST /api/push                       body: { payloads: [...] }
+GET  /api/rigs/:rigId/schedule.json  -> the payload for that rig
+GET  /api/state                      -> { pushedAt, rigs: [...] }
+```
 
 ## The two rotations
 
@@ -127,11 +156,13 @@ covering the day continuously, with the whole crew changing at the boundary.
 Every operator gets 6 hours of work, 60 minutes of break and 60 of thinking
 time.
 
-## Not wired up
+## Scope
 
-- No persistence or push transport. `rig/schedule.json` is written by hand
-  today; the desk's "Copy for this rig" is the manual version of the push.
-- The rig's event log names the bucket each event belongs in but nothing is
-  stored. A reload starts a fresh shift.
-- Crew changeover at the shift boundary is unmodelled: whether there is a
-  handover window or the incoming operator takes the rig cold.
+Everything the reference sheet calls for is now wired up: the desk
+generates a schedule, pushes it to the floor, and each rig reads its own
+payload and signs the right operator in when their turn starts.
+
+The sheet does not call for anything else. In particular it does not
+speak to episode persistence, offline recovery, authentication, or crew
+changeover at the shift boundary - those are open questions to raise
+when the product is ready to answer them, not implicit requirements.
