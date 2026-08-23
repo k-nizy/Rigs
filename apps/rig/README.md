@@ -40,7 +40,67 @@ assets/icon-{192,512}.png     installed-app icons
 assets/icon-maskable-512.png  same mark inside a launcher's crop-safe zone
 assets/apple-touch-icon.png   180x180, opaque — iOS does not do transparency
 tools/make-icons.py           regenerates every icon above from one definition
+tools/make-single-file.py     inlines everything above into dist/rig.html
+schedule.json                 the co-located fallback payload, for a static deploy
+rig.test.js                   the screen, tested headlessly — part of `npm test`
+test/dom.js                   just enough DOM to run rig.js under node
+docs/                         where this app is going, and what it must not break
 ```
+
+`docs/` holds the three planning documents, in the order you would read
+them:
+
+| | |
+| --- | --- |
+| `BACKEND-PLAN.md` | the return arrow — RODA-RS, Tauri, ingest, Ansible, phased |
+| `SESSION-RULES.md` | what must not break in a session, what will, and who gets told |
+| `BACKEND-ASKS.md` | what we need from other departments, and what they have answered |
+
+## Where the next changes go
+
+The app is deliberately one file. `assets/rig.js` is the whole thing —
+schedule clock, state machine, pedal map, event log — and the single-file
+build in `tools/` depends on that. Before splitting it, read the top of
+the file: *"The whole platform app is this file."* That is a decision, not
+an accident, and it is why the app can be read in one sitting.
+
+Extending it is not the same as splitting it. There are three seams, and
+almost everything planned lands on one of them:
+
+- **`emit()`** — the event seam. Every event in the app already goes
+  through this one function, which is why Phase 0 can give events real
+  identity, and Phase 1 can route them to a disk journal, without touching
+  anything else. When the Tauri bridge is absent it keeps its current
+  behaviour and paints the drawer log.
+- **`loadPayload()`** — the schedule seam. Already a fallback chain:
+  baked-in, then server, then co-located file, then generated locally.
+  Anything new about how a schedule arrives belongs here and nowhere else.
+- **`pedals()` and `SCREENS`** — the screen seam. A screen is a case in
+  `view()`, a case in `pedals()`, and a row in `SCREENS`. Adding one means
+  those three and nothing else.
+
+The rule the tests enforce: a change that alters what the operator sees or
+presses should fail `rig.test.js` before it passes. If it does not, the
+test file is missing a case.
+
+## Tests
+
+```sh
+npm test          # from the repo root — engine, sheet, schema, server, both screens
+```
+
+`rig.test.js` runs the real `assets/rig.js` against a stub DOM, so the
+tests press the actual pedals and read the actual stage. The stub builds
+its element registry by reading the ids out of `index.html`, which means
+it cannot quietly drift from the page: anything `rig.js` looks up that
+the page does not have is itself a failure.
+
+What it pins, beyond the loop going round: that the middle pedal stays
+inert during a take, that the right pedal is "other" at every level of
+the issue tree, that a turn boundary never interrupts an episode, that
+a stint is credited to the operator who *worked* it rather than the one
+arriving, and that every `#screen` deep link opens that screen and then
+stays on it.
 
 ## The icon
 
