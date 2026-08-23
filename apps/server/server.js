@@ -92,7 +92,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(`floor  -> http://${HOST}:${PORT}/`);
-  console.log(`desk   -> http://${HOST}:${PORT}/apps/desk/`);
+  console.log(`desk   -> http://${HOST}:${PORT}/rotation-desk-v1/`);
   console.log(`rig    -> http://${HOST}:${PORT}/apps/rig/`);
   console.log(`push   -> POST http://${HOST}:${PORT}/api/push`);
 });

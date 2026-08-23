@@ -1,0 +1,520 @@
+/* =====================================================================
+ * desk.test.js  -  the manager's screen, tested headlessly
+ *
+ * The engine has its own tests and the sheet has its own transcription.
+ * This file tests the screen: that it boots, that picking a shift shows
+ * that shift and nothing else, that the grid really is names-down-the-
+ * side, that every cell agrees with the engine, that Live counts down
+ * to the right minute, and that the push sends twelve valid payloads.
+ * ===================================================================== */
+
+"use strict";
+
+const { test } = require("node:test");
+const assert = require("node:assert");
+const path = require("node:path");
+
+const { mountDesk } = require("./test/dom.js");
+const { validate } = require(path.resolve(__dirname, "../packages/schema/payload.js"));
+
+/* Runs a test with a freshly mounted desk and always tears it down, so
+ * one test's stray interval or edited roster cannot reach the next. */
+function withDesk(opts, fn) {
+  return async () => {
+    const desk = await mountDesk(opts);
+    try { await fn(desk); } finally { desk.stop(); }
+  };
+}
+
+/* ------------------------------------------------------------ boot */
+
+test("boots, and asks the page for nothing the page does not have",
+  withDesk({}, async desk => {
+    assert.deepEqual(desk.missingIds, [],
+      "desk.js looked up ids that are not in index.html: " + desk.missingIds.join(", "));
+  }));
+
+test("opens on Live, with Plan hidden",
+  withDesk({}, async desk => {
+    assert.equal(desk.$("view-live").hidden, false);
+    assert.equal(desk.$("view-plan").hidden, true);
+    assert.equal(desk.$("modes").children[0].getAttribute("aria-selected"), "true");
+    assert.equal(desk.$("modes").children[1].getAttribute("aria-selected"), "false");
+  }));
+
+test("the two modes are exclusive - never both, never neither",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    assert.equal(desk.$("view-live").hidden, true);
+    assert.equal(desk.$("view-plan").hidden, false);
+
+    desk.mode("live");
+    assert.equal(desk.$("view-live").hidden, false);
+    assert.equal(desk.$("view-plan").hidden, true);
+  }));
+
+/* ------------------------------------------------- one shift only */
+
+const SHIFTS = [
+  { id: "morning", label: "Morning", start: "08:00", end: "16:00" },
+  { id: "day",     label: "Day",     start: "16:00", end: "00:00" },
+  { id: "night",   label: "Night",   start: "00:00", end: "08:00" },
+];
+
+SHIFTS.forEach(s => {
+  test("picking " + s.label + " shows " + s.label + " and nothing else",
+    withDesk({}, async desk => {
+      desk.mode("plan");
+      desk.shift(s.id);
+
+      // exactly one button is pressed, and it is that one
+      const pressed = desk.$("seg-shift").children
+        .filter(b => b.getAttribute("aria-pressed") === "true")
+        .map(b => b.dataset.shift);
+      assert.deepEqual(pressed, [s.id], "one shift selected, and only one");
+
+      // said in words, once
+      const chosen = desk.$("chosen").textContent;
+      assert.ok(chosen.startsWith(s.label + " shift"), "the line reads: " + chosen);
+      assert.ok(chosen.includes(s.start) && chosen.includes(s.end), "with its hours: " + chosen);
+
+      SHIFTS.filter(o => o.id !== s.id).forEach(other => {
+        assert.ok(!chosen.includes(other.label), chosen + " must not mention " + other.label);
+        assert.ok(!desk.$("sheet-title").textContent.includes(other.label),
+          "the sheet is titled for " + s.label + " only");
+      });
+
+      // and every column of the grid falls inside that shift
+      const ticks = desk.grid("ops").ticks;
+      assert.equal(ticks.length, 32, "32 quarter-hours");
+      assert.equal(ticks[0], s.start, "the grid starts at " + s.start);
+
+      const startMin = Number(s.start.slice(0, 2)) * 60;
+      ticks.forEach((t, i) => {
+        const want = (startMin + i * 15) % 1440;
+        const got = Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+        assert.equal(got, want, "column " + i + " should be inside the " + s.label + " shift");
+      });
+    }));
+});
+
+test("changing the shift changes Live too",
+  withDesk({}, async desk => {
+    const before = desk.$("now-shift").textContent;
+    desk.mode("plan");
+    desk.shift("night");
+    desk.mode("live");
+    const after = desk.$("now-shift").textContent;
+
+    assert.ok(before.includes("Morning"), before);
+    assert.ok(after.includes("Night"), after);
+    assert.ok(!after.includes("Morning"), after);
+  }));
+
+/* --------------------------------------- names down, time across */
+
+test("the grid is names down the side and time across the top",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    const g = desk.grid("ops");
+
+    assert.equal(g.corner, "Operator", "the corner names the row axis");
+    assert.equal(g.ticks.length, 32, "32 columns of time");
+    assert.ok(/^\d\d:\d\d$/.test(g.ticks[0]), "columns are clock times, got " + g.ticks[0]);
+
+    assert.equal(g.bands.length, 4, "four group bands");
+    assert.equal(g.rows.length, 16, "sixteen operators down the side");
+
+    const first = g.rows[0].label;
+    assert.ok(first.includes("Aleksandr Petrov"), "rows are labelled by name, got " + first);
+    assert.ok(first.includes("Op 1"), "with their number, got " + first);
+    assert.ok(first.includes("6h"), "and their hours, got " + first);
+  }));
+
+test("the rig sheet is the same table with rigs down the side",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    const g = desk.grid("rigs");
+    assert.equal(g.corner, "Rig");
+    assert.equal(g.rows.length, 12, "twelve rigs");
+    assert.equal(g.ticks.length, 32);
+    assert.ok(g.rows[0].label.includes("RIG-01"), g.rows[0].label);
+  }));
+
+/* --------------------------------------- the cells match the engine */
+
+test("every cell of the operator grid is what the engine says",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    const RE = desk.RE;
+    const p = RE.buildPlan(
+      { shift: "morning", date: "2026-08-23", blockMin: 15, stintBlocks: 3, mode: "hold" },
+      desk.roster.groups);
+
+    const rows = desk.grid("ops").rows;
+    let r = 0;
+    p.groups.forEach(group => {
+      group.ops.forEach((op, oi) => {
+        const row = rows[r++];
+        for (let b = 0; b < p.nBlocks; b++) {
+          const cell = group.rows[oi][b];
+          const want = cell === RE.BREAK ? "Break"
+                     : cell === RE.THINK ? "Think"
+                     : group.rigs[cell];
+          assert.equal(row.cells[b].text, want,
+            op + " at block " + b + " should read " + want);
+        }
+      });
+    });
+    assert.equal(r, 16);
+  }));
+
+test("every cell of the rig grid is what the engine says",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    const RE = desk.RE;
+    const p = RE.buildPlan(
+      { shift: "morning", date: "2026-08-23", blockMin: 15, stintBlocks: 3, mode: "hold" },
+      desk.roster.groups);
+
+    const rows = desk.grid("rigs").rows;
+    let r = 0;
+    p.groups.forEach(group => {
+      group.rigs.forEach((rig, ri) => {
+        const row = rows[r++];
+        for (let b = 0; b < p.nBlocks; b++) {
+          const oi = RE.holderAt(group, ri, b);
+          assert.notEqual(oi, -1, rig + " is never unmanned (block " + b + ")");
+          const parts = group.ops[oi].split(" ");
+          const want = parts[0][0] + ". " + parts[parts.length - 1];
+          assert.equal(row.cells[b].text, want, rig + " at block " + b);
+        }
+      });
+    });
+    assert.equal(r, 12);
+  }));
+
+test("the handover bar falls exactly where the name changes",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    const rows = desk.grid("rigs").rows;
+    rows.forEach(row => {
+      row.cells.forEach((c, b) => {
+        const changed = b === 0 || row.cells[b - 1].text !== c.text;
+        assert.equal(c.start, changed,
+          row.label + " block " + b + ": bar should be " + (changed ? "on" : "off"));
+      });
+    });
+  }));
+
+/* ----------------------------------------------------- editing */
+
+test("typing a new name reaches the grid and the board",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    const card = desk.find(desk.$("rosters"), "grp")[0];
+    const nameInput = desk.find(card, "op-line")[0].children[1];
+
+    desk.fire(nameInput, "input", { value: "Zoe Bright" });
+
+    assert.ok(desk.grid("ops").rows[0].label.includes("Zoe Bright"),
+      "the grid row is relabelled");
+
+    desk.mode("live");
+    const onFloor = desk.board().flatMap(g => g.rigs.map(r => r.op).concat(g.off.name));
+    assert.ok(onFloor.includes("Zoe Bright"), "Live picks it up while nothing is pushed");
+  }));
+
+test("typing a new task reaches the band and the board",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    const card = desk.find(desk.$("rosters"), "grp")[0];
+    const taskInput = card.children[1].children[1];
+
+    desk.fire(taskInput, "input", { value: "Peg sorting" });
+
+    assert.ok(desk.grid("ops").bands[0].textContent.includes("Peg sorting"));
+    desk.mode("live");
+    assert.equal(desk.board()[0].task, "Peg sorting");
+  }));
+
+test("the three tabs are exclusive",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    const panels = ["panel-ops", "panel-rigs", "panel-push"];
+    ["ops", "rigs", "push"].forEach((t, i) => {
+      desk.tab(t);
+      panels.forEach((id, j) => {
+        assert.equal(desk.$(id).hidden, i !== j, t + " tab: " + id);
+      });
+    });
+  }));
+
+/* -------------------------------------------------------- the check */
+
+test("the check reads as one line, and stays shut when it passes",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    assert.equal(desk.$("v-text").textContent, "Everything checks out");
+    assert.equal(desk.$("fit").open, false, "no reason to open it");
+    assert.match(desk.$("v-sub").textContent, /360 min work · 60 break · 60 think, each/);
+    assert.equal(desk.$("fit").className, "fit ok");
+  }));
+
+/* ----------------------------------------------------------- Live */
+
+test("Live mid-shift: the right people, counting down to the right minute",
+  withDesk({ at: "10:37:22" }, async desk => {
+    const board = desk.board();
+    assert.equal(board.length, 4, "four groups");
+    assert.equal(board[0].key, "GROUP A");
+
+    // 10:37 is 2h37m in - block 10, which the reference sheet writes
+    // 2:30 - Rig1/Rig2/Rig3 held by Op4, Op1, Op3, with Op2 on Break.
+    const a = board[0];
+    assert.deepEqual(a.rigs.map(r => r.rigId), ["RIG-01", "RIG-02", "RIG-03"]);
+    assert.deepEqual(a.rigs.map(r => r.op),
+      ["Nadia Haddad", "Aleksandr Petrov", "Tomas Rivera"]);
+    assert.equal(a.off.tag, "Break");
+    assert.equal(a.off.name, "Mei Chen");
+
+    // turns end at 11:00, 10:45 and 11:15
+    assert.deepEqual(a.rigs.map(r => r.left), ["22:38", "7:38", "37:38"]);
+    assert.deepEqual(a.rigs.map(r => r.dest.label), ["THINK", "BREAK", "THINK"]);
+    assert.deepEqual(a.rigs.map(r => r.dest.at), ["11:00", "10:45", "11:15"]);
+    assert.deepEqual(a.rigs.map(r => r.relief),
+      ["A. Petrov takes over", "M. Chen takes over", "N. Haddad takes over"]);
+
+    // Chen is off, and the board says where she walks back to: RIG-02,
+    // at 10:45, which is the moment RIG-02's own countdown reaches zero.
+    assert.equal(a.off.dest.label, "RIG-02");
+    assert.equal(a.off.dest.at, "10:45");
+    assert.equal(a.off.left, "7:38");
+
+    assert.match(desk.$("upnext").textContent,
+      /^Next handover in 7:38 · RIG-02 · Aleksandr Petrov goes to break, Mei Chen takes over$/);
+    assert.equal(desk.$("banner").hidden, true);
+  }));
+
+test("Live warns as a turn runs out, and only then",
+  withDesk({ at: "10:41:00" }, async desk => {
+    // RIG-02's turn ends at 10:45 - four minutes out, so amber
+    const a = desk.board()[0];
+    assert.equal(a.rigs[1].left, "4:00");
+    assert.ok(a.rigs[1].leftCls.includes("warn"), a.rigs[1].leftCls);
+    assert.ok(!a.rigs[0].leftCls.includes("warn"), "the other two are not warned");
+    assert.ok(!a.rigs[0].leftCls.includes("crit"));
+  }));
+
+test("Live goes critical in the last minute",
+  withDesk({ at: "10:44:30" }, async desk => {
+    const a = desk.board()[0];
+    assert.equal(a.rigs[1].left, "0:30");
+    assert.ok(a.rigs[1].leftCls.includes("crit"), a.rigs[1].leftCls);
+  }));
+
+test("before the shift, Live says so and shows the opening line-up",
+  withDesk({ at: "07:12:00" }, async desk => {
+    assert.equal(desk.$("banner").hidden, false);
+    assert.match(desk.$("banner").textContent,
+      /^Morning shift starts at 08:00 - in 48m\. Showing the opening line-up\.$/);
+
+    const a = desk.board()[0];
+    assert.deepEqual(a.rigs.map(r => r.op),
+      ["Aleksandr Petrov", "Mei Chen", "Tomas Rivera"]);
+    // the 45/30/15 opening turns a simultaneous crew change forces
+    assert.deepEqual(a.rigs.map(r => r.left), ["45 min", "30 min", "15 min"]);
+    assert.deepEqual(a.rigs.map(r => r.width), ["0.0%", "0.0%", "0.0%"]);
+    assert.equal(a.off.name, "Nadia Haddad");
+    assert.equal(desk.$("upnext").textContent, "The shift has not started.");
+
+    // she is told where she joins, and the chip carries the time - so
+    // there is no second copy of the same clock beside it
+    assert.equal(a.off.dest.label, "RIG-03");
+    assert.equal(a.off.dest.at, "08:15");
+    assert.equal(a.off.left, "", "nothing to count down to before the shift");
+  }));
+
+test("in the last turn of the shift, nobody is promised a relief",
+  withDesk({ at: "15:52:00" }, async desk => {
+    desk.board()[0].rigs.forEach(r => {
+      assert.equal(r.dest.label, "OFF SHIFT");
+      assert.equal(r.dest.kind, "end");
+      assert.equal(r.relief, "", "there is nobody to hand over to");
+    });
+    // and the line at the bottom stops calling it a handover
+    assert.match(desk.$("upnext").textContent,
+      /^Shift ends in \d+:\d\d · everyone comes off together\.$/);
+    assert.match(desk.$("now-shift").textContent, /8m left/);
+  }));
+
+/* --------------------------------------------- where people are going */
+
+test("every row says where that person is going, and when",
+  withDesk({ at: "11:04:56" }, async desk => {
+    desk.board().forEach(g => {
+      g.rigs.forEach(r => {
+        assert.ok(r.dest, r.rigId + " has a destination");
+        assert.match(r.dest.at, /^\d\d:\d\d$/, r.rigId + " says when: " + r.dest.at);
+        assert.ok(["BREAK", "THINK"].includes(r.dest.label) || /^RIG-\d\d$/.test(r.dest.label),
+          r.rigId + " goes somewhere real, got " + r.dest.label);
+      });
+    });
+  }));
+
+test("the off operator is told which rig they walk back to, and it agrees with that rig",
+  withDesk({ at: "11:04:56" }, async desk => {
+    const board = desk.board();
+    assert.equal(board.length, 4);
+
+    board.forEach(g => {
+      assert.ok(g.off.dest, g.key + ": the off operator has a destination");
+      assert.match(g.off.dest.label, /^RIG-\d\d$/, g.key + ": they go back to a rig");
+
+      /* The bug this replaced: the off row counted in whole minutes while
+       * the rig beside it counted in seconds, so one instant showed two
+       * numbers. Both now come from the same subtraction. */
+      const rig = g.rigs.find(r => r.rigId === g.off.dest.label);
+      assert.ok(rig, g.key + ": " + g.off.dest.label + " is one of this group's rigs");
+      assert.equal(g.off.left, rig.left,
+        g.key + ": " + g.off.name + " returns to " + rig.rigId
+        + " - the two countdowns must agree");
+      assert.equal(g.off.dest.at, rig.dest.at,
+        g.key + ": and so must the two clock times");
+    });
+  }));
+
+test("a destination is painted for what it is",
+  withDesk({ at: "11:04:56" }, async desk => {
+    const kindOf = { BREAK: "brk", THINK: "thk" };
+    desk.board().forEach(g => {
+      g.rigs.concat([{ rigId: "off", dest: g.off.dest }]).forEach(r => {
+        if (!r.dest) return;
+        const want = kindOf[r.dest.label] || "to-rig";
+        assert.equal(r.dest.kind, want,
+          r.dest.label + " should be painted " + want + ", got " + r.dest.kind);
+      });
+    });
+  }));
+
+test("the rig chip is not styled as a rig row",
+  withDesk({ at: "11:04:56" }, async desk => {
+    /* `.dest.rig` would also match the `.rig` row selector and inherit
+     * the row's padding and bottom border. The class is `to-rig` for
+     * exactly that reason, and this is what keeps it that way. */
+    const chip = desk.board()[0].off.dest;
+    assert.equal(chip.kind, "to-rig");
+    assert.ok(!chip.kind.split(/\s+/).includes("rig"),
+      "the destination chip must not carry the bare `rig` class");
+  }));
+
+test("the progress bar tracks how far through a turn we are",
+  withDesk({ at: "10:37:22" }, async desk => {
+    // RIG-02 is 37m38s into a 45-minute turn
+    const w = Number(desk.board()[0].rigs[1].width.replace("%", ""));
+    assert.ok(w > 82 && w < 84, "expected about 83%, got " + w);
+  }));
+
+test("with no server, Live says it is showing the plan",
+  withDesk({}, async desk => {
+    assert.equal(desk.$("now-src").className, "src plan");
+    assert.match(desk.$("now-src").textContent, /Not pushed/);
+  }));
+
+test("with a server, Live says it is showing the floor",
+  withDesk({
+    at: "10:37:22",
+    fetchImpl: (url) => {
+      if (String(url) === "/api/state") {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({
+          pushedAt: "2026-08-23T09:58:00.000Z",
+          rigs: PUSHED.map(p => p.rigId),
+        }) });
+      }
+      const id = decodeURIComponent(String(url).split("/")[3]);
+      const one = PUSHED.find(p => p.rigId === id);
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(one) });
+    },
+  }, async desk => {
+    assert.equal(desk.$("now-src").className, "src floor");
+    assert.match(desk.$("now-src").textContent, /On the floor/);
+    // the pushed floor has different people on it than the desk's roster
+    assert.equal(desk.board()[0].rigs[0].op, "Pushed Person 4");
+  }));
+
+/* ------------------------------------------------------- the push */
+
+test("Push to floor sends twelve payloads that all validate",
+  withDesk({
+    fetchImpl: (url, init) => {
+      if (String(url) === "/api/state") return Promise.reject(new Error("empty"));
+      if (String(url) === "/api/push") {
+        sent = JSON.parse(init.body).payloads;
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({
+          ok: true, count: sent.length, pushedAt: "2026-08-23T10:00:00.000Z",
+        }) });
+      }
+      return Promise.reject(new Error("no"));
+    },
+  }, async desk => {
+    desk.mode("plan");
+    desk.click(desk.$("btn-push"));
+    await new Promise(r => setImmediate(r));
+    await new Promise(r => setImmediate(r));
+
+    assert.equal(sent.length, 12, "one payload per rig");
+    sent.forEach(p => {
+      const v = validate(p);
+      assert.ok(v.ok, p.rigId + " failed validation: " + JSON.stringify(v.errors));
+    });
+    assert.deepEqual(sent.map(p => p.rigId).sort(),
+      ["RIG-01", "RIG-02", "RIG-03", "RIG-04", "RIG-05", "RIG-06",
+       "RIG-07", "RIG-08", "RIG-09", "RIG-10", "RIG-11", "RIG-12"]);
+    assert.match(desk.$("push-note").textContent, /^Pushed 12 rigs at /);
+  }));
+
+test("a push the server rejects says so, and does not pretend",
+  withDesk({
+    fetchImpl: (url) => {
+      if (String(url) === "/api/push") {
+        return Promise.resolve({ ok: false, status: 422, json: () => Promise.resolve({
+          error: "one or more payloads failed validation",
+        }) });
+      }
+      return Promise.reject(new Error("no"));
+    },
+  }, async desk => {
+    desk.mode("plan");
+    desk.click(desk.$("btn-push"));
+    await new Promise(r => setImmediate(r));
+    await new Promise(r => setImmediate(r));
+
+    assert.match(desk.$("push-note").textContent, /^Rejected: /);
+    assert.equal(desk.$("btn-push").disabled, false, "the button comes back");
+  }));
+
+test("a push with no server at all says that instead",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    desk.click(desk.$("btn-push"));
+    await new Promise(r => setImmediate(r));
+    await new Promise(r => setImmediate(r));
+    assert.equal(desk.$("push-note").textContent, "Could not reach the server.");
+  }));
+
+/* A floor that is deliberately not the desk's roster, so a test can tell
+ * which of the two Live is reading. */
+let sent = null;
+const PUSHED = (() => {
+  global.window = global;
+  require(path.resolve(__dirname, "../packages/engine/rotation-engine.js"));
+  const RE = global.RotationEngine;
+  const groups = [{
+    key: "A", task: "Pushed task",
+    rigs: ["RIG-01", "RIG-02", "RIG-03"],
+    ops: ["Pushed Person 1", "Pushed Person 2", "Pushed Person 3", "Pushed Person 4"],
+  }];
+  const p = RE.buildPlan(
+    { shift: "morning", date: "2026-08-23", blockMin: 15, stintBlocks: 3, mode: "hold" }, groups);
+  return groups[0].rigs.map(r => RE.rigPayload(p, r));
+})();

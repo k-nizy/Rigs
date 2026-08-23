@@ -13,7 +13,8 @@ root = pathlib.Path(__file__).resolve().parent.parent
 html   = (root / "index.html").read_text()
 css    = (root / "assets/desk.css").read_text()
 js     = (root / "assets/desk.js").read_text()
-repo   = root.parent.parent
+title  = re.search(r"<title>(.*?)</title>", html, re.S).group(1)
+repo   = root.parent
 engine = (repo / "packages/engine/rotation-engine.js").read_text()
 roster = (repo / "packages/demo-roster/demo-roster.js").read_text()
 
@@ -24,7 +25,7 @@ fonts = "\n".join(re.findall(r'^<link rel="(?:preconnect|stylesheet)"[^>]*fonts\
                              html, re.M))
 
 out = f"""<meta charset="utf-8">
-<title>Rotation Desk</title>
+<title>{title}</title>
 {fonts}
 
 <style>

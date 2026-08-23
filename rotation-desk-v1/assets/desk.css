@@ -1,0 +1,922 @@
+/* ===================================================================
+ * Rotation Desk v1 - the manager side of the rig floor.
+ *
+ * Two screens in one page. LIVE is a board to be read across a room:
+ * big numerals, one row per rig, colour only where it means something.
+ * PLAN is a short form. The reference sheet lives at the bottom of
+ * PLAN, where it is reference rather than the first thing you meet.
+ *
+ * Every colour comes from a token so the page holds on either host
+ * ground. Semantic colour (warn / crit) is kept apart from the accent,
+ * so a countdown running out never reads as decoration.
+ * =================================================================== */
+
+:root {
+  /* cool-steel neutrals - aluminium, not paper */
+  --ground:      #f4f6f7;
+  --panel:       #ffffff;
+  --panel-2:     #e9edf0;
+  --panel-3:     #dfe4e9;
+  --ink:         #0f1418;
+  --ink-2:       #414c57;
+  --muted:       #6f7b87;
+  --line:        #dbe1e7;
+  --line-2:      #bfc8d1;
+
+  --accent:      #b06d00;   /* amber, darkened to stay legible on white */
+  --accent-fill: #ffc400;   /* the rig-floor signal yellow */
+  --ok:          #2c6e42;
+  --warn:        #a8511b;
+  --crit:        #b5302a;
+  --ok-soft:     #e2f0e7;
+  --warn-soft:   #fbeadd;
+  --crit-soft:   #fae4e2;
+
+  /* four groups, four coats of machine paint */
+  --g0: #1f6f9a;  --g0-soft: #e2eef5;
+  --g1: #c2571b;  --g1-soft: #fbe9dd;
+  --g2: #4a7c2f;  --g2-soft: #e7f1df;
+  --g3: #8e3b52;  --g3-soft: #f7e4ea;
+
+  --radius: 4px;
+}
+
+:root:not([data-theme="light"]) { color-scheme: light; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground:      #0c0f12;
+    --panel:       #14181d;
+    --panel-2:     #1b2128;
+    --panel-3:     #232a32;
+    --ink:         #e9edf1;
+    --ink-2:       #b0bac4;
+    --muted:       #7c8794;
+    --line:        #242b33;
+    --line-2:      #384250;
+
+    --accent:      #ffc400;
+    --accent-fill: #ffc400;
+    --ok:          #6cc08a;
+    --warn:        #e0995f;
+    --crit:        #ef7a72;
+    --ok-soft:     #16281d;
+    --warn-soft:   #2c1f13;
+    --crit-soft:   #2c1817;
+
+    --g0: #63aad4;  --g0-soft: #16262f;
+    --g1: #e5895a;  --g1-soft: #2c1c13;
+    --g2: #93bd6b;  --g2-soft: #1c2616;
+    --g3: #cf8299;  --g3-soft: #2b1a20;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground:      #0c0f12;
+  --panel:       #14181d;
+  --panel-2:     #1b2128;
+  --panel-3:     #232a32;
+  --ink:         #e9edf1;
+  --ink-2:       #b0bac4;
+  --muted:       #7c8794;
+  --line:        #242b33;
+  --line-2:      #384250;
+
+  --accent:      #ffc400;
+  --accent-fill: #ffc400;
+  --ok:          #6cc08a;
+  --warn:        #e0995f;
+  --crit:        #ef7a72;
+  --ok-soft:     #16281d;
+  --warn-soft:   #2c1f13;
+  --crit-soft:   #2c1817;
+
+  --g0: #63aad4;  --g0-soft: #16262f;
+  --g1: #e5895a;  --g1-soft: #2c1c13;
+  --g2: #93bd6b;  --g2-soft: #1c2616;
+  --g3: #cf8299;  --g3-soft: #2b1a20;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: clamp(1.1rem, 3vw, 2.2rem) clamp(0.9rem, 3vw, 2rem) 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.3rem;
+}
+
+main { display: flex; flex-direction: column; gap: 1.1rem; }
+
+/* ------------------------------------------------------------ atoms */
+
+.mono {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.66rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+html { scroll-behavior: smooth; }
+
+button, select, input { font: inherit; color: inherit; border-radius: 3px; }
+
+/* The board updates in place rather than being rebuilt, so anything
+ * that moves can be given a transition and will actually glide. */
+button, select, input, summary, .gcard, .grp, .src, .btn {
+  transition: background-color 130ms ease, color 130ms ease,
+              border-color 130ms ease, box-shadow 130ms ease;
+}
+
+:where(button, select, input, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn {
+  background: var(--ink);
+  color: var(--ground);
+  border: 1px solid var(--ink);
+  padding: 0.42rem 0.9rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn:hover { opacity: 0.88; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--line-2); }
+.btn.ghost:hover { background: var(--panel-2); opacity: 1; }
+
+.grp-key {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-weight: 600;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  background: var(--gc-soft);
+  color: var(--gc);
+  padding: 0.1rem 0.42rem;
+  border-radius: 3px;
+  flex: none;
+}
+
+/* ----------------------------------------------------------- header */
+
+header.masthead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.2rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.9rem;
+  border-bottom: 2px solid var(--ink);
+}
+
+.masthead h1 {
+  font-size: clamp(1.35rem, 3vw, 1.9rem);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  line-height: 1;
+}
+.masthead h1 .ver {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.42em;
+  font-weight: 500;
+  letter-spacing: 0;
+  vertical-align: 0.55em;
+  color: var(--muted);
+}
+
+/* the only navigation on the page */
+.modes { display: flex; border: 1px solid var(--line-2); border-radius: 3px; overflow: hidden; }
+.modes button {
+  background: var(--panel);
+  border: 0;
+  border-right: 1px solid var(--line-2);
+  padding: 0.45rem 1.15rem;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+}
+.modes button:last-child { border-right: 0; }
+.modes button:hover { background: var(--panel-2); color: var(--ink); }
+.modes button[aria-selected="true"] { background: var(--ink); color: var(--ground); }
+
+/* =================================================================
+ * LIVE
+ * ================================================================= */
+
+.now {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.now-clock { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
+.now-clock b {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(1.9rem, 5vw, 2.6rem);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+.now-clock span { font-size: 0.86rem; color: var(--muted); }
+
+.now-right { display: flex; align-items: center; gap: 0.7rem; }
+
+.src {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  padding: 0.16rem 0.5rem;
+  border-radius: 3px;
+  border: 1px solid var(--line-2);
+  color: var(--muted);
+}
+.src.floor { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
+.src.plan  { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+
+.banner {
+  background: var(--panel-2);
+  border-left: 3px solid var(--accent-fill);
+  padding: 0.55rem 0.8rem;
+  font-size: 0.84rem;
+  color: var(--ink-2);
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.gcard {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--gc);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.gcard-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.6rem 0.85rem;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+}
+.gtask {
+  font-size: 0.82rem;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* one rig - the unit a manager scans */
+.rig { padding: 0.6rem 0.85rem 0.5rem; border-bottom: 1px solid var(--line); }
+.rig:last-of-type { border-bottom: 0; }
+
+.rig-top { display: flex; align-items: baseline; gap: 0.6rem; }
+.rig-id {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--gc);
+  flex: none;
+  width: 4.6em;
+}
+.rig-top .op {
+  font-size: 0.98rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rig-top .left {
+  transition: color 200ms ease;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink-2);
+  flex: none;
+}
+.rig-top .left.warn { color: var(--warn); }
+.rig-top .left.crit { color: var(--crit); }
+
+.rig-bar { height: 3px; background: var(--panel-3); margin: 0.4rem 0 0.35rem; border-radius: 2px; overflow: hidden; }
+.rig-bar i { display: block; height: 100%; background: var(--gc); transition: width 900ms linear; }
+
+.rig-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.rig-foot .relief { text-align: right; }
+
+/* the fourth operator - the one not on a rig */
+.offrow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  padding: 0.5rem 0.85rem;
+  background: var(--panel-2);
+  border-top: 1px dashed var(--line-2);
+  font-size: 0.8rem;
+}
+.off-tag {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.64rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--line-2);
+  border-radius: 3px;
+  padding: 0.05rem 0.34rem;
+}
+.off-name { font-weight: 500; }
+.off-back { margin-left: auto; color: var(--muted); font-size: 0.74rem; }
+
+.upnext {
+  font-size: 0.86rem;
+  color: var(--ink-2);
+  padding: 0.6rem 0.85rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent-fill);
+  border-radius: var(--radius);
+  min-height: 2.4rem;
+}
+
+.empty { color: var(--muted); font-size: 0.9rem; }
+
+/* =================================================================
+ * PLAN
+ * ================================================================= */
+
+.setup {
+  display: flex;
+  align-items: flex-end;
+  gap: 1.2rem;
+  flex-wrap: wrap;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+}
+.field { display: flex; flex-direction: column; gap: 0.4rem; }
+.field > label { font-size: 0.66rem; }
+.field input[type="date"] {
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  padding: 0.38rem 0.5rem;
+}
+
+.seg { display: flex; border: 1px solid var(--line-2); border-radius: 3px; overflow: hidden; }
+.seg button {
+  background: var(--panel);
+  border: 0;
+  border-right: 1px solid var(--line-2);
+  padding: 0.38rem 0.8rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seg button:last-child { border-right: 0; }
+.seg button:hover { background: var(--panel-2); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--ground); font-weight: 600; }
+
+/* Bigger, because the shift is the one choice that changes everything
+ * below it. Whichever is filled in is the only shift on the page. */
+.seg.big button { padding: 0.5rem 1.15rem; font-size: 0.88rem; }
+
+/* Says in words what the buttons above chose, so there is never a
+ * question about which shift is on screen. */
+.chosen {
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  align-self: center;
+  padding-left: 1rem;
+  border-left: 1px solid var(--line);
+}
+
+/* The format is stated, not offered. v1 is the sheet. */
+.fmt {
+  margin-left: auto;
+  align-self: center;
+  font-size: 0.72rem;
+  color: var(--muted);
+  border-left: 3px solid var(--accent-fill);
+  padding-left: 0.6rem;
+}
+
+/* ---- the check: one line, opened only when something is wrong ---- */
+
+.fit {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.fit > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.88rem;
+}
+.fit > summary::-webkit-details-marker { display: none; }
+.fit > summary::after {
+  content: "Details";
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.fit[open] > summary::after { content: "Hide"; }
+.fit .v-sub {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+.fit.warn { border-color: var(--warn); }
+.fit.crit { border-color: var(--crit); }
+
+.dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.dot.ok { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.dot.crit { background: var(--crit); }
+
+.fit-body { padding: 0 0.9rem 0.85rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.verdict-note { font-size: 0.8rem; color: var(--ink-2); line-height: 1.45; max-width: 80ch; }
+
+.checks { display: flex; flex-direction: column; gap: 0.35rem; }
+.check {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  gap: 0.55rem;
+  align-items: baseline;
+  font-size: 0.78rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: 3px;
+  background: var(--panel-2);
+}
+.check.pass { background: var(--ok-soft); }
+.check.fail { background: var(--crit-soft); }
+.check.soft { background: var(--warn-soft); }
+.check i { font-style: normal; font-weight: 700; text-align: center; }
+.check.pass i { color: var(--ok); }
+.check.fail i { color: var(--crit); }
+.check.soft i { color: var(--warn); }
+.check b { font-weight: 500; }
+.check span {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.73rem;
+  color: var(--ink-2);
+}
+
+/* ---------------------------------------------------- who is on ---- */
+
+section > h2 { font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
+section > h2 + p { font-size: 0.8rem; color: var(--muted); margin: 0.1rem 0 0.7rem; max-width: 72ch; }
+section { display: flex; flex-direction: column; }
+.stack { display: flex; flex-direction: column; gap: 0.75rem; }
+
+.rosters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.8rem;
+}
+
+.grp {
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--gc);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 0.8rem 0.9rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.grp-head { display: flex; align-items: baseline; gap: 0.55rem; }
+.grp-head .eyebrow { margin-left: auto; font-size: 0.6rem; }
+
+.grp label {
+  display: block;
+  font-size: 0.62rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.28rem;
+}
+.grp input[type="text"] {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid transparent;
+  border-bottom: 1px solid var(--line-2);
+  padding: 0.34rem 0.45rem;
+  font-size: 0.86rem;
+}
+.grp input[type="text"]:hover { background: var(--panel-3); }
+.grp input[type="text"]:focus { background: var(--panel); border-color: var(--gc); }
+
+.op-list { display: flex; flex-direction: column; gap: 0.3rem; }
+.op-line { display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 0.4rem; }
+.op-line .idx {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.66rem;
+  color: var(--muted);
+  text-align: right;
+}
+
+/* Rig ids barely ever change, so they fold away. */
+.rig-edit > summary {
+  font-size: 0.68rem;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0.15rem 0;
+}
+.rig-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.32rem; margin-top: 0.35rem; }
+.rig-row input {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.74rem !important;
+  text-align: center;
+}
+
+/* ------------------------------------------------------- actions --- */
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 0.9rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.actions .btn { padding: 0.5rem 1.1rem; }
+.actions-note {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+/* =================================================================
+ * The sheet - reference, kept at the bottom of PLAN
+ * ================================================================= */
+
+.sheet-section { gap: 0.75rem; margin-top: 0.4rem; }
+
+.tabs { display: flex; border-bottom: 1px solid var(--line-2); }
+.tabs button {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 0.55rem 0.9rem;
+  font-size: 0.83rem;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+}
+.tabs button:hover { color: var(--ink); }
+.tabs button[aria-selected="true"] { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent-fill); }
+.tab-tools { margin-left: auto; display: flex; align-items: center; gap: 0.55rem; padding-bottom: 0.3rem; }
+.tab-tools select { background: var(--panel); border: 1px solid var(--line-2); padding: 0.28rem 0.45rem; font-size: 0.76rem; }
+
+/* Names down the side, time across the top. One table for the whole
+ * floor: 16 operator rows (or 12 rig rows) banded by group, 32 columns
+ * of quarter hours. The name column is sticky, so a row never loses
+ * its label however far right you scroll. */
+
+table.sched { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; }
+
+table.sched th, table.sched td {
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 0;
+}
+table.sched tr > *:last-child { border-right: 0; }
+table.sched tbody tr:last-child > * { border-bottom: 0; }
+
+/* the name column */
+th.stub {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  width: 210px;
+  min-width: 210px;
+  background: var(--panel);
+  border-right: 1px solid var(--line-2);
+  text-align: left;
+  padding: 0.3rem 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+}
+th.stub i {
+  font-style: normal;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-right: 0.5em;
+}
+th.stub b { font-size: 0.84rem; font-weight: 600; letter-spacing: -0.01em; }
+th.stub small {
+  float: right;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.66rem;
+  color: var(--muted);
+}
+
+/* the times */
+thead th.stub {
+  z-index: 4;
+  background: var(--panel-2);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.63rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  vertical-align: bottom;
+  padding-bottom: 0.42rem;
+}
+th.tick {
+  width: 62px;
+  min-width: 62px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line-2);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.64rem;
+  font-weight: 500;
+  color: var(--muted);
+  padding: 0.42rem 0.2rem;
+  white-space: nowrap;
+}
+th.tick.hour { color: var(--ink); font-weight: 600; border-left: 1px solid var(--line-2); }
+
+/* a group's title row */
+tr.band th.stub { background: var(--panel-2); }
+tr.band th.stub b {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.67rem;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  color: var(--gc);
+}
+tr.band td {
+  background: var(--panel-2);
+  padding: 0.3rem 0.7rem;
+  white-space: nowrap;
+  border-top: 2px solid var(--gc);
+}
+tr.band td b { font-size: 0.8rem; font-weight: 600; }
+tr.band td span {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.67rem;
+  color: var(--muted);
+  margin-left: 0.8rem;
+}
+
+td.cell {
+  width: 62px;
+  min-width: 62px;
+  height: 30px;
+  text-align: center;
+  white-space: nowrap;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+td.cell.hour { border-left: 1px solid var(--line-2); }
+
+td.work { background: var(--gc-soft); color: var(--gc); }
+td.work.start { box-shadow: inset 3px 0 0 var(--gc); }   /* the bar is the handover */
+td.name { text-align: left; padding-left: 0.55rem; }
+
+td.brk {
+  background: var(--panel-3);
+  color: var(--muted);
+  font-size: 0.63rem;
+  letter-spacing: 0.09em;
+}
+td.thk {
+  background: repeating-linear-gradient(
+    -45deg, transparent 0 4px,
+    color-mix(in srgb, var(--accent-fill) 34%, transparent) 4px 6px);
+  color: var(--ink-2);
+  font-size: 0.63rem;
+  letter-spacing: 0.09em;
+}
+td.idle { background: var(--panel); color: var(--crit); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 1rem; font-size: 0.73rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 0.38rem; }
+.swatch { width: 22px; height: 13px; border: 1px solid var(--line-2); flex: none; }
+.swatch.w { background: var(--g0-soft); box-shadow: inset 0 3px 0 var(--g0); }
+.swatch.b { background: var(--panel-3); }
+.swatch.t { background: repeating-linear-gradient(-45deg, transparent 0 4px, color-mix(in srgb, var(--accent-fill) 34%, transparent) 4px 6px); }
+
+/* --------------------------------------------------------- payload */
+
+.scroller { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+
+.payload-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  padding: 0.7rem 0.9rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+.payload-head b { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.88rem; }
+.payload-head span { font-size: 0.77rem; color: var(--muted); }
+
+pre.json {
+  margin: 0;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--ink-2);
+  tab-size: 2;
+}
+pre.json .k { color: var(--g0); }
+pre.json .s { color: var(--ok); }
+pre.json .n { color: var(--accent); }
+
+/* ----------------------------------------------------------- toast */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.6rem;
+  transform: translate(-50%, 160%);
+  background: var(--ink);
+  color: var(--ground);
+  padding: 0.55rem 1rem;
+  border-radius: 3px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  transition: transform 220ms ease;
+  z-index: 20;
+  pointer-events: none;
+}
+.toast.up { transform: translate(-50%, 0); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+/* =================================================================
+ * Where each person is going
+ *
+ * A destination is one of three things - a break, a think block, or
+ * another rig - and it is painted the way the sheet paints them: grey
+ * for break, the amber hatch for think, the group's own colour for a
+ * rig. The board and the sheet then say the same thing in the same
+ * language, so neither has to be learned twice.
+ * ================================================================= */
+
+.dest {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.34em;
+  flex: none;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  padding: 0.12rem 0.45rem;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.dest i { font-style: normal; opacity: 0.6; }
+.dest small { font-weight: 500; font-size: 0.94em; opacity: 0.78; }
+
+.dest.brk {
+  background: var(--panel-3);
+  color: var(--ink-2);
+  border-color: var(--line-2);
+}
+.dest.thk {
+  background: repeating-linear-gradient(
+    -45deg, transparent 0 4px,
+    color-mix(in srgb, var(--accent-fill) 30%, transparent) 4px 6px);
+  color: var(--ink);
+  border-color: color-mix(in srgb, var(--accent-fill) 55%, transparent);
+}
+/* Named to-rig, not rig: a bare `.rig` would also match the rig ROW
+ * selector and hand this chip the row's padding and bottom border. */
+.dest.to-rig {
+  background: var(--gc-soft, var(--panel-3));
+  color: var(--gc, var(--ink-2));
+  border-color: color-mix(in srgb, var(--gc, var(--line-2)) 40%, transparent);
+}
+.dest.end { background: transparent; color: var(--muted); border-color: var(--line-2); }
+
+/* the destination sits where "then think" used to, but is now readable */
+.rig-foot { align-items: center; gap: 0.5rem; }
+.rig-foot .relief { margin-left: auto; text-align: right; }
+
+/* ---- the fourth operator, now told the same three things ---------- */
+
+.offrow { align-items: center; gap: 0.5rem; }
+.offrow .off-tag.thk {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent-fill) 55%, transparent);
+  background: color-mix(in srgb, var(--accent-fill) 14%, transparent);
+}
+.offrow .off-tag.brk { color: var(--ink-2); background: var(--panel-3); }
+.offrow .off-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.offrow .dest { margin-left: auto; }
+.offrow .left {
+  flex: none;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink-2);
+  transition: color 200ms ease;
+}
+.offrow .left.warn { color: var(--warn); }
+.offrow .left.crit { color: var(--crit); }
+
+/* ------------------------------------------------------- printing
+ *
+ * A print is the sheets and nothing else: the four operator sheets
+ * and the four rig sheets, two-up. Both panels are always in the DOM,
+ * which is why the hidden one can be brought back here.             */
+
+@media print {
+  @page { margin: 8mm; size: landscape; }
+
+  body { background: #fff; color: #000; font-size: 11px; }
+  .wrap { max-width: none; padding: 0; gap: 0.6rem; }
+
+  .modes, .setup, .fit, .actions, .tabs, .toast,
+  #view-live, #sec-roster, #panel-push, .legend { display: none !important; }
+
+  #view-plan[hidden] { display: flex !important; }
+  .masthead { border-bottom: 1px solid #000; padding-bottom: 0.4rem; }
+  .masthead p { display: none; }
+
+  #panel-ops[hidden], #panel-rigs[hidden] { display: flex !important; }
+  .sheet-section { break-before: page; }
+  #panel-rigs { break-before: page; }
+
+  .scroller { overflow: visible; border: 0; }
+  table.sched { width: 100%; min-width: 0; font-size: 8px; }
+  th.stub { position: static; width: 118px; min-width: 118px; padding: 1px 4px; }
+  th.stub b { font-size: 8px; }
+  th.stub small, th.stub i { display: none; }
+  th.tick { width: auto; min-width: 0; font-size: 7px; padding: 2px 0; }
+  td.cell { width: auto; min-width: 0; height: auto; font-size: 7px; padding: 1px 0; }
+  tr.band td span { display: none; }
+}
