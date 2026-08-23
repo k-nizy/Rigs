@@ -11,10 +11,10 @@ npm run serve           # http://127.0.0.1:8765/
 ```
 
 That starts `apps/server/`, which serves the whole tree *and* carries the
-push. `/apps/desk/` is the manager's screen, `/apps/rig/` is one rig's
-screen. `./serve.sh` is still there as a plain static server (no push,
-python only) for cases where node is not available. No dependencies on
-either path. `./build.sh` (or `npm run build`) regenerates the two
+push. `/rotation-desk-v1/` is the manager's screen, `/apps/rig/` is one
+rig's screen. `./serve.sh` is still there as a plain static server (no
+push, python only) for cases where node is not available. No dependencies
+on either path. `./build.sh` (or `npm run build`) regenerates the two
 single-file distributions.
 
 ## Layout
@@ -28,17 +28,20 @@ package.json                   just for `npm test` - no runtime deps
 packages/                      code that is imported, not deployed
   engine/rotation-engine.js    THE SCHEDULE. no DOM, no globals, runs under node too
   engine/engine.test.js        headless assertions on the engine
+  engine/reference-sheet.test.js  the sheet transcribed cell by cell
   demo-roster/demo-roster.js   the example floor both apps open with
   schema/payload.js            the shape the desk pushes and the rig consumes
   schema/schema.test.js        every demo payload has to validate
 
+rotation-desk-v1/              the manager's app - the name is the version
+  README.md                    the format, and what is deliberately fixed
+  index.html
+  assets/desk.css
+  assets/desk.js               roster state, the sheets, "Push to floor"
+  dist/rotation-desk.html      single-file build, for publishing
+  tools/make-single-file.py
+
 apps/                          things that are deployed
-  desk/                        the manager's app
-    index.html
-    assets/desk.css
-    assets/desk.js             roster state, rendering, "Push to floor"
-    dist/rotation-desk.html    single-file build, for publishing
-    tools/make-single-file.py
   rig/                         the operator's app, one per rig
     index.html
     assets/rig.css
@@ -124,9 +127,23 @@ GET  /api/rigs/:rigId/schedule.json  -> the payload for that rig
 GET  /api/state                      -> { pushedAt, rigs: [...] }
 ```
 
+## The desk is locked to the sheet
+
+`rotation-desk-v1/` draws exactly one format and offers no control that
+can leave it: 15-minute blocks, hold-rig, three rigs and four operators
+to a group, 32 rows from 0:00 to 7:45. Time runs down the side and the
+operators run across the top, which is the reference sheet's own layout;
+the second tab is the same schedule read rig-first.
+
+The engine still knows the other rotations - the desk simply never asks.
+`packages/engine/reference-sheet.test.js` holds the sheet transcribed by
+hand and asserts the engine still draws it, so an engine change that
+moves somebody fails the build instead of reaching the floor. See
+`rotation-desk-v1/README.md`.
+
 ## The two rotations
 
-**Hold rig** (default) - an operator keeps one rig until their break, and
+**Hold rig** (what the desk uses) - an operator keeps one rig until their break, and
 the rig changes hands every third block. This reproduces the reference sheet
 exactly. It cannot produce equal-length turns when the whole crew changes at
 once: at block 0 three operators take three rigs but only one can be off per
@@ -137,8 +154,8 @@ Hold needs an even number of off-turns per operator, so break and think come
 out equal: `blocks % 8 == 0`. At 15 minutes that is 32 blocks, four breaks
 and four thinks. 40-minute blocks give 12 and break it.
 
-**Rotate rigs** - an operator moves to the next rig each turn and takes a
-whole turn off. Every handover is the same length and the last one lands
+**Rotate rigs** (in the engine, not offered by the desk) - an operator
+moves to the next rig each turn and takes a whole turn off. Every handover is the same length and the last one lands
 exactly on the shift boundary, at the cost of moving rig every turn. Rotate
 works if and only if the time on rig divides an hour:
 
