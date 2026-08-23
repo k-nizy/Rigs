@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rotation Desk v1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="assets/desk.css">
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="brand">
+      <p class="eyebrow">Teleop floor</p>
+      <h1>Rotation Desk <span class="ver">v1</span></h1>
+    </div>
+    <div class="modes" role="tablist" id="modes" aria-label="Desk mode">
+      <button type="button" role="tab" data-mode="live" aria-selected="true">Live</button>
+      <button type="button" role="tab" data-mode="plan" aria-selected="false">Plan</button>
+    </div>
+  </header>
+
+  <!-- =============================================================
+       LIVE - what the floor is doing right now. Nothing to fill in.
+       ============================================================= -->
+  <main id="view-live">
+
+    <div class="now" id="now">
+      <div class="now-clock">
+        <b class="mono" id="now-time">--:--</b>
+        <span id="now-shift">&nbsp;</span>
+      </div>
+      <div class="now-right">
+        <span class="src" id="now-src">&nbsp;</span>
+        <button type="button" class="btn ghost" id="btn-refresh">Refresh</button>
+      </div>
+    </div>
+
+    <p class="banner" id="banner" hidden></p>
+
+    <div class="board" id="board"></div>
+
+    <p class="upnext" id="upnext"></p>
+  </main>
+
+  <!-- =============================================================
+       PLAN - touched once at the top of a shift, then left alone.
+       ============================================================= -->
+  <main id="view-plan" hidden>
+
+    <div class="setup">
+      <div class="field">
+        <label class="eyebrow" id="lbl-shift">Shift</label>
+        <div class="seg big" id="seg-shift" role="group" aria-labelledby="lbl-shift"></div>
+      </div>
+      <div class="field">
+        <label class="eyebrow" for="in-date">Date</label>
+        <input type="date" id="in-date">
+      </div>
+      <p class="chosen" id="chosen">&nbsp;</p>
+      <p class="fmt mono" id="fmt-line">&nbsp;</p>
+    </div>
+
+    <details class="fit" id="fit">
+      <summary>
+        <span class="dot" id="v-dot"></span>
+        <b id="v-text">&nbsp;</b>
+        <span class="v-sub" id="v-sub"></span>
+      </summary>
+      <div class="fit-body">
+        <p class="verdict-note" id="v-note"></p>
+        <div class="checks" id="checks"></div>
+      </div>
+    </details>
+
+    <section id="sec-roster">
+      <h2>Who is on</h2>
+      <p>Four operators and one task to each group of three rigs. Everything else is worked out from these.</p>
+      <div class="rosters" id="rosters"></div>
+    </section>
+
+    <div class="actions">
+      <button type="button" class="btn" id="btn-push">Push to floor</button>
+      <button type="button" class="btn ghost" id="btn-print">Print sheets</button>
+      <span class="actions-note" id="push-note"></span>
+    </div>
+
+    <section class="sheet-section">
+      <h2 id="sheet-title">The sheet</h2>
+      <p id="sheet-sub">Names down the side, time across the top.</p>
+
+      <div class="tabs" role="tablist" id="tabs">
+        <button type="button" role="tab" data-tab="ops" aria-selected="true">Operator sheet</button>
+        <button type="button" role="tab" data-tab="rigs" aria-selected="false">Rig sheet</button>
+        <button type="button" role="tab" data-tab="push" aria-selected="false">What each rig gets</button>
+        <div class="tab-tools" id="tab-tools"></div>
+      </div>
+
+      <div id="panel-ops" class="stack">
+        <div class="scroller"><table class="sched" id="tbl-ops"></table></div>
+        <div class="legend">
+          <span><i class="swatch w"></i>On a rig. The bar marks a handover</span>
+          <span><i class="swatch b"></i>Break</span>
+          <span><i class="swatch t"></i>Think</span>
+        </div>
+      </div>
+
+      <div id="panel-rigs" class="stack" hidden>
+        <div class="scroller"><table class="sched" id="tbl-rigs"></table></div>
+        <p class="legend"><span>Who is standing at each rig, minute by minute.</span></p>
+      </div>
+
+      <div id="panel-push" hidden>
+        <div class="scroller">
+          <div class="payload-head" id="push-head"></div>
+          <pre class="json" id="push-body"></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="../packages/engine/rotation-engine.js"></script>
+<script src="../packages/demo-roster/demo-roster.js"></script>
+<script src="assets/desk.js"></script>
+</body>
+</html>

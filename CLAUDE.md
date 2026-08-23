@@ -22,20 +22,24 @@ the budget the audit checks against.
 ## Repository shape
 
 ```
-packages/    imported, not deployed
-  engine/          the schedule algorithm + headless tests
-  demo-roster/     the example floor both apps open with
-  schema/          payload + event shapes (empty until server lands)
+packages/           imported, not deployed
+  engine/               the schedule algorithm + headless tests
+  demo-roster/          the example floor both apps open with
+  schema/               payload shape, validated on every push
 
-apps/        deployed
-  desk/            manager's screen
-  rig/             operator's per-rig screen
-  server/          push transport + event ingestion (empty until built)
+rotation-desk-v1/   deployed - manager's screen. the name is the version
+apps/               deployed
+  rig/                  operator's per-rig screen
+  server/               push transport
 ```
 
-`packages/` vs `apps/` is the only structural rule: if code is *imported
-by an app*, it lives under `packages/`. If code is *shipped and run*, it
-lives under `apps/`.
+If code is *imported by an app*, it lives under `packages/`. If code is
+*shipped and run*, it is a top-level app folder.
+
+The desk sits at the top level under its version name rather than in
+`apps/` because the version *is* the contract: `rotation-desk-v1` draws
+one format, and a change of format is a new folder, not an edit to this
+one. That name does not get refactored away.
 
 ## The load-bearing invariant
 
@@ -49,9 +53,40 @@ change the engine, the tests are the guardrail; if you change something
 that affects the schedule and *don't* touch the engine, you have
 introduced drift.
 
+## The sheet is the format
+
+The desk draws one thing: the reference sheet. Time down the side in
+15-minute rows, `0:00` to `7:45`; the four operators across the top;
+cells reading `Work RIG-01` / `Break` / `Think`; one sheet per group,
+four of them two-up. The second tab is the identical schedule read
+rig-first — `Rig 1 | Rig 2 | Rig 3` across the top, `Op 2 / M. Chen` in
+the cells — which is the visualisation the sheet puts beside group A.
+
+There is no grid-size control and no rotate/hold switch on the desk.
+That is deliberate and is what `v1` in the folder name means:
+
+```
+15-minute blocks · hold rig · 3 rigs / 4 operators · 32 rows
+one operator off per block, the slot walking 4, 3, 2, 1
+four blocks of Break, then four of Think
+6h work + 60 min break + 60 min think, per operator
+```
+
+The engine still implements `rotate` and other block sizes and they are
+still tested — the desk never asks for them. If the format has to
+change, that is `rotation-desk-v2`, not a setting.
+
+`packages/engine/reference-sheet.test.js` is the guardrail: the sheet
+transcribed by hand as data (which operator is on which rig in all 32
+blocks, who is off and whether it is written Break or Think), asserted
+against the engine. It also reads a pushed payload back through
+`whoIsOn()` block by block, so the rig is checked against the same
+transcription the desk is. If that file fails, the engine and the sheet
+have parted company.
+
 ## The two rotation modes
 
-**Hold rig** (default) — an operator keeps one rig until their break, and
+**Hold rig** (the one the desk draws) — an operator keeps one rig until their break, and
 the rig changes hands every third block. Fits the reference sheet
 exactly. Necessarily produces 1/2/3-block "stub" turns at each end of the
 shift because only one operator can be off per block; that is a property
@@ -164,9 +199,16 @@ implicit requirements to fill in.
 - Run everything (server + push): `npm run serve`  →  `http://127.0.0.1:8765/`
 - Static-only fallback (no push): `./serve.sh` (python)
 - Rebuild the two single-file dists: `./build.sh` (or `npm run build`)
-- Run the tests: `npm test`  (engine + schema + server end-to-end)
+- Run the tests: `npm test`  (engine + the reference sheet + schema +
+  server end-to-end + both screens, headless)
+- The desk is at `/rotation-desk-v1/`, the rig at `/apps/rig/`
 
 Before changing anything in `packages/engine/`, run the tests. Before
 changing the payload shape, remember it is a contract between three
 things (desk, server, rig) — update `packages/schema/payload.js` at the
 same time or the server will start rejecting the desk's pushes.
+
+Before changing what the desk *draws*, read
+`rotation-desk-v1/README.md`. The format is fixed on purpose, and the
+version lives in the folder name so it cannot be edited away by
+accident.
