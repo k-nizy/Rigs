@@ -69,18 +69,78 @@ test("opens on the shift check, with the pushed rig in the rail",
   }));
 
 test("the rail reads the schedule, not a guess",
-  withRig({}, async (rig) => {
+  withRig({ search: "?demo" }, async (rig) => {
     rig.frames(2);
     assert.equal(rig.rail().next, FIRST.relievedBy, "next up is the relief the payload names");
     assert.equal(rig.rail().then, FIRST.theyGoTo, "where they go has to travel in the payload");
   }));
 
 test("the frame loop actually runs the clock",
-  withRig({}, async (rig) => {
+  withRig({ search: "?demo" }, async (rig) => {
     rig.frames(1);
     const first = rig.rail().block;
     rig.frames(20);
     assert.notEqual(rig.rail().block, first, "the block countdown never moved");
+  }));
+
+/* ------------------------------------------------------------ the clock
+ *
+ * A deployed rig ran a 30x demo clock for most of this project's life,
+ * because the first prototype ran fast "so a 45-minute stint is
+ * watchable" and nothing revisited it. These pin the corrected default:
+ * the floor is the default, the demo is the special case.
+ */
+
+test("by default the rig boots into the turn that is actually happening",
+  withRig({ at: "10:37" }, async (rig) => {
+    rig.frames(2);
+    /* 10:37 falls inside the third turn. A rig on the wall clock knows
+       that; a rig on the shift clock thinks the shift has just begun. */
+    const now = payloadFor("RIG-03").turns.find((t) => t.from === "10:30");
+    assert.equal(rig.rail().next, now.relievedBy,
+      "the rig is not reading the wall clock - it thinks it is 08:00");
+    assert.equal(rig.rail().then, now.theyGoTo);
+  }));
+
+test("with ?demo the shift clock comes back, for review",
+  withRig({ at: "10:37", search: "?demo" }, async (rig) => {
+    rig.frames(2);
+    assert.equal(rig.rail().next, FIRST.relievedBy,
+      "?demo should start the shift from the top, not follow the wall clock");
+  }));
+
+test("the demo clock runs faster than the floor clock",
+  withRig({ at: "10:37", search: "?demo=60" }, async (rig) => {
+    rig.frames(1);
+    const before = rig.rail().block;
+    rig.frames(30);
+    assert.notEqual(rig.rail().block, before, "the demo clock did not move");
+  }));
+
+test("a rig says so when it is not running the ordinary thing",
+  withRig({}, async (rig) => {
+    rig.frames(1);
+    // no server, no file - this schedule is one the rig made up
+    assert.match(rig.$("rail-mode").textContent, /not pushed/,
+      "a rig running an unpushed schedule looked identical to a correct one");
+  }));
+
+test("a rig on a pushed schedule and the wall clock says nothing extra",
+  withRig({
+    fetchImpl: (url) => (url.startsWith("/api/rigs/")
+      ? Promise.resolve({ ok: true, json: async () => payloadFor("RIG-03") })
+      : Promise.reject(new Error("no file"))),
+  }, async (rig) => {
+    rig.frames(1);
+    assert.equal(rig.$("rail-mode").textContent, "",
+      "the mode line should be silent when everything is ordinary");
+  }));
+
+test("a demo clock is always declared",
+  withRig({ search: "?demo=30" }, async (rig) => {
+    rig.frames(1);
+    assert.match(rig.$("rail-mode").textContent, /demo clock 30/,
+      "an accelerated clock must never be invisible");
   }));
 
 /* ------------------------------------------------- where the schedule comes from */
@@ -115,12 +175,22 @@ test("with nothing at all, the rig generates the same schedule the desk would",
   withRig({}, async (rig) => {
     rig.frames(1);
     // no fetch succeeds, so this is the local build - and it must agree
-    // with the engine the desk runs
+    // with the engine the desk runs. Assert against the turn actually in
+    // progress: the first turn's relief happens to share a name with it,
+    // so checking that one would pass on either clock and prove nothing.
+    const now = payloadFor("RIG-03").turns.find((t) => t.from === "10:30");
     assert.equal(rig.rail().task, payloadFor("RIG-03").task);
-    assert.equal(rig.rail().next, FIRST.relievedBy);
+    assert.equal(rig.rail().next, now.relievedBy);
+    assert.equal(rig.rail().then, now.theyGoTo);
   }));
 
-/* ----------------------------------------------------------- the loop */
+/* ----------------------------------------------------------- the loop
+ *
+ * Tests that jump the clock with H, or that expect the shift to start
+ * from the top, mount with `?demo`. That is not a workaround: you
+ * cannot fast-forward a wall clock, and time travel is a review
+ * affordance. A rig on the floor has neither.
+ */
 
 test("the loop goes round: check, handover, record, review, reset",
   withRig({}, async (rig) => {
@@ -240,7 +310,7 @@ test("holding the right pedal withdraws the report and charges the time back",
 /* -------------------------------------------------------- the handover */
 
 test("a turn boundary never interrupts a take",
-  withRig({}, async (rig) => {
+  withRig({ search: "?demo" }, async (rig) => {
     toRecording(rig);
     rig.demoKey("h");                      // jump to the boundary
     rig.frames(3);
@@ -253,7 +323,7 @@ test("a turn boundary never interrupts a take",
   }));
 
 test("nothing tears the stage down mid-take, however long the take runs",
-  withRig({}, async (rig) => {
+  withRig({ search: "?demo" }, async (rig) => {
     toRecording(rig);
     const rebuilds = rig.countRebuilds("stage");
     const before = rebuilds();
@@ -272,7 +342,7 @@ test("nothing tears the stage down mid-take, however long the take runs",
   }));
 
 test("the stint is credited to the operator who worked it, not the one arriving",
-  withRig({}, async (rig) => {
+  withRig({ search: "?demo" }, async (rig) => {
     toRecording(rig);
     rig.frames(4);
     rig.press(3); rig.frames(1);
@@ -288,7 +358,7 @@ test("the stint is credited to the operator who worked it, not the one arriving"
   }));
 
 test("the handover screen names the operator taking the rig, every time",
-  withRig({}, async (rig) => {
+  withRig({ search: "?demo" }, async (rig) => {
     toHandover(rig);
     assert.match(rig.stage(), new RegExp(FIRST.operator.name));
     rig.demoKey("h");
@@ -365,7 +435,7 @@ test("the drawer offers every screen and every rig on the floor",
   }));
 
 test("switching rig reads the schedule as that rig, not as this one",
-  withRig({}, async (rig) => {
+  withRig({ search: "?demo" }, async (rig) => {
     rig.frames(1);
     await global.switchRig("RIG-07");
     await rig.settle();
