@@ -371,10 +371,14 @@ test("the handover screen names the operator taking the rig, every time",
 
 /* ------------------------------------------------------- every screen */
 
-const SCREENS = ["checklist", "fault-class", "fault-fixing", "handover",
+const SCREENS = ["standby", "checklist", "fault-class", "fault-fixing", "handover",
   "recording", "review", "resetting", "issue-menu", "rig-down"];
 
-for (const id of SCREENS) {
+/* Standby is excluded on purpose: it is the one screen that *should* be
+   left the moment the schedule says somebody is due, which is true at the
+   10:37 these mount at. Its own reachability is asserted below, in the
+   dead hours where it belongs. */
+for (const id of SCREENS.filter((s) => s !== "standby")) {
   test("#" + id + " is reachable, and stays put once it is there",
     withRig({}, async (rig) => {
       rig.frames(1);
@@ -455,4 +459,77 @@ test("restarting the shift clears the log and returns to the check",
     rig.frames(1);
     assert.equal(rig.screen(), "checklist");
     assert.equal(rig.log().length, 1, "a restart starts a fresh shift");
+  }));
+
+/* ------------------------------------------------------------- standby
+ *
+ * A rig that boots when nothing is scheduled used to show a start-of-shift
+ * checklist counting down beside a rail reading "End of shift" - two
+ * contradictory claims on one screen. Making the clock honest exposed it;
+ * Standby is the screen that was missing.
+ */
+
+/* 02:33 - after the Morning shift's schedule was pushed, long before it
+   runs. The exact situation in the screenshot that prompted this. */
+const DEAD_HOURS = { at: "02:33" };
+
+test("with nothing scheduled, the rig says so instead of contradicting itself",
+  withRig(DEAD_HOURS, async (rig) => {
+    rig.frames(2);
+    assert.equal(rig.screen(), "standby");
+    assert.match(rig.stage(), /Morning · 08:00/, "it should name the shift it is waiting for");
+    assert.match(rig.stage(), new RegExp(FIRST.operator.name), "and who is due first");
+    assert.doesNotMatch(rig.stage(), /Check the rig/,
+      "a start-of-shift checklist has no business running at 02:33");
+  }));
+
+test("standby clears the rail instead of leaving it contradicting the screen",
+  withRig(DEAD_HOURS, async (rig) => {
+    rig.frames(2);
+    const rail = rig.rail();
+    assert.equal(rail.block, "—", "there is no block running");
+    assert.equal(rail.then, "—", "nobody is going anywhere");
+    assert.equal(rail.next, FIRST.operator.name, "but who is on first is worth saying");
+    assert.equal(rail.due, false);
+  }));
+
+test("standby still gives the operator something to press",
+  withRig(DEAD_HOURS, async (rig) => {
+    rig.frames(1);
+    assert.deepEqual(rig.pedals(), ["—", "Check the rig", "—"]);
+  }));
+
+test("the rig can be checked before the shift, and returns to standby",
+  withRig(DEAD_HOURS, async (rig) => {
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    assert.equal(rig.screen(), "checklist", "middle pedal starts the check early");
+    rig.press(2); rig.frames(1);
+    assert.equal(rig.screen(), "standby", "and it comes back - nobody is due yet");
+    assert.match(rig.stage(), /all four passed/);
+    assert.deepEqual(rig.pedals(), ["—", "Check again", "—"]);
+    assert.equal(rig.logOf("shift_check").length, 2, "the early check is a real event");
+  }));
+
+test("inside the shift the rig still opens on the check, not standby",
+  withRig({ at: "10:37" }, async (rig) => {
+    rig.frames(2);
+    assert.equal(rig.screen(), "checklist", "somebody is due at this rig right now");
+  }));
+
+test("#standby is reachable in the dead hours, and holds",
+  withRig(DEAD_HOURS, async (rig) => {
+    rig.frames(1);
+    rig.hashTo("standby");
+    rig.frames(3);
+    assert.equal(rig.screen(), "standby");
+  }));
+
+test("standby does not survive the shift starting",
+  withRig({ search: "?demo" }, async (rig) => {
+    rig.frames(1);
+    rig.hashTo("standby");
+    rig.frames(3);
+    assert.notEqual(rig.screen(), "standby",
+      "somebody is due at this rig - standing on standby would hide that");
   }));
