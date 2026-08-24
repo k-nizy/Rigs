@@ -210,12 +210,28 @@
       mode: cfg.mode,
       shift: shiftById(cfg.shift),
       date: cfg.date,
+      tz: cfg.tz || localZone(),
       nBlocks: nBlocks,
       groups: planned,
     };
   }
 
   // --------------------------------------------------------------- time
+
+  /* The floor's own zone, as an IANA name.
+   *
+   * Every "HH:MM" in a payload is wall-clock time on the floor, and a
+   * reader in another zone - a server keeping UTC, say - cannot recover
+   * that from the string. So it travels with the schedule instead of
+   * being assumed at both ends, which is the only way the desk, the rig
+   * and the backend can agree on when a turn starts. */
+  function localZone() {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    } catch (e) {
+      return "UTC";
+    }
+  }
 
   function hhmm(mins) {
     var h = Math.floor(mins / 60) % 24, m = mins % 60;
@@ -413,6 +429,7 @@
         date: plan.date,
         start: hhmm(plan.shift.start),
         end: hhmm(shiftEnd(plan)),
+        tz: plan.tz || localZone(),
       },
       blockMinutes: plan.blockMin,
       rotation: plan.mode,

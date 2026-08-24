@@ -13,7 +13,8 @@ to subscribe to - which is why these are swept for on a timer instead.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo as TzInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Alert kinds. Stable strings: they are stored, and the desk renders them.
 RIG_SILENT = "rig_silent"
@@ -145,12 +146,40 @@ def turn_overran(rig_id: str, turn_from: str, turn_to: str,
 
 # ------------------------------------------------------------- helpers
 
-def turn_bounds(shift_date, turn: dict, tz) -> tuple[datetime, datetime]:
+def payload_zone(payload: dict, fallback: TzInfo) -> TzInfo:
+    """The floor's own zone, as the desk wrote it into the payload.
+
+    Every "HH:MM" in a payload is wall-clock time *on the floor*. Reading
+    them in the server's zone is how this system spent a day believing no
+    turn was in progress on any of twelve rigs: the desk meant 00:15 local
+    and a UTC server heard 00:15 UTC, which on a floor at UTC+3 is three
+    hours into the previous shift.
+
+    So the zone travels with the schedule and is read here, never assumed.
+    `fallback` covers schedules pushed before the field existed; a payload
+    that carries one is always believed over it.
+    """
+    name = (payload.get("shift") or {}).get("tz")
+    if not name:
+        return fallback
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        # An unknown zone is the desk and this server disagreeing about
+        # the tz database. Falling back keeps the floor readable; being
+        # wrong quietly in the other direction is what this fixed.
+        return fallback
+
+
+def turn_bounds(shift_date, turn: dict, tz: TzInfo) -> tuple[datetime, datetime]:
     """Absolute start and end of a turn, read from the pushed payload.
 
     Read, never derived. The rotation is computed in exactly one shared
     JavaScript file, and this is not it; these are the `from` and `to` the
     desk already wrote into the payload.
+
+    `tz` must be the floor's zone - see `payload_zone`. It is a parameter
+    rather than a lookup so this stays a pure function of its arguments.
 
     A turn whose `to` is not after its `from` has crossed midnight, which
     the Night shift does every day.
@@ -166,10 +195,16 @@ def turn_bounds(shift_date, turn: dict, tz) -> tuple[datetime, datetime]:
     return start, end
 
 
-def turn_in_progress(payload: dict, shift_date, now: datetime, tz) -> dict | None:
-    """Which turn the schedule says is running, or None outside the shift."""
+def turn_in_progress(payload: dict, shift_date, now: datetime,
+                     tz: TzInfo) -> dict | None:
+    """Which turn the schedule says is running, or None outside the shift.
+
+    `tz` is only the fallback: the payload's own zone wins when it has one.
+    `now` may be in any zone - both sides of the comparison are aware.
+    """
+    zone = payload_zone(payload, tz)
     for turn in payload.get("turns", []):
-        start, end = turn_bounds(shift_date, turn, tz)
+        start, end = turn_bounds(shift_date, turn, zone)
         if start <= now < end:
             return {"turn": turn, "start": start, "end": end}
     return None

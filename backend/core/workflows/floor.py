@@ -29,6 +29,7 @@ from core.domains.rig_shift_checks.model import RigShiftCheck
 from core.domains.rig_status.model import RigStatus
 from core.domains.rig_status.repository import RigStatusRepository
 from core.domains.schedules.model import Schedule
+from core.domains.schedules.repository import ScheduleRepository
 from core.rules import floor as rules
 from core.rules.efficiency import Stint, efficiency
 
@@ -149,8 +150,17 @@ async def sweep(
         if hit:
             found.append(hit)
 
+    schedules = ScheduleRepository(session)
     for block in await _overruns(session, overrun_look_back_hours):
-        sched = await _current_schedule(session, block.rig_id)
+        # The schedule that was in force for *this block's* shift, not
+        # whatever happens to have been pushed most recently. Turn labels
+        # like "01:00" repeat on every shift of every day, so matching a
+        # finished block against the current schedule silently measures it
+        # against a boundary on another date - which read as a turn that
+        # had overrun by twenty-three hours.
+        sched = await schedules.for_shift(
+            block.rig_id, block.shift_date, block.shift_label
+        )
         if sched is None or block.turn_from is None:
             continue
         turn = next(
@@ -159,7 +169,10 @@ async def sweep(
         )
         if turn is None:
             continue
-        _, boundary = rules.turn_bounds(block.shift_date, turn, now.tzinfo)
+        # The floor's zone, not the server's - an overrun is measured
+        # against a boundary that happened on the floor.
+        zone = rules.payload_zone(sched.payload, now.tzinfo)
+        _, boundary = rules.turn_bounds(block.shift_date, turn, zone)
         hit = rules.turn_overran(
             block.rig_id, turn["from"], turn["to"], block.ended_at, boundary
         )

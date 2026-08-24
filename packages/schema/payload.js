@@ -35,6 +35,10 @@
       reqString(p.shift, "date",  e, "shift.");
       reqHHMM(p.shift,   "start", e, "shift.");
       reqHHMM(p.shift,   "end",   e, "shift.");
+      // The floor's IANA zone. Required: every time in this payload is
+      // floor wall-clock, and a reader in another zone cannot recover
+      // which one without being told.
+      reqString(p.shift, "tz", e, "shift.");
     }
 
     if (!Array.isArray(p.turns)) { e.push("turns is not an array"); }

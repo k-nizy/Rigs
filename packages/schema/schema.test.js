@@ -46,3 +46,30 @@ test("validate rejects a bad rotation", () => {
   assert.equal(v.ok, false);
   assert.ok(v.errors.some(e => e.includes("rotation")));
 });
+
+/* The zone. Added after the backend read a payload's "00:15" as 00:15 UTC
+ * while the floor meant 00:15 local, and quietly decided no turn was in
+ * progress on any of the twelve rigs. */
+
+test("the payload says which zone its wall-clock times are in", () => {
+  const cfg  = Object.assign({ date: "2026-08-22" }, ROSTER.defaults);
+  const plan = RE.buildPlan(cfg, ROSTER.groups);
+  const p    = RE.rigPayload(plan, "RIG-03");
+  assert.equal(typeof p.shift.tz, "string");
+  assert.ok(p.shift.tz.length > 0, "the zone is empty");
+});
+
+test("the zone can be pinned, so a desk can schedule a floor it is not standing on", () => {
+  const cfg  = Object.assign({ date: "2026-08-22", tz: "Africa/Nairobi" }, ROSTER.defaults);
+  const plan = RE.buildPlan(cfg, ROSTER.groups);
+  assert.equal(RE.rigPayload(plan, "RIG-03").shift.tz, "Africa/Nairobi");
+});
+
+test("validate rejects a payload with no zone", () => {
+  const v = validate({ rigId: "R", group: "A", task: "x",
+                       shift: { label: "M", date: "d", start: "08:00", end: "16:00" },
+                       blockMinutes: 15, rotation: "hold", turns: [] });
+  assert.equal(v.ok, false);
+  assert.ok(v.errors.some(e => e.includes("shift.tz")),
+            "a payload whose times belong to no zone has to be refused: " + v.errors.join("; "));
+});

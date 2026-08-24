@@ -129,16 +129,23 @@ function todaysPayload() {
     ok("projected " + projected.body.projected + " ledger rows");
 
     step("7. the take shows on the floor");
+    /* The episode this run just recorded, by id - not "some saved episode",
+       which an earlier run leaves lying in the table and which would let
+       this step pass while nothing at all had projected. */
+    const mine = filed.find((e) => e.event === "episode_saved");
+    const wanted = mine.data.episodeId;
+
     const eps = await api("GET", "/api/dev/episodes?rig_id=" + RIG);
     assert.equal(eps.status, 200);
-    const saved = eps.body.episodes.filter((e) => e.outcome === "saved");
-    assert.ok(saved.length >= 1, "no saved episode reached the episodes table");
-    const one = saved[saved.length - 1];
-    assert.ok([3, 4, 5].includes(one.score), "score did not survive: " + one.score);
+    const one = eps.body.episodes.find((e) => e.episodeId === wanted);
+    assert.ok(one, `episode ${wanted} never reached the episodes table`);
+    assert.equal(one.outcome, "saved");
+    assert.equal(one.score, mine.data.score, "the score changed on the way in");
     assert.ok(one.durationSecs > 0, "duration did not survive: " + one.durationSecs);
-    assert.ok(one.operatorId, "the episode is unattributed");
+    assert.equal(one.operatorId, mine.operatorId,
+      "the episode was attributed to somebody else");
     ok(`episode ${one.episodeId.slice(0, 8)} scored ${one.score}, ` +
-       `${one.durationSecs}s, ${one.operatorId}`);
+       `${one.durationSecs}s, ${one.operatorId} - the one this run recorded`);
 
     step("8. the desk's board can read it");
     const beat = await api("POST", `/api/rigs/${RIG}/heartbeat`,

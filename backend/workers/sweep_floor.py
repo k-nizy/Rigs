@@ -12,7 +12,6 @@ can be subscribed to. The only way to notice them is to go and look.
 import argparse
 import asyncio
 import logging
-import time
 
 from core.infrastructure.config import get_settings
 from core.infrastructure.database import sessionmaker
@@ -45,7 +44,9 @@ async def run(every_secs: float, once: bool, silent_after: int, idle_grace: int)
             attempt += 1
             wait = min(backoff_base ** attempt, 60)
             log.exception("sweep failed, retrying in %ss", wait)
-            time.sleep(wait)
+            # await, not time.sleep: this is an async function, and a
+            # blocking sleep here stops the whole loop it runs on.
+            await asyncio.sleep(wait)
             continue
 
         if once:

@@ -157,10 +157,23 @@ the page. Nobody ever types "RIG-07". This is the same decision the app
 already made when it deleted its login screen — if the system knows, do
 not ask.
 
-### 3. `apps/server` — grown, not replaced
+### 3. The service — Python, in the platform team's tree
 
-Node, as chosen. It stays zero-dependency plain-node and keeps its current
-job; it gains a second one. Three new routes:
+> **Superseded.** This section was written as "grow `apps/server` in
+> Node", and that is what the decision below said. It changed when the
+> platform team's codebase structure arrived: the return arrow is now
+> `backend/`, a FastAPI service laid out in their convention
+> (`gateway → services → core`, arrows enforced in CI by import-linter)
+> so that `core/` and `services/rigs/` lift into their tree unmodified.
+>
+> `apps/server` still exists and still serves the desk's push for a
+> plain static deploy. It is no longer where ingest is going.
+>
+> Everything below this line — the routes, the cursor, idempotency,
+> all-or-nothing batches — was implemented exactly as written. Only the
+> language and the address changed.
+
+The routes, as built:
 
 ```
 POST /api/rigs/:rigId/events               { events: [...] }   → { accepted, seq }
@@ -377,10 +390,26 @@ absorbing.
 
 ## Decisions this plan takes, and why
 
-**Node for the backend, growing `apps/server`.** Chosen. It keeps one
-language across desk, server, schema and tests, and the existing server
-already does the hard parts — validation at the door, atomic state, an
-end-to-end test. Ingest is the same shape as push pointed the other way.
+**~~Node for the backend, growing `apps/server`.~~ Superseded: Python,
+in the platform team's tree.** The original argument was one language
+across desk, server, schema and tests, and it was a good one. What
+outweighed it was where this code has to end up: the platform team runs
+FastAPI, SQLAlchemy and Alembic in a layered tree they enforce in CI, and
+a Node service would have had to be rewritten at the handover by people
+who did not write it.
+
+So `backend/` is Python and is laid out in their convention from the
+first commit. The cost is a second language and a duplicated event
+envelope — `packages/schema/event.js` and
+`core/domains/rig_events/schema.py`. That cost is paid down deliberately:
+`packages/schema/fixtures/` is loaded by both suites, so the two halves
+cannot drift without CI saying which one broke.
+
+The one thing that did **not** move is the rotation. It is computed in
+exactly one shared JavaScript file, and the service stores the pushed
+payload opaque and reads it back rather than re-deriving it. A Python
+re-implementation would be a third answer and the first one that could
+silently disagree.
 
 **Tauri as the wrapper rather than a rewrite of the rig app.** The rig UI
 is finished and good, and it was designed under a real constraint — read

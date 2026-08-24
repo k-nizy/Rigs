@@ -25,3 +25,7 @@ backend/.import_linter_cache/
 backend/*.egg-info/
 backend/.storage/
 backend/.minio-data/
+
+# local dev server logs
+backend/.gateway.log
+backend/.gateway.err

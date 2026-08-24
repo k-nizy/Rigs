@@ -16,6 +16,7 @@ from sqlalchemy import select
 from core.domains.alerts.model import Alert
 from core.domains.alerts.repository import AlertRepository
 from core.domains.rig_events.model import RigEvent
+from core.domains.rig_productivity_blocks.model import RigProductivityBlock
 from core.domains.rig_status.repository import RigStatusRepository
 from core.domains.schedules.model import Schedule
 from core.rules import floor as rules
@@ -344,3 +345,129 @@ async def test_the_efficiency_route_serves(client, session):
     })
     assert r.status_code == 200
     assert r.json()["shiftLabel"] == "Morning"
+
+
+# --------------------------------------------------------------- the zone
+#
+# Added after /api/floor/state reported no turn in progress on any of the
+# twelve rigs while both apps showed a live turn with forty minutes on it.
+# The payload's "00:15" is floor wall-clock; the server read it as UTC.
+
+
+class TestTheZoneTravelsWithTheSchedule:
+
+    PAYLOAD_TZ = {
+        "shift": {"label": "Night", "date": "2026-08-24", "start": "00:00",
+                  "end": "08:00", "tz": "Africa/Nairobi"},
+        "turns": [{"from": "00:15", "to": "01:00", "minutes": 45,
+                   "operator": {"id": "op-a4", "name": "Nadia Haddad"}}],
+    }
+
+    def test_the_floors_zone_is_read_from_the_payload(self):
+        zone = rules.payload_zone(self.PAYLOAD_TZ, UTC)
+        assert str(zone) == "Africa/Nairobi"
+
+    def test_a_payload_without_a_zone_falls_back_rather_than_crashing(self):
+        """Schedules pushed before the field existed are still readable."""
+        assert rules.payload_zone({"shift": {"label": "M"}}, UTC) is UTC
+
+    def test_an_unknown_zone_falls_back(self):
+        assert rules.payload_zone({"shift": {"tz": "Mars/Olympus"}}, UTC) is UTC
+
+    def test_a_turn_is_found_from_a_utc_clock_on_a_floor_that_is_not_utc(self):
+        """The bug, written down.
+
+        The floor keeps UTC+3, so its 00:15-01:00 turn on the 24th runs
+        from 21:15Z to 22:00Z on the 23rd. At 21:30Z an operator is at the
+        rig. Read in the server's own zone that instant falls outside every
+        turn in the payload, and all twelve rigs look unscheduled.
+        """
+        now = datetime(2026, 8, 23, 21, 30, tzinfo=UTC)
+        found = rules.turn_in_progress(
+            self.PAYLOAD_TZ, date(2026, 8, 24), now, UTC
+        )
+        assert found is not None, "the floor's turn was invisible to a UTC server"
+        assert found["turn"]["from"] == "00:15"
+
+    def test_the_same_clock_reads_as_no_turn_if_the_zone_is_ignored(self):
+        """The control: without the zone, this is what used to happen."""
+        no_tz = {"shift": {k: v for k, v in self.PAYLOAD_TZ["shift"].items() if k != "tz"},
+                 "turns": self.PAYLOAD_TZ["turns"]}
+        now = datetime(2026, 8, 23, 21, 30, tzinfo=UTC)
+        assert rules.turn_in_progress(no_tz, date(2026, 8, 24), now, UTC) is None
+
+    def test_idle_can_fire_on_a_non_utc_floor(self):
+        """`rig_idle` needs a turn in progress. While the zone was assumed
+        it could not fire at all, which is the alert for nobody arriving."""
+        now = datetime(2026, 8, 23, 21, 30, tzinfo=UTC)
+        found = rules.turn_in_progress(self.PAYLOAD_TZ, date(2026, 8, 24), now, UTC)
+        alert = rules.rig_idle(
+            "RIG-03", found["turn"]["from"], found["start"],
+            None, now, grace_secs=300,
+        )
+        assert alert is not None
+        assert alert.kind == rules.RIG_IDLE
+
+
+class TestAnOverrunIsMeasuredAgainstTheRightShift:
+    """A finished block is judged by the schedule that was in force for
+    *its own* shift, not by whatever was pushed most recently.
+
+    The two lookups only disagree when a later push reuses a turn label
+    with a different boundary - which is exactly what changing the block
+    size does. Then "the most recent schedule" moves the finish line under
+    a block that already ended, and an on-time stint is reported as an
+    overrun.
+    """
+
+    # Pushed later, and re-cut into shorter turns. Same "08:00" label.
+    RECUT = {
+        "shift": {"label": "Morning", "date": "2026-08-25", "start": "08:00",
+                  "end": "16:00", "tz": "UTC"},
+        "turns": [{"from": "08:00", "to": "08:15", "minutes": 15,
+                   "operator": {"id": "op-a1", "name": "Aleksandr Petrov"},
+                   "relievedBy": "Mei Chen", "theyGoTo": "Break"}],
+    }
+
+    async def _block(self, session, ended_at):
+        session.add(RigProductivityBlock(
+            rig_id=RIG, shift_date=DAY, shift_label="Morning",
+            turn_from="08:00", operator_id="op-a1", ended_at=ended_at,
+            episodes=1, recorded_secs=100.0, assigned_secs=2700.0,
+            fault_secs=0, down_secs=0, source_event=987001,
+        ))
+        await session.commit()
+
+    async def _overruns(self, session):
+        return [a for a in await AlertRepository(session).open_alerts()
+                if a.kind == rules.TURN_OVERRAN]
+
+    async def test_a_later_re_cut_schedule_does_not_move_a_finished_boundary(
+            self, client, session):
+        """The block ran 08:00-08:44 and its own turn ended at 08:45. A
+        schedule pushed the next day cuts that turn at 08:15; judged by it,
+        an on-time stint looks 29 minutes late."""
+        await push_schedule(session)                        # Morning, DAY, 08:00-08:45
+        session.add(Schedule(
+            push_id=uuid.uuid4(), pushed_at=at(23, 0), rig_id=RIG,
+            shift_date=date(2026, 8, 25), shift_label="Morning", payload=self.RECUT,
+        ))
+        await session.commit()
+        await self._block(session, at(8, 44))               # inside its own turn
+
+        await sweep(session, now=at(9))
+        found = await self._overruns(session)
+        assert found == [], (
+            "an on-time block was judged against a later schedule: "
+            + "; ".join(a.detail for a in found)
+        )
+
+    async def test_a_real_overrun_on_its_own_shift_still_raises(self, client, session):
+        """The control: the rule still fires when the lookup is right."""
+        await push_schedule(session)
+        await self._block(session, at(8, 50))               # 5 min past 08:45
+
+        await sweep(session, now=at(9))
+        found = await self._overruns(session)
+        assert len(found) == 1, "a genuine overrun stopped being reported"
+        assert "300s" in found[0].detail, found[0].detail

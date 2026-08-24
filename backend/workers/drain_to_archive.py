@@ -11,7 +11,6 @@ noticing, which is the entire argument for having a spool at all.
 import argparse
 import asyncio
 import logging
-import time
 
 from core.infrastructure.database import sessionmaker
 from core.workflows.video import drain_batch
@@ -34,7 +33,9 @@ async def run(poll_secs: float, batch: int, exit_after_empty: int) -> int:
             attempt += 1
             wait = min(backoff_base ** attempt, 60)
             log.exception("drain failed, retrying in %ss", wait)
-            time.sleep(wait)
+            # await, not time.sleep: this is an async function, and a
+            # blocking sleep here stops the whole loop it runs on.
+            await asyncio.sleep(wait)
             continue
 
         if count:

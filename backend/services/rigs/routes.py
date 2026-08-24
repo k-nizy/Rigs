@@ -41,14 +41,16 @@ class HeartbeatOut(BaseModel):
     skewSecs: float
 
 
-@router.get("/rigs/{rig_id}/cursor", response_model=CursorOut)
+@router.get("/rigs/{rig_id}/cursor", response_model=CursorOut, tags=["ingest"],
+            summary="How far this rig's events have been accepted")
 async def cursor(rig_id: str, session: AsyncSession = Depends(get_session)) -> CursorOut:
     """The highest seq held for this rig, or -1 if none. The uploader asks
     on reconnect and resends only what follows."""
     return CursorOut(rigId=rig_id, seq=await RigEventRepository(session).cursor(rig_id))
 
 
-@router.post("/rigs/{rig_id}/events", response_model=IngestResult)
+@router.post("/rigs/{rig_id}/events", response_model=IngestResult, tags=["ingest"],
+             summary="File a batch of events. Safe to send twice")
 async def ingest(
     rig_id: str, batch: EventBatch, session: AsyncSession = Depends(get_session)
 ) -> IngestResult:
@@ -107,7 +109,8 @@ async def ingest(
     )
 
 
-@router.post("/rigs/{rig_id}/heartbeat", response_model=HeartbeatOut)
+@router.post("/rigs/{rig_id}/heartbeat", response_model=HeartbeatOut, tags=["ingest"],
+             summary="Say the rig is alive, and learn how far its clock has drifted")
 async def heartbeat(
     rig_id: str, beat: HeartbeatIn, session: AsyncSession = Depends(get_session)
 ) -> HeartbeatOut:
@@ -127,7 +130,8 @@ async def heartbeat(
     return HeartbeatOut(serverTime=now, skewSecs=skew)
 
 
-@router.get("/rigs/{rig_id}/schedule")
+@router.get("/rigs/{rig_id}/schedule", tags=["schedules"],
+            summary="The schedule currently in force for this rig")
 async def schedule(rig_id: str, session: AsyncSession = Depends(get_session)) -> dict:
     """The payload this rig was pushed, returned verbatim. Stored opaque,
     read opaque - the rotation is computed in exactly one place and this
@@ -147,7 +151,8 @@ async def schedule(rig_id: str, session: AsyncSession = Depends(get_session)) ->
 
 
 
-@router.get("/rigs/{rig_id}/schedule.json")
+@router.get("/rigs/{rig_id}/schedule.json", tags=["schedules"],
+            summary="The same schedule, at the path the rig already fetches")
 async def schedule_json(
     rig_id: str, session: AsyncSession = Depends(get_session)
 ) -> dict:
@@ -174,7 +179,8 @@ class ConfirmIn(BaseModel):
     bytes: int = Field(ge=0)
 
 
-@router.post("/rigs/{rig_id}/episodes/{episode_id}/video:presign")
+@router.post("/rigs/{rig_id}/episodes/{episode_id}/video:presign", tags=["video"],
+             summary="Ask where to put one camera's video")
 async def video_presign(
     rig_id: str, episode_id: str, body: PresignIn,
     session: AsyncSession = Depends(get_session),
@@ -191,7 +197,8 @@ async def video_presign(
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@router.post("/rigs/{rig_id}/episodes/{episode_id}/video:complete")
+@router.post("/rigs/{rig_id}/episodes/{episode_id}/video:complete", tags=["video"],
+             summary="Confirm what landed. Only a yes here releases the rig's copy")
 async def video_complete(
     rig_id: str, episode_id: str, body: ConfirmIn,
     session: AsyncSession = Depends(get_session),
@@ -212,14 +219,15 @@ async def video_complete(
         )
 
 
-@router.get("/floor/video")
+@router.get("/floor/video", tags=["video"],
+            summary="What video is waiting, and what a real episode actually costs")
 async def video_backlog(session: AsyncSession = Depends(get_session)) -> dict:
     """What is waiting to reach the archive, and what a video actually
     costs - measured, rather than the estimate the plan was sized on."""
     return await backlog(session)
 
 
-@router.get("/health")
+@router.get("/health", tags=["service"], summary="Liveness")
 async def health() -> dict:
     s = get_settings()
     return {"ok": True, "database": s.safe_url()}
@@ -240,7 +248,8 @@ class PushOut(BaseModel):
     count: int
 
 
-@router.post("/schedules/push", response_model=PushOut)
+@router.post("/schedules/push", response_model=PushOut, tags=["schedules"],
+             summary="Push the desk's payloads to the floor, all or none")
 async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
     """Store what the desk pushed, whole and unexamined.
 
@@ -282,7 +291,8 @@ async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> Pu
     return PushOut(pushId=push_id, pushedAt=pushed_at, count=len(rows))
 
 
-@router.post("/push", response_model=PushOut)
+@router.post("/push", response_model=PushOut, tags=["schedules"],
+             summary="Push, at the path the deployed desk already posts to")
 async def push_alias(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
     """What the desk's "Push to floor" button already posts to.
 
@@ -293,7 +303,8 @@ async def push_alias(body: PushIn, session: AsyncSession = Depends(get_session))
     return await push(body, session)
 
 
-@router.get("/state")
+@router.get("/state", tags=["schedules"],
+            summary="What the floor is currently running, as the desk asks for it")
 async def state(session: AsyncSession = Depends(get_session)) -> dict:
     """What the floor is currently running, as the desk asks for it.
 
@@ -319,14 +330,15 @@ async def state(session: AsyncSession = Depends(get_session)) -> dict:
 # ------------------------------------------------------------- the floor
 
 
-@router.get("/floor/state")
+@router.get("/floor/state", tags=["floor"],
+            summary="The desk's live board: who is on, what is open, what is quiet")
 async def floor(session: AsyncSession = Depends(get_session)) -> dict:
     """The Live board: every rig, who is on it, when it was last heard
     from, and anything open against it."""
     return await floor_state(session)
 
 
-@router.get("/floor/alerts")
+@router.get("/floor/alerts", tags=["floor"], summary="What is open against the floor")
 async def alerts(session: AsyncSession = Depends(get_session)) -> dict:
     """Everything currently wrong on the floor.
 
@@ -345,7 +357,8 @@ async def alerts(session: AsyncSession = Depends(get_session)) -> dict:
     }
 
 
-@router.get("/floor/efficiency")
+@router.get("/floor/efficiency", tags=["floor"],
+            summary="Efficiency per operator for one shift, computed at read time")
 async def efficiency_for_shift(
     shift_date: date, shift_label: str, session: AsyncSession = Depends(get_session)
 ) -> dict:

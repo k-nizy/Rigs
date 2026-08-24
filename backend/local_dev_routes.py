@@ -14,7 +14,9 @@ from core.infrastructure.database import get_session
 from core.workflows.floor import sweep
 from core.workflows.projection import project_batch, reset_projections
 
-dev = APIRouter(prefix="/api/dev", tags=["dev"])
+# include_in_schema=False: these are a test harness, and a published
+# contract that lists them invites somebody to build on one.
+dev = APIRouter(prefix="/api/dev", tags=["dev"], include_in_schema=False)
 
 
 @dev.post("/project")

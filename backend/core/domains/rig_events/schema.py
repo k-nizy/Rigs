@@ -82,7 +82,36 @@ class EventEnvelope(BaseModel):
 
 class EventBatch(BaseModel):
     """What POST /events accepts. All-or-nothing: a half-accepted batch is
-    worse than a rejected one, exactly as the schedule push already works."""
+    worse than a rejected one, exactly as the schedule push already works.
+
+    The example below is what the published contract shows. It is one
+    take: an operator recorded 92 seconds and scored it 4. Sending it a
+    second time returns `accepted: 0`.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "events": [{
+                    "eventId": "9f1c7a2e-3b44-4c8d-9a11-6d2e5f0b7c31",
+                    "seq": 4417,
+                    "at": "2026-08-24T09:01:02.881Z",
+                    "rigId": "RIG-03",
+                    "shiftDate": "2026-08-24",
+                    "shiftLabel": "Morning",
+                    "turnFrom": "09:00",
+                    "operatorId": "op-a4",
+                    "bucket": "episodes",
+                    "event": "episode_saved",
+                    "data": {
+                        "episodeId": "11111111-1111-4111-8111-111111111111",
+                        "durationSecs": 92,
+                        "score": 4,
+                    },
+                }]
+            }
+        }
+    )
 
     events: list[EventEnvelope] = Field(min_length=1, max_length=1000)
 

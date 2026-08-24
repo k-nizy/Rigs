@@ -11,7 +11,6 @@ by default, with an exit-after-N-empty-polls flag for batch and pod use.
 import argparse
 import asyncio
 import logging
-import time
 
 from core.infrastructure.database import sessionmaker
 from core.workflows.projection import project_batch, reset_projections
@@ -44,7 +43,9 @@ async def run(poll_secs: float, batch: int, exit_after_empty: int, replay: bool)
             attempt += 1
             wait = min(backoff_base ** attempt, 60)
             log.exception("projection failed, retrying in %ss", wait)
-            time.sleep(wait)
+            # await, not time.sleep: this is an async function, and a
+            # blocking sleep here stops the whole loop it runs on.
+            await asyncio.sleep(wait)
             continue
 
         if count:
