@@ -102,6 +102,8 @@ function boot(screen) {
     handoverDue: false, // block ended mid-episode; hand over when it lands
     pendingSecs: 0,
     demoWarm: false,    // demo only — skips the efficiency warm-up period
+    checkedAt: null,    // shift seconds when the check last passed, or null
+    fromStandby: false, // the check was started early, so return to Standby
   };
   logLines.length = 0;
   lastViewKey = null;
@@ -116,6 +118,16 @@ function boot(screen) {
      *after* it. Miss this and the next frame sees a turn that does not
      match turnKey and fires a handover that never happened. */
   syncTurnKey();
+  /* Nothing is scheduled at this rig right now — before the shift, after
+     it, or on a day it does not run. A start-of-shift checklist counting
+     down beside a rail reading "End of shift" is a contradiction the
+     operator has to unpick before they can trust anything else on the
+     screen. Standby says what is true instead.
+
+     This is the sixth boot case in docs/SESSION-RULES.md and the only one
+     reachable without a disk journal; resuming a stint after a crash
+     needs Phase 1. */
+  if (S.phase === "checklist" && !current()) S.phase = "standby";
   render();
 }
 
@@ -124,6 +136,7 @@ function boot(screen) {
    jumping straight to the screen you want to argue about, not waiting
    forty-five minutes for a handover to come round. */
 const SCREENS = [
+  ["standby",    "Standby"],
   ["checklist",  "Shift check"],
   ["fault-class","Report a fault"],
   ["fault-fixing","Fixing a fault"],
@@ -228,6 +241,13 @@ const urgencyApplies = (p) => p === "resetting" || p === "handover";
 
 function pedals() {
   switch (S.phase) {
+    /* Nothing is due at this rig, so there is nothing to start. The one
+       pedal that does anything lets a technician sweep the floor before
+       the shift: check the rig at 07:40 and nobody burns 60 seconds at
+       08:00. It also keeps the rule that every screen offers a way
+       forward. */
+    case "standby":
+      return [null, act(S.checkedAt == null ? "Check the rig" : "Check again", "start_check"), null];
     case "checklist":
       return [act("Problem", "report_fault"), act("All good", "checklist_pass"), null];
     case "fault_class":
@@ -263,6 +283,11 @@ const act = (label, intent) => ({ label, intent });
 
 function dispatch(intent) {
   switch (intent) {
+    case "start_check":
+      S.fromStandby = true;
+      go("checklist");
+      break;
+
     case "report_fault":  go("fault_class"); break;
 
     case "fault_left":
@@ -291,12 +316,18 @@ function dispatch(intent) {
       S.fault = null; go("checklist");
       break;
 
-    case "checklist_pass":
+    case "checklist_pass": {
       // Measured from the start of the shift, less any fault time — the
       // phase clock restarts each time the operator returns from a fault.
+      S.checkedAt = S.t;
       emit("shift_check", "rig_shift_checks", "checklist passed in " + clock(S.t - S.faultSecs));
-      go("handover");
+      // A check run early goes back to Standby: the rig is ready, but
+      // nobody is due at it yet.
+      const early = S.fromStandby && !current();
+      S.fromStandby = false;
+      go(early ? "standby" : "handover");
       break;
+    }
 
     case "start_episode":
       S.episode += 1;
@@ -408,6 +439,11 @@ function tick(now) {
     if (S.phase === "fault_fixing") S.faultSecs += dt;
     if (S.phase === "rig_down")     S.downSecs += dt;
 
+    /* Standby ends when the schedule says somebody is due. A rig that
+       was checked early goes straight to the handover; one that was not
+       still owes its check. */
+    if (S.phase === "standby" && current()) go(S.checkedAt == null ? "checklist" : "handover");
+
     // The turn boundary never interrupts a take. If the operator is
     // mid-episode the handover waits until the episode lands.
     const c = current();
@@ -451,11 +487,28 @@ function render() {
     S.phase === "handover" ? "hail" :
     (S.phase === "fault_fixing" || S.phase === "rig_down") ? "alarm" : "";
 
-  const due = S.handoverDue || (stintLeft() < 60 && stintLeft() > 0);
-  $railBlock.textContent = S.handoverDue ? "Handover due" : clock(stintLeft());
-  $cellBlock.classList.toggle("due", due);
-  $railNext.textContent = nextOperator();
-  $railThen.textContent = nextPeriod();
+  /* When nothing is scheduled, none of the three rail cells has an
+     answer: no block is running, nobody is being relieved, nobody is
+     going anywhere. Leaving the live values there is what produced the
+     contradiction Standby exists to remove - a rail reading "End of
+     shift" above a rig simply waiting for one.
+
+     Keyed on the schedule, not the phase: an early check runs outside
+     the shift too, and the rail was snapping back to "End of shift" the
+     moment the operator pressed the pedal. */
+  if (!current()) {
+    const first = PAYLOAD && PAYLOAD.turns.length ? PAYLOAD.turns[0] : null;
+    $railBlock.textContent = "—";
+    $cellBlock.classList.toggle("due", false);
+    $railNext.textContent = first ? first.operator.name : "—";
+    $railThen.textContent = "—";
+  } else {
+    const due = S.handoverDue || (stintLeft() < 60 && stintLeft() > 0);
+    $railBlock.textContent = S.handoverDue ? "Handover due" : clock(stintLeft());
+    $cellBlock.classList.toggle("due", due);
+    $railNext.textContent = nextOperator();
+    $railThen.textContent = nextPeriod();
+  }
 
   /* A name is part of what the stage *says*, on the two screens that
      show one: rotating from one handover into the next leaves every
@@ -537,6 +590,21 @@ function refresh(behind) {
 
 function view(behind) {
   switch (S.phase) {
+    /* A sign, read from across the room. Everything an operator walking
+       up needs to know that the rig is theirs and ready, and nothing to
+       do about it. */
+    case "standby": {
+      const p = PAYLOAD;
+      const first = p && p.turns.length ? p.turns[0] : null;
+      return `
+        <p class="kicker">${RIG_ID} — standby</p>
+        <h1 class="headline">${p ? p.shift.label + " · " + p.shift.start : "No shift scheduled"}</h1>
+        ${first ? `<p class="lede standby-who">${first.operator.name}</p>` : ""}
+        <p class="sub">${S.checkedAt == null
+          ? "Not checked yet. Middle pedal checks the rig now, so nobody spends the first minute of the shift on it."
+          : "Rig checked · all four passed."}</p>`;
+    }
+
     case "checklist": {
       const left = Math.max(0, CHECKLIST_SECS - phaseSecs());
       return `

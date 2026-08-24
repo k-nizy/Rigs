@@ -177,6 +177,8 @@ const BY_PEDALS = {
   "—|Next episode|Hardware issue": "resetting",
   "End session|Problem solved|Bug testing": "rig_down",
   "—|Restart demo|—": "session_ended",
+  "—|Check the rig|—": "standby",
+  "—|Check again|—": "standby",
 };
 
 /* =====================================================================
