@@ -11,6 +11,10 @@ dependencies = [
     "alembic>=1.14",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    # S3, which is what the platform team already runs. The interface in
+    # core/infrastructure/storage.py is what the rest of the system
+    # depends on; this is one implementation of it.
+    "boto3>=1.35",
 ]
 
 [project.optional-dependencies]

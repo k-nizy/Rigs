@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     # An absence has no event to subscribe to, so it has to be looked for.
     rig_silent_after_secs: int = 180
 
+    # Where video goes. With no endpoint configured the local stand-in is
+    # used, which is a directory - real enough to exercise the whole path
+    # and honest about not being S3.
+    storage_endpoint: str = ""
+    storage_bucket: str = "rigs-video"
+    storage_access_key: str = ""
+    storage_secret_key: str = ""
+    storage_local_root: str = "./.storage"
+
     def safe_url(self, url: str | None = None) -> str:
         """The URL with the password removed, for logs and health output."""
         parts = urlsplit(url or self.database_url)

@@ -21,6 +21,7 @@ from core.domains.schedules.repository import ScheduleRepository
 from core.infrastructure.config import get_settings
 from core.infrastructure.database import get_session
 from core.workflows.floor import floor_state, operator_efficiency
+from core.workflows.video import VideoError, backlog, confirm, where_to_put
 
 router = APIRouter()
 
@@ -157,6 +158,64 @@ async def schedule_json(
     stacking registers in the OpenAPI schema but does not route.
     """
     return await schedule(rig_id, session)
+
+
+# ------------------------------------------------------------- the video
+
+
+class PresignIn(BaseModel):
+    camera: str
+
+
+class ConfirmIn(BaseModel):
+    camera: str
+    sha256: str = Field(min_length=64, max_length=64)
+    bytes: int = Field(ge=0)
+
+
+@router.post("/rigs/{rig_id}/episodes/{episode_id}/video:presign")
+async def video_presign(
+    rig_id: str, episode_id: str, body: PresignIn,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Where the rig should put this camera's video.
+
+    The bytes do not come back through here. At roughly 2.6 TB a day,
+    streaming video through application workers is the difference between
+    a storage system and an outage.
+    """
+    try:
+        return await where_to_put(session, episode_id, body.camera)
+    except VideoError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/rigs/{rig_id}/episodes/{episode_id}/video:complete")
+async def video_complete(
+    rig_id: str, episode_id: str, body: ConfirmIn,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """The rig says what it sent; the server checks what landed.
+
+    Answering yes here is what permits the rig to delete its own copy, so
+    it is the one place in the video path that must not be optimistic. A
+    mismatch is a 409 and the rig keeps its bytes.
+    """
+    try:
+        return await confirm(session, episode_id, body.camera, body.sha256, body.bytes)
+    except VideoError as e:
+        detail = str(e)
+        raise HTTPException(
+            status_code=404 if detail.startswith("no episode") else 409,
+            detail=detail,
+        )
+
+
+@router.get("/floor/video")
+async def video_backlog(session: AsyncSession = Depends(get_session)) -> dict:
+    """What is waiting to reach the archive, and what a video actually
+    costs - measured, rather than the estimate the plan was sized on."""
+    return await backlog(session)
 
 
 @router.get("/health")

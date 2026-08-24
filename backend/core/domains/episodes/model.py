@@ -9,7 +9,7 @@ discarded is a floor worth asking about.
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Date, DateTime, Float, Index, Integer, String
+from sqlalchemy import BigInteger, Date, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,7 +42,35 @@ class Episode(TimestampedBase):
     # Which ledger row produced this, so a projection can be traced back.
     source_event: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
+    # ---- the video
+    #
+    # A state machine, and the states are the point:
+    #
+    #   pending    the rig has it; nobody else does
+    #   on_prem    landed and the checksum matched. Only now may the rig
+    #              delete its own copy - that one rule is what makes the
+    #              rig SSD self-managing, and everything else in the video
+    #              path is a retry.
+    #   archived   copied to the cold tier
+    #   missing    the take was discarded, or the rig never recorded it
+    # server_default, not default. A Python-side default produces no DDL,
+    # so ALTER TABLE ADD COLUMN NOT NULL fails the moment the table has
+    # rows - which is every table in production and no table in a fresh
+    # test database. This one was caught by having run the end-to-end
+    # script first.
+    video_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    video_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    video_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    video_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    video_stored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    video_archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (
         Index("ix_episodes_rig_shift", "rig_id", "shift_date", "shift_label"),
+        # The drain worker's claim query: everything landed but not yet
+        # archived.
+        Index("ix_episodes_video_state", "video_state"),
         Index("ix_episodes_operator", "operator_id"),
     )

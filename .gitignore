@@ -23,3 +23,5 @@ backend/.pytest_cache/
 backend/.venv/
 backend/.import_linter_cache/
 backend/*.egg-info/
+backend/.storage/
+backend/.minio-data/
