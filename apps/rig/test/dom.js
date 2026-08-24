@@ -338,6 +338,18 @@ async function mountRig(opts) {
        rather than waiting for its timer. */
     outbox() { return global.rigOutbox ? global.rigOutbox() : null; },
     async upload() { if (global.rigFlush) await global.rigFlush(); await this.settle(); },
+
+    /* The video path. A browser tab has no camera, so a test attaches a
+       recorder of its own and drives the three steps by hand rather than
+       waiting on the uploader's timer. */
+    setVideoSource(fn) { if (global.setVideoSource) global.setVideoSource(fn); },
+    video() { return global.rigVideo ? global.rigVideo() : null; },
+    async uploadVideo(times) {
+      for (let i = 0; i < (times || 1); i++) {
+        if (global.rigFlushVideo) await global.rigFlushVideo();
+        await this.settle();
+      }
+    },
     logOf(event) { return this.log().filter((l) => l.includes(event)); },
 
     /* Every timer and every frame this mount started, stopped. */

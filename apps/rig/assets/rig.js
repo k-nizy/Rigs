@@ -381,6 +381,7 @@ function dispatch(intent) {
       emit("episode_saved", "episodes",
            "episode " + S.episode + " · " + clock(S.pendingSecs || 0) + " · scored " + score + "/5",
            { episodeId: S.episodeId, durationSecs: Math.round(S.pendingSecs || 0), score: score });
+      queueVideo(S.episodeId);
       S.pendingSecs = 0;
       afterEpisode();
       break;
@@ -1036,6 +1037,159 @@ window.rigOutbox = () => ({
 });
 window.rigFlush = flush;
 
+// -------------------------------------------------------- the video path
+
+/* Three steps and one rule, the same four lines the server is written to:
+
+     1. the rig finishes a take
+     2. it asks where to put the bytes
+     3. it puts them
+     4. it reports the checksum, and the server verifies what landed
+
+   Only then may the rig let go of its copy.
+
+   Step 4 is the whole design. Everything before it is a retry - safe to
+   repeat, safe to interrupt, safe to run twice - and this is the one
+   place that must never be optimistic, because past it the only other
+   copy is gone.
+
+   There is no camera behind a browser tab, so `videoSource` is the seam:
+   it is handed an episode and a camera and returns a Blob, or null when
+   there is nothing to send. A page with no source queues nothing, which
+   is why running the demo does not post fabricated bytes and does not
+   pollute what /floor/video measures. Tauri and RODA-RS supply a real one
+   later, and nothing below this line changes when they do. */
+
+const VIDEO_BACKOFF_MS = 2000;
+const VIDEO_BACKOFF_MAX = 60000;
+
+let videoSource = null;
+const videoQueue = [];           // { episodeId, camera, blob }
+const videoSent = [];            // keys the server has released
+let videoSending = false;
+let videoFailures = 0;
+let videoState = "idle";         // idle | sending | waiting | offline
+let videoError = null;
+
+/* Cameras are named for a person on screen ("Wrist L") and for a path in
+   the store ("wrist-l"). The key has to survive being a filename. */
+function camSlug(name) {
+  return String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+async function sha256Hex(buf) {
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/* Called when a take is saved. Queued per camera, because that is how the
+   store keys them and how a partial upload stays partial rather than
+   costing the whole episode. */
+function queueVideo(episodeId) {
+  if (!videoSource || !episodeId) return;
+  CAMERAS.forEach((cam) => {
+    const blob = videoSource(episodeId, camSlug(cam));
+    if (blob) videoQueue.push({ episodeId, camera: camSlug(cam), blob });
+  });
+}
+
+async function sendVideo(item) {
+  const base = "/api/rigs/" + encodeURIComponent(RIG_ID) +
+               "/episodes/" + encodeURIComponent(item.episodeId);
+  const json = { "Content-Type": "application/json" };
+
+  const asked = await fetch(base + "/video:presign", {
+    method: "POST", headers: json,
+    body: JSON.stringify({ camera: item.camera }),
+  });
+  if (asked.status === 404) {
+    /* The episode is in the ledger but has not been projected into a row
+       yet. Ordinary: the rig saves a take and reaches here in the same
+       second, and projection runs on its own timer. Waiting is correct -
+       treating it as a failure would give up on a take that is about to
+       exist. */
+    const e = new Error("episode not projected yet");
+    e.waiting = true;
+    throw e;
+  }
+  if (!asked.ok) throw new Error("presign HTTP " + asked.status);
+  const where = await asked.json();
+
+  const buf = await item.blob.arrayBuffer();
+  const put = await fetch(where.url, { method: where.method || "PUT", body: buf });
+  if (!put.ok) throw new Error("put HTTP " + put.status);
+
+  const said = await fetch(base + "/video:complete", {
+    method: "POST", headers: json,
+    body: JSON.stringify({
+      camera: item.camera,
+      sha256: await sha256Hex(buf),
+      bytes: buf.byteLength,
+    }),
+  });
+  /* 409 is the server saying what landed is not what was sent. The bytes
+     are still here, so this goes round again from the PUT rather than
+     being set aside - a truncated upload is the commonest real failure
+     and it is exactly the one a retry fixes. */
+  if (!said.ok) throw new Error("complete HTTP " + said.status);
+
+  const result = await said.json();
+  if (!result.safeToDelete) throw new Error("the server did not release the copy");
+  return result;
+}
+
+async function flushVideo() {
+  if (videoSending || !videoQueue.length) return;
+  videoSending = true;
+  const item = videoQueue[0];
+  try {
+    const result = await sendVideo(item);
+    videoQueue.shift();          // only now: the server has verified it
+    videoSent.push(result.key);
+    videoFailures = 0;
+    videoState = videoQueue.length ? "sending" : "idle";
+    videoError = null;
+  } catch (e) {
+    videoFailures += 1;
+    videoState = e && e.waiting ? "waiting" : "offline";
+    videoError = String((e && e.message) || e);
+    if (videoFailures === 1 && !(e && e.waiting)) {
+      emitLog("video_upload_failed", "episodes", videoError);
+    }
+  } finally {
+    videoSending = false;
+  }
+}
+
+function videoDelay() {
+  if (!videoFailures) return VIDEO_BACKOFF_MS;
+  return Math.min(VIDEO_BACKOFF_MS * Math.pow(2, videoFailures - 1), VIDEO_BACKOFF_MAX);
+}
+
+let videoTimer = null;
+function startVideoUploader() {
+  if (videoTimer) return;
+  const tick = async () => {
+    await flushVideo();
+    videoTimer = setTimeout(tick, videoDelay());
+  };
+  videoTimer = setTimeout(tick, VIDEO_BACKOFF_MS);
+}
+
+/* For the tests and the drawer. `setVideoSource` is how a recorder is
+   attached - the browser has none, a harness supplies a fake one, and
+   Tauri will supply a real one. */
+window.setVideoSource = (fn) => { videoSource = fn; };
+window.rigVideo = () => ({
+  queued: videoQueue.length,
+  sent: videoSent.slice(),
+  failures: videoFailures,
+  state: videoState,
+  error: videoError,
+});
+window.rigFlushVideo = flushVideo;
+
 /* The uploader writes to the operator's log without filing an event.
    A refused batch is a fact about this rig's software, not about the
    floor, and it has no business in the ledger. */
@@ -1205,6 +1359,7 @@ async function start(rigId) {
   await alignSeq();
   boot(location.hash.slice(1));   // boot() reads the turn in progress back itself
   startUploader();
+  startVideoUploader();
 }
 
 /* Demo affordance: watch any rig on the floor. A real rig is only ever

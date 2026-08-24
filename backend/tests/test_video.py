@@ -257,6 +257,87 @@ async def test_the_video_backlog_route_serves(client, session, store):
     assert "measured" in r.json()
 
 
+# ------------------------------------------------- through the service
+#
+# The other upload model. LocalStorage has no presigning and points its
+# uploads at /api/storage/{key}; until this route existed that path was a
+# promise nothing kept, and every video test had to write to the store
+# behind the service's back.
+
+
+async def test_the_rig_can_put_bytes_through_the_service(client, session, store):
+    ep = await an_episode(session)
+    where = await where_to_put(session, str(ep.episode_id), "front")
+    assert where["url"] == "/api" + where["url"].split("/api", 1)[1]
+
+    r = await client.put(where["url"], content=VIDEO)
+    assert r.status_code == 200, r.text
+    assert r.json()["bytes"] == len(VIDEO)
+
+    landed = await store.head(where["key"])
+    assert landed is not None and landed.bytes == len(VIDEO)
+
+
+async def test_the_whole_path_runs_without_reaching_behind_the_service(client, session, store):
+    """Presign, put, confirm - every step over HTTP, nothing written to the
+    store directly. This is the sequence a rig actually performs."""
+    ep = await an_episode(session)
+
+    where = (await client.post(
+        f"/api/rigs/{RIG}/episodes/{ep.episode_id}/video:presign",
+        json={"camera": "front"},
+    )).json()
+
+    put = await client.put(where["url"], content=VIDEO)
+    assert put.status_code == 200
+
+    done = await client.post(
+        f"/api/rigs/{RIG}/episodes/{ep.episode_id}/video:complete",
+        json={"camera": "front", "sha256": sha256_of(VIDEO), "bytes": len(VIDEO)},
+    )
+    assert done.status_code == 200, done.text
+    assert done.json()["safeToDelete"] is True
+
+    await session.refresh(ep)
+    assert ep.video_state == ON_PREM
+
+
+async def test_an_empty_body_is_refused(client, session, store):
+    """A zero-byte PUT is a dropped connection, not a video."""
+    r = await client.put("/api/storage/RIG-03/abc/front.mp4", content=b"")
+    assert r.status_code == 400
+
+
+async def test_a_key_that_climbs_out_of_the_root_is_refused(client, session, store):
+    """Percent-encoded, because a plain "../.." is normalised away by the
+    client before it is ever sent - which made the first version of this
+    test pass against a routing 404 while proving nothing about the guard.
+    Encoded, it survives and arrives as a key with ".." in it.
+    """
+    r = await client.put("/api/storage/%2e%2e%2f%2e%2e%2fetc%2fpasswd", content=b"x")
+    assert r.status_code == 400, (
+        "a key that climbs out of the storage root was accepted: %s" % r.status_code
+    )
+    assert "escapes" in r.json()["detail"]
+
+
+async def test_bytes_that_arrived_are_not_bytes_that_are_confirmed(client, session, store):
+    """Storing is not confirming. A PUT of the wrong bytes still lands -
+    and confirm is what refuses it, which is the whole point of having a
+    step that reads back out of the store."""
+    ep = await an_episode(session)
+    where = await where_to_put(session, str(ep.episode_id), "front")
+    await client.put(where["url"], content=b"the wrong video entirely")
+
+    r = await client.post(
+        f"/api/rigs/{RIG}/episodes/{ep.episode_id}/video:complete",
+        json={"camera": "front", "sha256": sha256_of(VIDEO), "bytes": len(VIDEO)},
+    )
+    assert r.status_code == 409
+    await session.refresh(ep)
+    assert ep.video_state == PENDING, "the rig must keep its copy"
+
+
 # ------------------------------------------------------- against real S3
 #
 # Skipped unless MinIO is running. The point of these is not to test

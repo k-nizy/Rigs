@@ -8,7 +8,7 @@ reads it back; it never derives one.
 import uuid
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ from core.domains.schedules.repository import ScheduleRepository
 from core.infrastructure.config import get_settings
 from core.infrastructure.database import get_session
 from core.workflows.floor import floor_state, operator_efficiency
+from core.infrastructure.storage import Storage, get_storage
 from core.workflows.video import VideoError, backlog, confirm, where_to_put
 
 router = APIRouter()
@@ -217,6 +218,41 @@ async def video_complete(
             status_code=404 if detail.startswith("no episode") else 409,
             detail=detail,
         )
+
+
+@router.put("/storage/{key:path}", tags=["video"],
+            summary="Take one camera's video, when the store cannot be written to directly")
+async def storage_put(
+    key: str, request: Request,
+    storage: Storage = Depends(get_storage),
+) -> dict:
+    """The other upload model: bytes through the service.
+
+    Which of the two the floor actually uses is the open question - a
+    presigned PUT straight to the object store, or a stream through the
+    gateway - and it is not answered here. `upload_target()` decides, and
+    the rig does whatever it is told. This route exists because the local
+    stand-in has no presigning and points its uploads at this path, so
+    without it the whole non-S3 path is unreachable and the video code can
+    only ever be tested against a bucket.
+
+    It reads the body into memory, which is honest for a stand-in and is
+    exactly why streaming every rig's video through application workers is
+    not the default. At roughly 2.6 TB a day it would not survive.
+
+    Storing is not confirming. This says only that bytes arrived; whether
+    they are the right bytes is `video:complete`, which reads them back
+    out of the store and checks.
+    """
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="no bytes")
+    try:
+        stored = await storage.put(key, data)
+    except ValueError as e:
+        # A key that tries to climb out of the storage root.
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"key": stored.key, "bytes": stored.bytes}
 
 
 @router.get("/floor/video", tags=["video"],

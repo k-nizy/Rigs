@@ -28,6 +28,11 @@ const ROSTER = require(path.join(REPO, "packages/demo-roster/demo-roster.js"));
 const API = process.env.RIGS_API || "http://127.0.0.1:8000";
 const RIG = "RIG-03";
 
+/* Stand-in footage. Small on purpose: this exercises the path, it does
+   not pretend to be a measurement. /floor/video keeps the plan's
+   assumption printed beside whatever it has actually seen. */
+const TAKE = new Blob([Buffer.alloc(256 * 1024, 9)]);
+
 const ok = (m) => console.log("  ✓ " + m);
 const step = (m) => console.log("\n" + m);
 
@@ -78,6 +83,11 @@ function todaysPayload() {
   global.fetch = realFetch;
   const rig = await mountRig({ search: "?demo=30", fetchImpl: realFetch });
   try {
+    /* A browser tab has no camera. This is the seam a Tauri shell will
+       fill with RODA-RS; here it is a fixed block of bytes, which is
+       enough to prove the rule that matters - the rig lets go of a take
+       only after the server has verified what landed. */
+    rig.setVideoSource(() => TAKE);
     /* mountRig settles microtasks; a real HTTP round-trip needs wall
        time. Without this the rig is still waiting for its payload. */
     await new Promise((r) => setTimeout(r, 600));
@@ -159,7 +169,28 @@ function todaysPayload() {
     assert.ok(board.lastSeenAt, "the heartbeat was not recorded");
     ok(`${board.rigId} · ${board.task} · last seen ${board.lastSeenAt.slice(11, 19)}`);
 
+    step("9. the video follows, and only then does the rig let go of it");
+    const queued = rig.video().queued;
+    assert.equal(queued, 3, "a saved take should have queued one video per camera");
+    ok(queued + " cameras queued");
+
+    /* One flush per camera. Each is presign -> PUT -> complete against
+       the real service, and each releases only on a verified confirm. */
+    await rig.uploadVideo(queued + 1);
+    const v = rig.video();
+    assert.equal(v.queued, 0, "video did not drain: " + JSON.stringify(v));
+    assert.equal(v.sent.length, queued, "not every camera was confirmed");
+    ok("confirmed and released: " + v.sent.map((k) => k.split("/").pop()).join(", "));
+
+    const vb = await api("GET", "/api/floor/video");
+    assert.equal(vb.status, 200);
+    const spool = vb.body.byState.on_prem || vb.body.byState.archived;
+    assert.ok(spool && spool.episodes >= 1,
+      "nothing reached the spool: " + JSON.stringify(vb.body.byState));
+    ok("spool holds " + JSON.stringify(vb.body.byState));
+
     console.log("\nend to end: pedal press -> envelope -> ledger -> facts -> board");
+    console.log("             take -> presign -> bytes -> verified -> released");
   } finally {
     rig.stop();
   }

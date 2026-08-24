@@ -804,3 +804,151 @@ test("uploading does not interrupt the operator",
     assert.equal(rig.screen(), before, "a failed upload changed what the operator sees");
     assert.deepEqual(rig.errors, []);
   }));
+
+
+/* =====================================================================
+ * the video path
+ *
+ * There is no camera behind a browser tab, so these attach a recorder of
+ * their own. What is being tested is not the bytes - it is the rule that
+ * the rig only lets go of a take after the server has verified what
+ * landed, and that everything before that step is a retry.
+ * ===================================================================== */
+
+const TAKE = new Blob([new Uint8Array(2048).fill(7)]);
+
+/* A server that answers the three steps, and counts what it was asked. */
+function fakeStore(opts) {
+  const o = opts || {};
+  const seen = { presign: 0, put: 0, complete: 0, bytes: 0 };
+  global.fetch = async (url, init) => {
+    const u = String(url);
+    if (u.includes("video:presign")) {
+      seen.presign += 1;
+      if (o.notProjected) return { ok: false, status: 404, json: async () => ({}) };
+      const camera = JSON.parse(init.body).camera;
+      return { ok: true, status: 200, json: async () => ({
+        key: "RIG-03/ep/" + camera + ".mp4",
+        url: "/api/storage/RIG-03/ep/" + camera + ".mp4",
+        method: "PUT",
+      }) };
+    }
+    if (u.includes("/api/storage/")) {
+      seen.put += 1;
+      seen.bytes = init.body.byteLength;
+      if (o.putFails) return { ok: false, status: 503, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ bytes: seen.bytes }) };
+    }
+    if (u.includes("video:complete")) {
+      seen.complete += 1;
+      if (o.mismatch) return { ok: false, status: 409, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({
+        key: "RIG-03/ep/front.mp4", safeToDelete: true,
+      }) };
+    }
+    if (u.includes("/cursor")) return { ok: true, json: async () => ({ seq: 0 }) };
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  return seen;
+}
+
+/* checklist -> handover -> recording -> review -> scored, which is the
+   only route by which a take is ever saved. */
+function saveATake(rig) {
+  rig.press(2); rig.frames(1);      // check passed
+  rig.press(2); rig.frames(30);     // start, record
+  rig.press(3); rig.frames(1);      // save
+  rig.press(2); rig.frames(1);      // scored
+}
+
+test("with no recorder attached, a saved take queues no video",
+  withRig({ search: "?demo" }, async (rig) => {
+    fakeStore();
+    saveATake(rig);
+    await rig.uploadVideo();
+    assert.equal(rig.video().queued, 0,
+      "a page with no camera must not invent bytes to send");
+  }));
+
+test("a saved take queues one upload per camera",
+  withRig({ search: "?demo" }, async (rig) => {
+    fakeStore();
+    rig.setVideoSource(() => TAKE);
+    saveATake(rig);
+    assert.equal(rig.video().queued, 3, "three panes, three videos");
+  }));
+
+test("the camera name becomes a key that can be a filename",
+  withRig({ search: "?demo" }, async (rig) => {
+    const asked = [];
+    rig.setVideoSource((episodeId, camera) => { asked.push(camera); return TAKE; });
+    fakeStore();
+    saveATake(rig);
+    assert.deepEqual(asked, ["front", "wrist-l", "overhead"],
+      '"Wrist L" is a label on a screen, not a path in a store');
+  }));
+
+test("a take is released only after the server says what landed is right",
+  withRig({ search: "?demo" }, async (rig) => {
+    const seen = fakeStore();
+    rig.setVideoSource(() => TAKE);
+    saveATake(rig);
+    assert.equal(rig.video().queued, 3);
+
+    await rig.uploadVideo();
+    assert.equal(seen.presign, 1, "asked where to put it");
+    assert.equal(seen.put, 1, "put the bytes");
+    assert.equal(seen.complete, 1, "reported the checksum");
+    assert.equal(seen.bytes, 2048, "sent the whole take");
+    assert.equal(rig.video().queued, 2, "the confirmed camera was released");
+    assert.equal(rig.video().sent.length, 1);
+  }));
+
+test("a checksum the server refuses keeps the bytes on the rig",
+  withRig({ search: "?demo" }, async (rig) => {
+    fakeStore({ mismatch: true });
+    rig.setVideoSource(() => TAKE);
+    saveATake(rig);
+    await rig.uploadVideo();
+
+    const v = rig.video();
+    assert.equal(v.queued, 3, "a refused upload must not drop the only good copy");
+    assert.equal(v.sent.length, 0);
+    assert.match(v.error, /409/);
+  }));
+
+test("an upload that never reaches the store keeps the bytes on the rig",
+  withRig({ search: "?demo" }, async (rig) => {
+    fakeStore({ putFails: true });
+    rig.setVideoSource(() => TAKE);
+    saveATake(rig);
+    await rig.uploadVideo();
+    assert.equal(rig.video().queued, 3);
+    assert.equal(rig.video().state, "offline");
+  }));
+
+test("an episode not projected yet is waited for, not given up on",
+  withRig({ search: "?demo" }, async (rig) => {
+    /* The rig saves a take and reaches the upload in the same second;
+       projection runs on its own timer. A 404 here means "not yet". */
+    fakeStore({ notProjected: true });
+    rig.setVideoSource(() => TAKE);
+    saveATake(rig);
+    await rig.uploadVideo();
+
+    const v = rig.video();
+    assert.equal(v.state, "waiting", "a take about to exist was treated as a failure");
+    assert.equal(v.queued, 3, "nothing was dropped");
+  }));
+
+test("uploading video does not interrupt the operator",
+  withRig({ search: "?demo" }, async (rig) => {
+    global.fetch = async () => { throw new Error("no network"); };
+    rig.setVideoSource(() => TAKE);
+    saveATake(rig);
+    const before = rig.screen();
+    await rig.uploadVideo(2);
+    rig.frames(3);
+    assert.equal(rig.screen(), before, "a failed video upload changed the screen");
+    assert.deepEqual(rig.errors, []);
+  }));
