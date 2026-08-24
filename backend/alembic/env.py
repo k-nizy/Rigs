@@ -14,7 +14,12 @@ from core.base.model import Base
 from core.infrastructure.config import get_settings
 
 # Imported for their side effect: registering tables on Base.metadata.
+from core.domains.episodes import model as _episodes  # noqa: F401
+from core.domains.rig_downtime_events import model as _downtime  # noqa: F401
 from core.domains.rig_events import model as _rig_events  # noqa: F401
+from core.domains.rig_productivity_blocks import model as _blocks  # noqa: F401
+from core.domains.rig_shift_checks import model as _checks  # noqa: F401
+from core.domains.sessions import model as _sessions  # noqa: F401
 from core.domains.schedules import model as _schedules  # noqa: F401
 
 config = context.config

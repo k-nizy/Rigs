@@ -8,6 +8,7 @@
 #
 [importlinter]
 root_packages =
+    workers
     core
     services
 
@@ -15,6 +16,7 @@ root_packages =
 name = Arrows only point down
 type = layers
 layers =
+    workers
     services
     core
 
