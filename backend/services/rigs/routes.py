@@ -10,7 +10,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.domains.alerts.repository import AlertRepository
@@ -19,9 +19,10 @@ from core.domains.rig_events.schema import EventBatch, IngestResult
 from core.domains.rig_status.repository import RigStatusRepository
 from core.domains.schedules.model import Schedule
 from core.domains.schedules.repository import ScheduleRepository
-from core.infrastructure.config import get_settings
+from core.infrastructure.config import Settings, get_settings
 from core.infrastructure.database import get_session
 from core.workflows.floor import floor_state, operator_efficiency
+from services.rigs.auth import desk_auth, rig_auth, rig_auth_for_key
 from core.infrastructure.storage import Storage, get_storage
 from core.workflows.video import VideoError, backlog, confirm, where_to_put
 
@@ -43,6 +44,7 @@ class HeartbeatOut(BaseModel):
 
 
 @router.get("/rigs/{rig_id}/cursor", response_model=CursorOut, tags=["ingest"],
+            dependencies=[Depends(rig_auth)],
             summary="How far this rig's events have been accepted")
 async def cursor(rig_id: str, session: AsyncSession = Depends(get_session)) -> CursorOut:
     """The highest seq held for this rig, or -1 if none. The uploader asks
@@ -51,6 +53,7 @@ async def cursor(rig_id: str, session: AsyncSession = Depends(get_session)) -> C
 
 
 @router.post("/rigs/{rig_id}/events", response_model=IngestResult, tags=["ingest"],
+             dependencies=[Depends(rig_auth)],
              summary="File a batch of events. Safe to send twice")
 async def ingest(
     rig_id: str, batch: EventBatch, session: AsyncSession = Depends(get_session)
@@ -111,6 +114,7 @@ async def ingest(
 
 
 @router.post("/rigs/{rig_id}/heartbeat", response_model=HeartbeatOut, tags=["ingest"],
+             dependencies=[Depends(rig_auth)],
              summary="Say the rig is alive, and learn how far its clock has drifted")
 async def heartbeat(
     rig_id: str, beat: HeartbeatIn, session: AsyncSession = Depends(get_session)
@@ -132,6 +136,7 @@ async def heartbeat(
 
 
 @router.get("/rigs/{rig_id}/schedule", tags=["schedules"],
+            dependencies=[Depends(rig_auth)],
             summary="The schedule currently in force for this rig")
 async def schedule(rig_id: str, session: AsyncSession = Depends(get_session)) -> dict:
     """The payload this rig was pushed, returned verbatim. Stored opaque,
@@ -153,6 +158,7 @@ async def schedule(rig_id: str, session: AsyncSession = Depends(get_session)) ->
 
 
 @router.get("/rigs/{rig_id}/schedule.json", tags=["schedules"],
+            dependencies=[Depends(rig_auth)],
             summary="The same schedule, at the path the rig already fetches")
 async def schedule_json(
     rig_id: str, session: AsyncSession = Depends(get_session)
@@ -181,6 +187,7 @@ class ConfirmIn(BaseModel):
 
 
 @router.post("/rigs/{rig_id}/episodes/{episode_id}/video:presign", tags=["video"],
+             dependencies=[Depends(rig_auth)],
              summary="Ask where to put one camera's video")
 async def video_presign(
     rig_id: str, episode_id: str, body: PresignIn,
@@ -199,6 +206,7 @@ async def video_presign(
 
 
 @router.post("/rigs/{rig_id}/episodes/{episode_id}/video:complete", tags=["video"],
+             dependencies=[Depends(rig_auth)],
              summary="Confirm what landed. Only a yes here releases the rig's copy")
 async def video_complete(
     rig_id: str, episode_id: str, body: ConfirmIn,
@@ -221,10 +229,12 @@ async def video_complete(
 
 
 @router.put("/storage/{key:path}", tags=["video"],
+            dependencies=[Depends(rig_auth_for_key)],
             summary="Take one camera's video, when the store cannot be written to directly")
 async def storage_put(
     key: str, request: Request,
     storage: Storage = Depends(get_storage),
+    settings: Settings = Depends(get_settings),
 ) -> dict:
     """The other upload model: bytes through the service.
 
@@ -244,7 +254,24 @@ async def storage_put(
     they are the right bytes is `video:complete`, which reads them back
     out of the store and checks.
     """
-    data = await request.body()
+    limit = settings.max_video_bytes
+
+    # Content-Length first, so an oversized upload is refused before a
+    # byte of it is read rather than after all of it is in memory.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > limit:
+        raise HTTPException(status_code=413, detail=f"larger than {limit} bytes")
+
+    # Then the same ceiling again while streaming, because Content-Length
+    # is a claim by the caller and a chunked request makes no claim at all.
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(status_code=413, detail=f"larger than {limit} bytes")
+        chunks.append(chunk)
+    data = b"".join(chunks)
     if not data:
         raise HTTPException(status_code=400, detail="no bytes")
     try:
@@ -263,10 +290,36 @@ async def video_backlog(session: AsyncSession = Depends(get_session)) -> dict:
     return await backlog(session)
 
 
-@router.get("/health", tags=["service"], summary="Liveness")
-async def health() -> dict:
-    s = get_settings()
-    return {"ok": True, "database": s.safe_url()}
+@router.get("/health", tags=["service"], summary="Liveness, and what is open")
+async def health(
+    session: AsyncSession = Depends(get_session),
+    s: Settings = Depends(get_settings),
+) -> dict:
+    """Reachability, not a greeting.
+
+    This used to answer `ok: true` without touching anything, which means
+    it answered `ok: true` with the database on fire - and a load balancer
+    reading it would have kept sending a broken instance traffic. It runs
+    a real query now, and says 503 when that fails.
+
+    It also reports whether auth is configured. A service that is quietly
+    unauthenticated looks exactly like a correctly configured one until
+    the day it does not, so this is something a deploy check can fail on.
+    """
+    body = {
+        "ok": True,
+        "database": s.safe_url(),
+        "rigAuth": "on" if s.auth_is_on else "off",
+        "deskAuth": "on" if s.desk_token else "off",
+    }
+    try:
+        await session.execute(text("SELECT 1"))
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail={**body, "ok": False, "error": type(e).__name__},
+        )
+    return body
 
 
 # ------------------------------------------------------ the schedule in
@@ -285,6 +338,7 @@ class PushOut(BaseModel):
 
 
 @router.post("/schedules/push", response_model=PushOut, tags=["schedules"],
+             dependencies=[Depends(desk_auth)],
              summary="Push the desk's payloads to the floor, all or none")
 async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
     """Store what the desk pushed, whole and unexamined.
@@ -328,6 +382,7 @@ async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> Pu
 
 
 @router.post("/push", response_model=PushOut, tags=["schedules"],
+             dependencies=[Depends(desk_auth)],
              summary="Push, at the path the deployed desk already posts to")
 async def push_alias(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
     """What the desk's "Push to floor" button already posts to.

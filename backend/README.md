@@ -74,15 +74,68 @@ python -m uvicorn local_gateway:app --reload --port 8000
   emitting real envelopes instead of prose.
 - **1 — done.** `schedules` and `rig_events`, ingest, cursor, heartbeat,
   idempotency proven by replaying a whole shift.
-- **2** — the five fact domains, `core/rules`, the projection worker.
-  Replay proven by wiping the facts and rebuilding them.
-- **3** — `sweep_floor`, `/floor/state`, `/floor/alerts`. An absence has
-  no event to subscribe to, so it has to be swept for.
-- **4** — video: presigned upload straight to MinIO, checksum, then the
-  drain to R2. Bulk bytes never pass through an application worker.
+- **2 — done.** The five fact domains, `core/rules`, the projection
+  worker. Replay proven by wiping the facts and rebuilding them.
+- **3 — done.** `sweep_floor`, `/floor/state`, `/floor/alerts`. An
+  absence has no event to subscribe to, so it has to be swept for.
+- **4 — done.** Video, end to end: the rig asks where to put a take, puts
+  it, reports the checksum, and lets go of its own copy only when the
+  service has verified what landed. Both upload models work - a presigned
+  PUT straight to the store, and a stream through the service for the
+  local stand-in that has no presigning. Which one a floor uses is still
+  the platform team's question, and it is the only thing behind
+  `core/infrastructure/storage.py`.
+
+What is **not** done is the Tauri shell (`MockRoda`, the real camera, the
+synchronous disk journal). The rig is still a browser page; it journals to
+IndexedDB, which survives a reload, a crash and a closed tab but not a
+power cut in the millisecond before the write commits. Closing that last
+window needs a synchronous write, which needs Tauri.
+
+## Before it reaches a floor
+
+Four things this service does that a deployment has to get right.
+
+**Auth is off until it is configured.** `RIG_TOKENS` is a token per rig,
+placed by Ansible. Unset, any caller may file events for any rig - right
+for a laptop demo, wrong for a floor. It is not silent: startup logs it
+and `/api/health` answers `{"rigAuth": "off"}`, which is what a deploy
+check should fail on. Never share one token across rigs; a token names a
+rig, and one that speaks for all twelve is one compromised machine away
+from unattributable work.
+
+**`/api/health` is a real check.** It runs a query and answers 503 when
+the database is unreachable, so a load balancer will take a broken
+instance out rather than keep feeding it.
+
+**The workers are separate processes.** `local_gateway.py` runs them in
+its own lifespan because a developer with four terminals forgets one, and
+the failure is silent - events land in the ledger and never become facts.
+That convenience does not lift. In their tree these are three long-lived
+processes:
+
+```sh
+python -m workers.project_events        # ledger -> facts
+python -m workers.sweep_floor           # absence detection, every 15s
+python -m workers.drain_to_archive      # on-prem spool -> cold tier
+```
+
+**Migrations build indexes concurrently.** A plain `CREATE INDEX` locks
+`rig_events` against writes, and twelve rigs cannot file events while it
+runs. If one fails part-way, Postgres leaves an INVALID index behind:
+drop it and run again rather than assuming it is usable.
 
 ## Still open with the platform team
 
 Seven domains or one `rigs` domain with seven models (their question
 1.2); repo access and the contribution route; where Alembic migrations
-live for a new service; and how 2.6 TB/day of video actually reaches R2.
+live for a new service; and how 2.6 TB/day of video actually reaches R2 -
+presigned straight to the store, or streamed through the gateway, and
+whose checksum is believed.
+
+That last one is the only one still shaping code, and it is held open
+deliberately behind `core/infrastructure/storage.py`. Both models are
+implemented and tested; `upload_target()` decides, and nothing above it
+changes when the answer arrives. Every object that lands is measured, so
+`/api/floor/video` replaces the plan's sizing guess with what a real
+episode actually costs the moment one exists.

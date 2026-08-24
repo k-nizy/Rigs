@@ -64,4 +64,8 @@ class RigEvent(TimestampedBase):
         UniqueConstraint("rig_id", "event_id", name="uq_rig_events_rig_event"),
         Index("ix_rig_events_rig_seq", "rig_id", "seq"),
         Index("ix_rig_events_unprojected", "projected_at", postgresql_where=(projected_at.is_(None))),
+        # The floor sweep asks "when did this rig last say anything?" for
+        # every rig, every fifteen seconds, forever. Without this it is a
+        # scan of the ledger - the one table that only ever grows.
+        Index("ix_rig_events_rig_at", "rig_id", "at"),
     )

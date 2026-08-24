@@ -41,4 +41,6 @@ class RigProductivityBlock(TimestampedBase):
         # than in the worker.
         UniqueConstraint("source_event", name="uq_blocks_source_event"),
         Index("ix_blocks_operator_shift", "operator_id", "shift_date", "shift_label"),
+        # The overrun check reads the last day of blocks on every sweep.
+        Index("ix_blocks_ended_at", "ended_at"),
     )

@@ -7,6 +7,7 @@ one that must never be optimistic, because past it a byte is gone.
 """
 
 import uuid
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -336,6 +337,57 @@ async def test_bytes_that_arrived_are_not_bytes_that_are_confirmed(client, sessi
     assert r.status_code == 409
     await session.refresh(ep)
     assert ep.video_state == PENDING, "the rig must keep its copy"
+
+
+# --------------------------------------------------------- the ceiling
+#
+# Only the gateway-upload model reads a body into this process, and until
+# it was bounded a single request could ask for as much memory as it liked.
+# A presigned PUT never touches this process and is not bounded here.
+
+
+@asynccontextmanager
+async def serving_with(**overrides):
+    from httpx import ASGITransport, AsyncClient
+
+    from core.infrastructure.config import Settings, get_settings
+    from services.rigs.app import create_app
+
+    base = get_settings()
+    settings = Settings(**{**base.model_dump(), **overrides})
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+    async with AsyncClient(transport=ASGITransport(app=app),
+                           base_url="http://test") as c:
+        yield c
+
+
+async def test_an_upload_over_the_ceiling_is_refused_on_its_own_claim(engine, store):
+    """Content-Length first, so an oversized upload is refused before a
+    byte of it is read rather than after all of it is in memory."""
+    async with serving_with(max_video_bytes=1024) as c:
+        r = await c.put("/api/storage/RIG-03/ep/front.mp4", content=b"x" * 4096)
+        assert r.status_code == 413, r.status_code
+
+
+async def test_an_upload_over_the_ceiling_is_refused_when_it_claims_nothing(engine, store):
+    """A chunked request makes no Content-Length claim at all, so the same
+    ceiling has to hold while the body is being read."""
+    async def chunks():
+        for _ in range(8):
+            yield b"x" * 512
+
+    async with serving_with(max_video_bytes=1024) as c:
+        r = await c.put("/api/storage/RIG-03/ep/front.mp4", content=chunks())
+        assert r.status_code == 413, r.status_code
+
+
+async def test_an_upload_at_the_ceiling_is_accepted(engine, store):
+    """The boundary is a limit, not an off-by-one."""
+    async with serving_with(max_video_bytes=1024) as c:
+        r = await c.put("/api/storage/RIG-03/ep/front.mp4", content=b"x" * 1024)
+        assert r.status_code == 200, r.text
+        assert r.json()["bytes"] == 1024
 
 
 # ------------------------------------------------------- against real S3
