@@ -10,6 +10,7 @@ from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.domains.alerts.repository import AlertRepository
@@ -279,6 +280,40 @@ async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> Pu
     session.add_all(rows)
     await session.commit()
     return PushOut(pushId=push_id, pushedAt=pushed_at, count=len(rows))
+
+
+@router.post("/push", response_model=PushOut)
+async def push_alias(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
+    """What the desk's "Push to floor" button already posts to.
+
+    The desk is deployed and speaks to the static server today. Rather
+    than make it learn which backend it is talking to, this service
+    answers to the same path.
+    """
+    return await push(body, session)
+
+
+@router.get("/state")
+async def state(session: AsyncSession = Depends(get_session)) -> dict:
+    """What the floor is currently running, as the desk asks for it.
+
+    The desk shows "On the floor" or "showing this screen's plan" based
+    on this, which is the difference between a manager reading what the
+    rigs actually have and reading what they are typing.
+    """
+    rows = await session.execute(
+        select(Schedule.rig_id, Schedule.pushed_at)
+        .order_by(Schedule.pushed_at.desc())
+    )
+    seen: dict[str, datetime] = {}
+    for rig_id, pushed_at in rows.all():
+        seen.setdefault(rig_id, pushed_at)
+    if not seen:
+        return {"pushedAt": None, "rigs": []}
+    return {
+        "pushedAt": max(seen.values()).isoformat().replace("+00:00", "Z"),
+        "rigs": sorted(seen),
+    }
 
 
 # ------------------------------------------------------------- the floor
