@@ -521,6 +521,17 @@ header.masthead {
 
 section > h2 { font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
 section > h2 + p { font-size: 0.8rem; color: var(--muted); margin: 0.1rem 0 0.7rem; max-width: 72ch; }
+/* `hidden` has to actually hide. #view-live, #view-plan and the sheet
+   panels are all <section>, and the rule below sets display:flex on
+   every section - an author rule, which outranks the browser's built-in
+   [hidden] { display: none }. The result was both modes painting at
+   once, Live stacked above Plan, and the Rig sheet stacked above the
+   Payload panel. The headless tests cannot see this: they track the
+   hidden property and have no stylesheet.
+   The print block deliberately un-hides panels with #id[hidden] rules,
+   which are more specific than this and still win. */
+[hidden] { display: none !important; }
+
 section { display: flex; flex-direction: column; }
 .stack { display: flex; flex-direction: column; gap: 0.75rem; }
 
@@ -1015,7 +1026,7 @@ pre.json .n { color: var(--accent); }
       <div class="tabs" role="tablist" id="tabs">
         <button type="button" role="tab" data-tab="ops" aria-selected="true">Operator sheet</button>
         <button type="button" role="tab" data-tab="rigs" aria-selected="false">Rig sheet</button>
-        <button type="button" role="tab" data-tab="push" aria-selected="false">What each rig gets</button>
+        <button type="button" role="tab" data-tab="push" aria-selected="false" hidden>Payload</button>
         <div class="tab-tools" id="tab-tools"></div>
       </div>
 
@@ -1034,6 +1045,7 @@ pre.json .n { color: var(--accent); }
       </div>
 
       <div id="panel-push" hidden>
+        <p class="legend"><span>The exact JSON pushed to each rig. Developer view - open the desk with <code>?dev</code> to see this tab.</span></p>
         <div class="scroller">
           <div class="payload-head" id="push-head"></div>
           <pre class="json" id="push-body"></pre>
@@ -2364,7 +2376,23 @@ async function pushFloor() {
   }
 }
 
+/* The payload tab is a developer surface, not part of the sheet. It shows
+   the exact JSON the floor is sent, which is the contract three things
+   depend on - but a manager who opens it learns nothing from
+   `"blockMinutes": 15`, and the sheet has an operator grid and a rig grid
+   and no third thing. So it is asked for, the same way the rig's demo
+   clock is: open the desk with `?dev`.
+
+   Hidden, not deleted. When a rig shows the wrong person, the fastest
+   diagnosis on the floor is comparing what it displays against what it
+   was actually sent. */
+const DEV = /[?&]dev\b/.test(window.location.search || "");
+
 function renderTabs() {
+  const pushTab = [...$("tabs").querySelectorAll("[role=tab]")].find(b => b.dataset.tab === "push");
+  if (pushTab) pushTab.hidden = !DEV;
+  if (!DEV && cfg.tab === "push") cfg.tab = "ops";   // never strand a manager on it
+
   [...$("tabs").querySelectorAll("[role=tab]")].forEach(b =>
     b.setAttribute("aria-selected", String(b.dataset.tab === cfg.tab)));
   $("panel-ops").hidden  = cfg.tab !== "ops";

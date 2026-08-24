@@ -788,7 +788,23 @@ async function pushFloor() {
   }
 }
 
+/* The payload tab is a developer surface, not part of the sheet. It shows
+   the exact JSON the floor is sent, which is the contract three things
+   depend on - but a manager who opens it learns nothing from
+   `"blockMinutes": 15`, and the sheet has an operator grid and a rig grid
+   and no third thing. So it is asked for, the same way the rig's demo
+   clock is: open the desk with `?dev`.
+
+   Hidden, not deleted. When a rig shows the wrong person, the fastest
+   diagnosis on the floor is comparing what it displays against what it
+   was actually sent. */
+const DEV = /[?&]dev\b/.test(window.location.search || "");
+
 function renderTabs() {
+  const pushTab = [...$("tabs").querySelectorAll("[role=tab]")].find(b => b.dataset.tab === "push");
+  if (pushTab) pushTab.hidden = !DEV;
+  if (!DEV && cfg.tab === "push") cfg.tab = "ops";   // never strand a manager on it
+
   [...$("tabs").querySelectorAll("[role=tab]")].forEach(b =>
     b.setAttribute("aria-selected", String(b.dataset.tab === cfg.tab)));
   $("panel-ops").hidden  = cfg.tab !== "ops";
