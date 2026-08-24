@@ -11,11 +11,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.domains.alerts.repository import AlertRepository
 from core.domains.rig_events.repository import RigEventRepository
 from core.domains.rig_events.schema import EventBatch, IngestResult
+from core.domains.rig_status.repository import RigStatusRepository
 from core.domains.schedules.repository import ScheduleRepository
 from core.infrastructure.config import get_settings
 from core.infrastructure.database import get_session
+from core.workflows.floor import floor_state, operator_efficiency
 
 router = APIRouter()
 
@@ -101,7 +104,9 @@ async def ingest(
 
 
 @router.post("/rigs/{rig_id}/heartbeat", response_model=HeartbeatOut)
-async def heartbeat(rig_id: str, beat: HeartbeatIn) -> HeartbeatOut:
+async def heartbeat(
+    rig_id: str, beat: HeartbeatIn, session: AsyncSession = Depends(get_session)
+) -> HeartbeatOut:
     """Proof of life, and a free clock-skew measurement.
 
     The two most valuable alerts on this floor are both absences - a rig
@@ -110,7 +115,12 @@ async def heartbeat(rig_id: str, beat: HeartbeatIn) -> HeartbeatOut:
     is what the floor sweep reads instead.
     """
     now = datetime.now(timezone.utc)
-    return HeartbeatOut(serverTime=now, skewSecs=(now - beat.at).total_seconds())
+    skew = (now - beat.at).total_seconds()
+    # Recorded, not just answered. A heartbeat nobody stored cannot be
+    # missed later, and being missed is the entire point of it.
+    await RigStatusRepository(session).beat(rig_id, now, beat.at, skew)
+    await session.commit()
+    return HeartbeatOut(serverTime=now, skewSecs=skew)
 
 
 @router.get("/rigs/{rig_id}/schedule")
@@ -128,3 +138,44 @@ async def schedule(rig_id: str, session: AsyncSession = Depends(get_session)) ->
 async def health() -> dict:
     s = get_settings()
     return {"ok": True, "database": s.safe_url()}
+
+
+# ------------------------------------------------------------- the floor
+
+
+@router.get("/floor/state")
+async def floor(session: AsyncSession = Depends(get_session)) -> dict:
+    """The Live board: every rig, who is on it, when it was last heard
+    from, and anything open against it."""
+    return await floor_state(session)
+
+
+@router.get("/floor/alerts")
+async def alerts(session: AsyncSession = Depends(get_session)) -> dict:
+    """Everything currently wrong on the floor.
+
+    An alert is a state, not a message: it is here while the condition
+    holds and gone when it clears.
+    """
+    rows = await AlertRepository(session).open_alerts()
+    return {
+        "open": [
+            {
+                "kind": a.kind, "rigId": a.rig_id, "detail": a.detail,
+                "openedAt": a.opened_at.isoformat(),
+            }
+            for a in rows
+        ]
+    }
+
+
+@router.get("/floor/efficiency")
+async def efficiency_for_shift(
+    shift_date: date, shift_label: str, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """Efficiency per operator, computed here and stored nowhere."""
+    return {
+        "shiftDate": shift_date.isoformat(),
+        "shiftLabel": shift_label,
+        "operators": await operator_efficiency(session, shift_date, shift_label),
+    }
