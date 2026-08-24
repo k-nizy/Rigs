@@ -22,9 +22,25 @@
 
 const RE = window.RotationEngine;
 
+/* A rig follows the wall clock. The accelerated clock is a review tool
+   and has to be asked for — `?demo`, `?demo=60`, or the flag the
+   single-file build bakes in.
+
+   This was the other way round for a long time, because the very first
+   prototype ran at 30x "so a 45-minute stint is watchable" and nothing
+   ever revisited it. A deployed rig therefore ran an accelerated demo
+   clock, which quietly makes every timestamp it reports meaningless.
+   The demo is the special case; the floor is the default. */
+const DEMO = (function () {
+  if (window.RIG_DEMO) return 30;
+  const m = /[?&]demo(?:=(\d+))?/.exec(window.location.search || "");
+  return m ? (Number(m[1]) || 30) : 0;
+})();
+
 let PAYLOAD = null;            // what was pushed to this rig
 let RIG_ID  = "RIG-03";        // until the payload says otherwise
-let live    = false;           // true = follow the wall clock, not the demo clock
+let SOURCE  = "generated";     // where this rig's schedule actually came from
+let live    = !DEMO;           // follow the wall clock unless this is a demo
 let turnKey = null;            // "HH:MM" of the turn currently in progress
 
 const CAMERAS = ["Front", "Wrist L", "Overhead"];
@@ -373,7 +389,7 @@ function rotate() {
 // ----------------------------------------------------------------- clock
 
 const SPEEDS = [1, 12, 30, 60];
-let speed = 30;
+let speed = DEMO || 1;
 let last = null;
 
 function tick(now) {
@@ -776,6 +792,7 @@ $speeds.addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
   speed = Number(b.dataset.s);
   [...$speeds.children].forEach((c) => c.setAttribute("aria-pressed", String(Number(c.dataset.s) === speed)));
+  showMode();
 });
 
 const $rigs = document.getElementById("rigs");
@@ -807,6 +824,7 @@ $live.addEventListener("click", () => {
 async function loadPayload(rigId) {
   // A single-file build has the push baked in - there is nothing to fetch.
   if (window.PUSHED_SCHEDULE && (!rigId || window.PUSHED_SCHEDULE.rigId === rigId)) {
+    SOURCE = "baked";
     return window.PUSHED_SCHEDULE;
   }
   const id = rigId || RIG_ID;
@@ -816,16 +834,35 @@ async function loadPayload(rigId) {
   // deploy) and then to a locally generated schedule so the demo runs.
   try {
     const r = await fetch("/api/rigs/" + encodeURIComponent(id) + "/schedule.json", { cache: "no-store" });
-    if (r.ok) return await r.json();
+    if (r.ok) { SOURCE = "server"; return await r.json(); }
   } catch (e) { /* server not up */ }
   try {
     const r = await fetch("schedule.json", { cache: "no-store" });
     if (r.ok) {
       const p = await r.json();
-      if (!rigId || p.rigId === rigId) return p;
+      if (!rigId || p.rigId === rigId) { SOURCE = "file"; return p; }
     }
   } catch (e) { /* no file, nothing pushed */ }
+  SOURCE = "generated";
   return generateLocally(id);
+}
+
+/* What the rig is actually running on, in words, whenever that is not
+   the ordinary thing. A rig reading a pushed schedule on the wall clock
+   says nothing; any other combination says so out loud.
+
+   The rule this enforces: the rig never lies about its own state. A rig
+   running a schedule nobody pushed, or an accelerated clock, used to be
+   indistinguishable from a correct one - which is exactly how a 30x demo
+   clock survived all the way to a deployable build. */
+function modeLine() {
+  const bits = [];
+  if (SOURCE === "generated") bits.push("schedule not pushed");
+  else if (SOURCE === "file") bits.push("schedule from file");
+  else if (SOURCE === "baked") bits.push("demo build");
+  if (DEMO) bits.push("demo clock " + speed + "×");
+  else if (!live) bits.push("shift clock " + speed + "×");
+  return bits.join(" · ");
 }
 
 function generateLocally(rigId) {
@@ -840,6 +877,12 @@ function applyPayload(p) {
   document.getElementById("rail-rig").textContent = p.rigId;
   document.getElementById("rail-task").textContent = p.task;
   document.title = p.rigId + " Pedal Loop";
+  showMode();
+}
+
+function showMode() {
+  const el = document.getElementById("rail-mode");
+  if (el) el.textContent = modeLine();
 }
 
 function clock(secs) {
@@ -870,6 +913,7 @@ window.switchRig = async function (rigId) {
 window.setLiveClock = function (on) {
   live = on;
   syncTurnKey();   // the clock just jumped; the turn in progress moved with it
+  showMode();
   toast(on ? "Following the wall clock" : "Demo clock");
 };
 

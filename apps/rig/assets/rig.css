@@ -304,3 +304,19 @@ body {
   .rail { gap: 1rem; font-size: 0.62rem; }
   .rail-right { gap: 0.9rem; }
 }
+
+/* What the rig is running on, when that is not the ordinary thing. Quiet
+   by design - it is a statement of fact, not an alarm - but never absent
+   when it applies. A rig on a pushed schedule and the wall clock shows
+   nothing here at all. */
+.rail-mode:not(:empty) {
+  font: 600 0.66rem/1 var(--mono, ui-monospace, monospace);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: var(--hail);
+  padding: 0.32rem 0.5rem;
+  border-radius: 2px;
+  white-space: nowrap;
+  align-self: center;
+}

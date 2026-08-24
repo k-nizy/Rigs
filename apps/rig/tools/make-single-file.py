@@ -43,6 +43,7 @@ out = f"""<meta charset="utf-8">
 {roster}</script>
 <script>
 /* The schedule the desk pushed to this rig, baked in at build time. */
+window.RIG_DEMO = true;   // the dist is the review build: accelerated clock, drawer on
 window.PUSHED_SCHEDULE = {json.dumps(schedule, indent=2)};
 </script>
 <script>

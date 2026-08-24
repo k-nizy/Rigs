@@ -222,7 +222,7 @@ async function mountRig(opts) {
 
   global.Date = FakeDate;
   global.window = global;
-  global.location = { hash: opts.hash ? "#" + opts.hash : "" };
+  global.location = { hash: opts.hash ? "#" + opts.hash : "", search: opts.search || "" };
   global.performance = { now: () => nowMs };
   global.requestAnimationFrame = (fn) => { if (running) queue.push(fn); return queue.length; };
   global.setTimeout = (fn, ms) => { const id = realSetTimeout(fn, ms); timeouts.push(id); return id; };
