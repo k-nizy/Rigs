@@ -1148,7 +1148,14 @@ function boot(screen) {
   lastPedalKey = null;
   holding = null;
   emit("shift_check", "rig_shift_checks", "shift started, checklist raised");
-  if (screen && screen !== "checklist") seed(screen);
+  /* Only a screen the app actually has. An unrecognised hash used to
+     leave the rig on an undefined phase — blank stage, three dead
+     pedals, nothing to press and no way back but a reload. */
+  if (screen && screen !== "checklist" && SCREENS.some(([id]) => id === screen)) seed(screen);
+  /* seed() moves the clock, so the turn in progress has to be read back
+     *after* it. Miss this and the next frame sees a turn that does not
+     match turnKey and fires a handover that never happened. */
+  syncTurnKey();
   render();
 }
 
@@ -1215,6 +1222,23 @@ const nextOperator = () => { const c = current(); return c && c.turn.relievedBy 
    this rig - which is exactly why the rig cannot work it out alone and
    the payload has to carry it. */
 const nextPeriod   = () => { const c = current(); return c ? c.turn.theyGoTo : "End of shift"; };
+
+/* Whatever moved the clock — a fresh boot, a jump to a screen, the wall
+   clock being switched on — the rig has to agree with it about which
+   turn is in progress before the next frame looks. */
+function syncTurnKey() {
+  const c = current();
+  turnKey = c ? c.turn.from : null;
+}
+
+/* The operator whose stint just *ended*, which is not the one arriving.
+   rotate() only runs once the boundary has passed, so current() already
+   names the incoming operator; the outgoing one is still held by
+   turnKey. Getting this wrong credits every stint to the wrong person. */
+function outgoingOperator() {
+  const t = PAYLOAD && turnKey ? PAYLOAD.turns.find((x) => x.from === turnKey) : null;
+  return t ? t.operator.name : operator();
+}
 
 const phaseSecs  = () => S.t - S.phaseAt;
 const stintLeft  = () => { const c = current(); return c ? Math.max(0, c.minutesLeft * 60) : 0; };
@@ -1389,11 +1413,10 @@ function go(phase) { S.phase = phase; S.phaseAt = S.t; }
 
 function rotate() {
   emit("stint_ended", "rig_productivity_blocks",
-       operator() + " · " + S.episode + " episodes · " + pct(efficiency()) + " efficiency");
+       outgoingOperator() + " · " + S.episode + " episodes · " + pct(efficiency()) + " efficiency");
   S.stint += 1;
   S.stintAt = S.t;
-  const c = current();
-  turnKey = c ? c.turn.from : null;
+  syncTurnKey();
   S.episode = 0;
   S.recordedSecs = 0;
   S.faultSecs = 0;
@@ -1410,6 +1433,12 @@ let speed = 30;
 let last = null;
 
 function tick(now) {
+  /* start() is async: on a real rig the payload arrives over the network,
+     and the first frame routinely beats it. Rescheduling is the last line
+     of tick, so a throw here does not just drop one frame — it kills the
+     loop for good and freezes the rig on a blank screen. Wait it out, and
+     leave `last` alone so the first real frame starts from a standstill. */
+  if (!S) { requestAnimationFrame(tick); return; }
   if (last === null) last = now;
   const dt = Math.min(0.25, (now - last) / 1000) * speed;
   last = now;
@@ -1451,6 +1480,9 @@ let lastPedalKey = null;
    it are patched in place every frame. Rebuilding at 60 Hz blanked the
    camera canvases and wiped the hold-to-cancel fill mid-press. */
 function render() {
+  // A web font landing, or a resize, can call this before the payload has
+  // arrived and boot() has built S. Nothing to draw yet.
+  if (!S) return;
   const behind = isBehind() && urgencyApplies(S.phase);
 
   // State hooks only — nothing paints off these any more. Reinstating the
@@ -1465,8 +1497,20 @@ function render() {
   $railNext.textContent = nextOperator();
   $railThen.textContent = nextPeriod();
 
+  /* A name is part of what the stage *says*, on the two screens that
+     show one: rotating from one handover into the next leaves every
+     other term unchanged, and without this the screen keeps the old
+     name up while the rail has already moved on.
+     It is deliberately *not* in the key anywhere else. Recording shows
+     no name, and the clock crossing a turn boundary mid-take would
+     otherwise tear the stage down — and the camera panes with it — for
+     a change the operator cannot see. */
+  const who = S.phase === "handover"  ? operator()
+            : S.phase === "resetting" ? nextOperator()
+            : "";
   const key = [S.phase, S.issueNode && S.issueNode.id, S.episode, S.fault,
-               S.reportedIssue && S.reportedIssue.id, S.handoverDue, behind].join("|");
+               S.reportedIssue && S.reportedIssue.id, S.handoverDue, behind,
+               who].join("|");
   if (key !== lastViewKey) {
     lastViewKey = key;
     $stage.className = "stage" + (S.phase === "recording" ? " tight" : "");
@@ -1867,9 +1911,7 @@ addEventListener("resize", () => { lastViewKey = null; render(); });
 
 async function start(rigId) {
   applyPayload(await loadPayload(rigId));
-  boot(location.hash.slice(1));
-  const c = current();
-  turnKey = c ? c.turn.from : null;
+  boot(location.hash.slice(1));   // boot() reads the turn in progress back itself
 }
 
 /* Demo affordance: watch any rig on the floor. A real rig is only ever
@@ -1878,15 +1920,12 @@ async function start(rigId) {
 window.switchRig = async function (rigId) {
   applyPayload(await loadPayload(rigId));
   boot("");
-  const c = current();
-  turnKey = c ? c.turn.from : null;
   toast("Now showing " + rigId);
 };
 
 window.setLiveClock = function (on) {
   live = on;
-  const c = current();
-  turnKey = c ? c.turn.from : null;
+  syncTurnKey();   // the clock just jumped; the turn in progress moved with it
   toast(on ? "Following the wall clock" : "Demo clock");
 };
 
