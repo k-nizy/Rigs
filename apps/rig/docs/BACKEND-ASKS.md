@@ -16,12 +16,12 @@ file, this file wins and the plan needs amending.
 Three of our open questions were answered without our having asked them,
 and one of our own decisions is dead. All four are good outcomes.
 
-| Our §0 decision | Their reply | Status |
+| Our section 0 decision | Their reply | Status |
 |---|---|---|
 | **Node, zero-dependency, for ingest** | FastAPI, SQLAlchemy 2 async, asyncpg, PostgreSQL 16+, Alembic — with layering enforced in CI by `lint-imports` | **Withdrawn.** It was on the veto list to die cheaply, and it has |
 | **Per-rig token placed by Ansible** | **Ed25519, trust-on-first-use, for machine/station identity** | **Superseded, and theirs is better.** Machine identity is already a first-class concept in their system and is not a shared secret. We adopt it |
-| Which cloud (§3.1) | **Cloudflare R2** in prod, MinIO for local dev, via boto3 | **Answered** |
-| Background jobs (§0) | **taskiq + arq** | **Answered.** Our on-prem→cloud drain has a home |
+| Which cloud (section 3.1) | **Cloudflare R2** in prod, MinIO for local dev, via boto3 | **Answered** |
+| Background jobs (section 0) | **taskiq + arq** | **Answered.** Our on-prem→cloud drain has a home |
 
 Also noted and adopted without argument: one uniform shape for every
 standalone worker — claim-and-process poll loop, shared
@@ -33,35 +33,69 @@ worker will look like every other worker they have.
 
 ---
 
-## 1. The one question that decides everything
+## 1. ANSWERED — we build inside their codebase
 
-Their message offers itself as *"a solid reference if you're building
-something similar."* That sentence has two readings and we cannot start
-the server side until we know which:
-
-**A — we build inside their codebase.** Ingest becomes a service module
-under `services/`, our five buckets become five domains under
-`core/domains/`, and `apps/server` is scaffolding we delete.
-
-**B — we build alongside, borrowing the conventions.** `apps/server`
-stays ours, shaped like theirs.
+Their message offered itself as *"a solid reference if you're building
+something similar,"* which read two ways and blocked the whole server
+side. **Decided: we build inside their tree.**
 
 > **1.1 — Do we build inside your codebase as a service module, or
 > alongside it in our own repo?**
+> **→ Inside, as a service module.**
 
-**Our preference is A**, and not out of politeness. Our five buckets were
+That was our preference and not out of politeness. Our five buckets were
 named before we had ever seen their layout and they land on it almost
 exactly: each is a bounded context with a model, a repository and a
 schema, and two of them have real state transitions that belong in a
-`lifecycle.py`. Building B would mean maintaining a second, weaker copy
-of an architecture they already enforce in CI.
+`lifecycle.py`. Building alongside would have meant maintaining a second,
+weaker copy of an architecture they already enforce in CI.
 
-If A, one follow-up on their own convention:
+### What the decision commits us to
 
-> **1.2 — Five domains, or one `rigs` domain with five models?** Our five
-> buckets are listed in §3. They are separate bounded contexts to us, but
-> they are all one product surface, and you know better than we do where
-> that line falls in your tree.
+- Ingest is a FastAPI sub-app at `services/rigs/`, mounted by their
+  gateway, following their layering — `gateway` may import `services` and
+  `core`; `services` may import `core` but never each other; `core` never
+  imports upward. `lint-imports` enforces it in CI, so this is not a
+  convention we can drift from.
+- Our buckets become domains under `core/domains/`, each with
+  `model.py`, `repository.py`, `schema.py`, and `lifecycle.py` where
+  there are real state transitions.
+- Workers follow their standalone shape exactly: claim-and-process poll
+  loop, shared `install_signal_handlers()`, argparse,
+  `logging.basicConfig`, exponential backoff as `backoff_base ** attempt`,
+  a boto3 client per worker sized to its own concurrency.
+- Postgres 16 with SQLAlchemy 2 async and Alembic migrations; R2 in
+  production, MinIO locally; taskiq and arq for background work; pytest
+  with `asyncio_mode = "auto"`.
+- **`apps/server/server.js` becomes scaffolding.** It is not deleted on
+  day one — it still serves the static tree for local development and
+  the demo, and the desk's push points at it today. It stops being the
+  ingest story, and it retires once the FastAPI routes carry the push.
+
+### What we still need from you to start
+
+> **1.2 — Five domains, or one `rigs` domain with five models?** Our
+> buckets are listed in section 3. They are separate bounded contexts to
+> us, but they are all one product surface, and you know better than we
+> do where that line falls in your tree. This is now the only structural
+> question left open.
+
+Practical access, none of it blocking the contract work:
+
+> **1.3 — Repository access and the contribution route.** Push rights or
+> fork-and-PR? Which branch do we target, and who reviews a service we
+> own but you host?
+>
+> **1.4 — A local environment that runs.** Postgres, MinIO and the
+> gateway together — is there a compose file or a documented setup, or
+> do we write one?
+>
+> **1.5 — Where do Alembic migrations live** for a new service, and who
+> runs them in each environment?
+>
+> **1.6 — Is there a service template or a recent service** we should
+> copy the shape of? Reading one you consider exemplary is worth more
+> than any style guide.
 
 ---
 
@@ -90,7 +124,7 @@ downtime opens and closes, a session starts and ends, and both can end in
 more than one way.
 
 **What the five carry** (unchanged from v1, and the reason the schema
-question in §5 is urgent):
+question in section 5 is urgent):
 
 | domain | one row per | carries |
 |---|---|---|
@@ -277,7 +311,7 @@ Phase 0 splits, and half of it needs nobody.
 **0b — the contract. Started, and useful under either answer to 1.1.**
 
 - the event schema as JSON Schema, with fixtures both sides must accept
-- the five-domain mapping in §2, as a concrete proposal rather than a
+- the five-domain mapping in section 2, as a concrete proposal rather than a
   conversation
 
 **0c — the server side. Blocked on 1.1**, and only on 1.1.
@@ -288,14 +322,14 @@ Phase 0 splits, and half of it needs nobody.
 
 | When | What | Blocks |
 |---|---|---|
-| **First** | §1.1 — inside your codebase, or alongside? | The entire server side |
-| **This week** | §6.3 — the training-data format | The event schema, which we are writing now |
-| **This week** | §5.3 — confirm no person-level login on the floor | The product, not just the plumbing |
-| **This week** | §6.1–6.4 — who do we talk to? | Everything not on your desk |
-| **Soon** | §4.1–4.3 — how video moves | All sizing, and the uploader |
-| **Soon** | §5.1 — idempotency convention | Blind retry, and a simple uploader |
-| **Before rollout** | §6.2 — machines, network, NTP | Twelve-machine provisioning |
-| **Before go-live** | §6.4 — retention and the bill | Cost, and how long we can run |
+| **First** | Section 1.1 — inside your codebase, or alongside? | The entire server side |
+| **This week** | Section 6.3 — the training-data format | The event schema, which we are writing now |
+| **This week** | Section 5.3 — confirm no person-level login on the floor | The product, not just the plumbing |
+| **This week** | Section 6.1–6.4 — who do we talk to? | Everything not on your desk |
+| **Soon** | Section 4.1–4.3 — how video moves | All sizing, and the uploader |
+| **Soon** | Section 5.1 — idempotency convention | Blind retry, and a simple uploader |
+| **Before rollout** | Section 6.2 — machines, network, NTP | Twelve-machine provisioning |
+| **Before go-live** | Section 6.4 — retention and the bill | Cost, and how long we can run |
 
 ## What we will assume if we hear nothing
 
@@ -313,6 +347,6 @@ somebody pays for.
 **Record one real episode on real hardware and send us the numbers** —
 duration, bytes per camera, container, codec, resolution, frame rate.
 
-Every figure in §4 is derived from "three 1080p30 cameras at ~7 Mbps," and
+Every figure in section 4 is derived from "three 1080p30 cameras at ~7 Mbps," and
 that is a guess. It sets the SSD size, the uplink requirement, the spool
 disk and the R2 bill. Nothing else on this page would correct as much.
