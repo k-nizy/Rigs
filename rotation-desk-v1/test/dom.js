@@ -138,6 +138,7 @@ async function mountDesk(opts) {
     body: new El("body"),
   };
   global.window = global;
+  global.location = { search: opts.search || "", hash: "" };
   global.fetch = opts.fetchImpl || (() => Promise.reject(new Error("no server")));
 
   require(path.join(REPO, "packages/engine/rotation-engine.js"));
@@ -168,6 +169,11 @@ async function mountDesk(opts) {
     click(node) { this.fire(node, "click"); },
 
     mode(name) { this.click(byId["modes"].children.find(b => b.dataset.mode === name)); },
+
+    /* The tabs a manager can actually reach, in order. */
+    visibleTabs() {
+      return byId["tabs"].children.filter(b => b.dataset.tab && !b.hidden).map(b => b.dataset.tab);
+    },
     tab(name)  { this.click(byId["tabs"].children.find(b => b.dataset.tab === name)); },
     shift(id)  { this.click(byId["seg-shift"].children.find(b => b.dataset.shift === id)); },
 

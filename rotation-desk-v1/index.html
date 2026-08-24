@@ -96,7 +96,7 @@
       <div class="tabs" role="tablist" id="tabs">
         <button type="button" role="tab" data-tab="ops" aria-selected="true">Operator sheet</button>
         <button type="button" role="tab" data-tab="rigs" aria-selected="false">Rig sheet</button>
-        <button type="button" role="tab" data-tab="push" aria-selected="false">What each rig gets</button>
+        <button type="button" role="tab" data-tab="push" aria-selected="false" hidden>Payload</button>
         <div class="tab-tools" id="tab-tools"></div>
       </div>
 
@@ -115,6 +115,7 @@
       </div>
 
       <div id="panel-push" hidden>
+        <p class="legend"><span>The exact JSON pushed to each rig. Developer view - open the desk with <code>?dev</code> to see this tab.</span></p>
         <div class="scroller">
           <div class="payload-head" id="push-head"></div>
           <pre class="json" id="push-body"></pre>
