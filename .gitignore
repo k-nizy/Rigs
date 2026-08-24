@@ -10,3 +10,16 @@ __pycache__/
 
 # server state - regenerated on every push, not source
 apps/server/state.json
+
+# Backend secrets and local state. The database URL carries a password;
+# it must never reach the repo.
+backend/.env
+backend/.env.*
+!backend/.env.example
+__pycache__/
+*.pyc
+.venv/
+backend/.pytest_cache/
+backend/.venv/
+backend/.import_linter_cache/
+backend/*.egg-info/
