@@ -493,6 +493,16 @@ test("standby clears the rail instead of leaving it contradicting the screen",
     assert.equal(rail.due, false);
   }));
 
+test("the rail stays cleared through an early check",
+  withRig(DEAD_HOURS, async (rig) => {
+    rig.frames(1);
+    rig.press(2); rig.frames(2);            // start the check early
+    assert.equal(rig.screen(), "checklist");
+    assert.equal(rig.rail().block, "—",
+      "the rail snapped back to the live values the moment the pedal was pressed");
+    assert.equal(rig.rail().then, "—");
+  }));
+
 test("standby still gives the operator something to press",
   withRig(DEAD_HOURS, async (rig) => {
     rig.frames(1);
@@ -533,3 +543,18 @@ test("standby does not survive the shift starting",
     assert.notEqual(rig.screen(), "standby",
       "somebody is due at this rig - standing on standby would hide that");
   }));
+
+/* A stylesheet guard, like the desk's. The camera panes hold
+   aspect-ratio 16/10; letting the flex column shrink their grid box
+   below that left them overflowing it and painting over the "Episode"
+   label beneath. The stub has no layout engine and cannot see this -
+   only a browser could - so this asserts the rule that fixes it. */
+test("the camera grid cannot be shrunk below the panes it holds",
+  async () => {
+    const css = require("node:fs").readFileSync(
+      require("node:path").join(__dirname, "assets/rig.css"), "utf8");
+    const rule = /\.cams\s*\{[^}]*\}/.exec(css);
+    assert.ok(rule, ".cams rule missing");
+    assert.match(rule[0], /flex:\s*0\s+0\s+auto/,
+      "a shrinkable .cams lets the panes overflow onto the metrics row");
+  });

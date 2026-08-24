@@ -487,12 +487,16 @@ function render() {
     S.phase === "handover" ? "hail" :
     (S.phase === "fault_fixing" || S.phase === "rig_down") ? "alarm" : "";
 
-  /* On Standby none of the three rail cells has an answer: there is no
-     block running, nobody is being relieved, and nobody is going
-     anywhere. Leaving the live values there is what produced the
-     contradiction this screen exists to remove - a rail reading "End of
-     shift" above a rig that is simply waiting for one. */
-  if (S.phase === "standby") {
+  /* When nothing is scheduled, none of the three rail cells has an
+     answer: no block is running, nobody is being relieved, nobody is
+     going anywhere. Leaving the live values there is what produced the
+     contradiction Standby exists to remove - a rail reading "End of
+     shift" above a rig simply waiting for one.
+
+     Keyed on the schedule, not the phase: an early check runs outside
+     the shift too, and the rail was snapping back to "End of shift" the
+     moment the operator pressed the pedal. */
+  if (!current()) {
     const first = PAYLOAD && PAYLOAD.turns.length ? PAYLOAD.turns[0] : null;
     $railBlock.textContent = "—";
     $cellBlock.classList.toggle("due", false);
