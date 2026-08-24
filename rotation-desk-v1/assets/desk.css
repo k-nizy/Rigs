@@ -514,6 +514,17 @@ header.masthead {
 
 section > h2 { font-size: 0.95rem; font-weight: 600; letter-spacing: -0.01em; }
 section > h2 + p { font-size: 0.8rem; color: var(--muted); margin: 0.1rem 0 0.7rem; max-width: 72ch; }
+/* `hidden` has to actually hide. #view-live, #view-plan and the sheet
+   panels are all <section>, and the rule below sets display:flex on
+   every section - an author rule, which outranks the browser's built-in
+   [hidden] { display: none }. The result was both modes painting at
+   once, Live stacked above Plan, and the Rig sheet stacked above the
+   Payload panel. The headless tests cannot see this: they track the
+   hidden property and have no stylesheet.
+   The print block deliberately un-hides panels with #id[hidden] rules,
+   which are more specific than this and still win. */
+[hidden] { display: none !important; }
+
 section { display: flex; flex-direction: column; }
 .stack { display: flex; flex-direction: column; gap: 0.75rem; }
 

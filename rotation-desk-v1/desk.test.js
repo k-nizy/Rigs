@@ -238,8 +238,8 @@ test("typing a new task reaches the band and the board",
     assert.equal(desk.board()[0].task, "Peg sorting");
   }));
 
-test("the three tabs are exclusive",
-  withDesk({}, async desk => {
+test("the tabs are exclusive - never two panels, never none",
+  withDesk({ search: "?dev" }, async desk => {
     desk.mode("plan");
     const panels = ["panel-ops", "panel-rigs", "panel-push"];
     ["ops", "rigs", "push"].forEach((t, i) => {
@@ -248,6 +248,57 @@ test("the three tabs are exclusive",
         assert.equal(desk.$(id).hidden, i !== j, t + " tab: " + id);
       });
     });
+  }));
+
+/* The payload tab is the exact JSON the floor is sent - the contract the
+ * desk, the server and the rig all depend on. Worth keeping and worth
+ * hiding: a manager who opens it learns nothing from "blockMinutes": 15,
+ * and the sheet has an operator grid and a rig grid and no third thing. */
+
+/* A stylesheet guard, not a DOM one. `hidden` on #view-live, #view-plan
+ * and the sheet panels was defeated for a long time by `section {
+ * display: flex }` - an author rule outranks the browser's built-in
+ * [hidden] { display: none }, so both modes painted at once and the Rig
+ * sheet stacked on top of the Payload panel. Every test in this file
+ * passed throughout, because the stub tracks the hidden property and has
+ * no stylesheet. Only a browser could see it, so this asserts the rule
+ * that fixes it is still in the file. */
+test("hidden actually hides - the CSS rule that makes the property work",
+  async () => {
+    const css = require("node:fs").readFileSync(
+      require("node:path").join(__dirname, "assets/desk.css"), "utf8");
+    assert.match(css, /\[hidden\]\s*\{\s*display:\s*none\s*!important/,
+      "without this rule `section { display: flex }` wins and nothing is ever hidden");
+  });
+
+test("a manager sees the sheet, and only the sheet",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    assert.deepEqual(desk.visibleTabs(), ["ops", "rigs"],
+      "the payload tab is a developer surface and should not be on a manager's screen");
+  }));
+
+test("?dev reveals the payload tab",
+  withDesk({ search: "?dev" }, async desk => {
+    desk.mode("plan");
+    assert.deepEqual(desk.visibleTabs(), ["ops", "rigs", "push"]);
+  }));
+
+test("a manager cannot be stranded on a tab they cannot see",
+  withDesk({}, async desk => {
+    desk.mode("plan");
+    desk.tab("push");                       // as a stale link or a stray click would
+    assert.equal(desk.$("panel-push").hidden, true, "the payload panel opened for a manager");
+    assert.equal(desk.$("panel-ops").hidden, false, "and left them looking at nothing");
+  }));
+
+test("the payload tab still shows the real payload when asked for",
+  withDesk({ search: "?dev" }, async desk => {
+    desk.mode("plan");
+    desk.tab("push");
+    assert.equal(desk.$("panel-push").hidden, false);
+    assert.match(desk.$("push-head").textContent, /RIG-01/);
+    assert.match(desk.$("push-body").innerHTML, /rigId/);
   }));
 
 /* -------------------------------------------------------- the check */
