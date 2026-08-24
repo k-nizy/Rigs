@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/k-nizy/Rigs/packages/schema/event.schema.json",
+  "title": "Rig event envelope",
+  "description": "What a rig sends back. The canonical spec: event.js validates against it in JavaScript, the ingest service generates its Pydantic models from it, and fixtures/ is what proves the two still agree. Every field outside `data` comes from the schedule the desk pushed, which is what makes the payload the dimension table for the whole event stream.",
+  "type": "object",
+  "required": ["eventId", "seq", "at", "rigId", "shiftDate", "shiftLabel", "bucket", "event", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "Minted on the rig at pedal-press, before anything downstream is told. Ingest dedupes on (rigId, eventId), which is what lets the uploader retry blindly forever."
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Per-rig and monotonic. max(seq) is the uploader's cursor: on reconnect the rig asks what the server holds and resends only what follows."
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Wall clock on the rig, ISO 8601 with a zone. The server stores received_at alongside it, so clock skew is measurable for free."
+    },
+    "rigId": { "type": "string", "minLength": 1, "examples": ["RIG-03"] },
+    "shiftDate": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+      "description": "From the pushed payload's shift.date, not from the rig's own clock."
+    },
+    "shiftLabel": { "type": "string", "minLength": 1, "enum": ["Morning", "Day", "Night"] },
+    "turnFrom": {
+      "type": ["string", "null"],
+      "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+      "description": "Start of the turn in progress. Null when nothing is scheduled - a rig on standby still reports a shift check."
+    },
+    "operatorId": {
+      "type": ["string", "null"],
+      "description": "The operator the schedule places at this rig for this turn. Null on standby. The rig never asks anyone who they are; this comes from the payload."
+    },
+    "bucket": {
+      "type": "string",
+      "enum": ["episodes", "rig_shift_checks", "rig_downtime_events", "rig_productivity_blocks", "sessions"],
+      "description": "The table this row lands in on the far side."
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "episode_saved", "episode_discarded",
+        "shift_check", "fault_opened", "fault_reclassified", "fault_closed", "fault_cancelled",
+        "rig_down", "rig_up",
+        "stint_ended",
+        "session_ended"
+      ]
+    },
+    "data": {
+      "type": "object",
+      "description": "Bucket-specific measurements. Never a conclusion: no percentages, no formatted durations, no prose. A stored ratio cannot be corrected without re-running the floor; the numbers it was made of can."
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "event": { "const": "episode_saved" } }, "required": ["event"] },
+      "then": { "properties": { "data": {
+        "required": ["episodeId", "durationSecs", "score"],
+        "properties": {
+          "episodeId": { "type": "string", "format": "uuid" },
+          "durationSecs": { "type": "number", "minimum": 0 },
+          "score": { "type": "integer", "enum": [3, 4, 5] }
+        }
+      } } }
+    },
+    {
+      "if": { "properties": { "event": { "const": "episode_discarded" } }, "required": ["event"] },
+      "then": { "properties": { "data": {
+        "required": ["episodeId", "durationSecs"],
+        "properties": {
+          "episodeId": { "type": "string", "format": "uuid" },
+          "durationSecs": { "type": "number", "minimum": 0 }
+        }
+      } } }
+    },
+    {
+      "if": { "properties": { "event": { "const": "stint_ended" } }, "required": ["event"] },
+      "then": { "properties": { "data": {
+        "required": ["episodes", "recordedSecs", "assignedSecs", "faultSecs", "downSecs"],
+        "properties": {
+          "episodes": { "type": "integer", "minimum": 0 },
+          "recordedSecs": { "type": "number", "minimum": 0 },
+          "assignedSecs": { "type": "number", "minimum": 0 },
+          "faultSecs": { "type": "number", "minimum": 0 },
+          "downSecs": { "type": "number", "minimum": 0 }
+        },
+        "description": "The four seconds columns, and no efficiency figure. Efficiency is recordedSecs / (assignedSecs - faultSecs - downSecs), computed at read time from one definition."
+      } } }
+    },
+    {
+      "if": { "properties": { "event": { "const": "rig_down" } }, "required": ["event"] },
+      "then": { "properties": { "data": {
+        "required": ["issue", "needsManager", "chargedTo"],
+        "properties": {
+          "issue": { "type": "string", "minLength": 1 },
+          "needsManager": { "type": "boolean" },
+          "chargedTo": {
+            "type": "string",
+            "enum": ["rig", "previous_operator"],
+            "description": "The app already draws this distinction on the wall - 'found at handover, charged to the previous operator'. It is a fact about a person's shift, so it has to survive into the data."
+          }
+        }
+      } } }
+    },
+    {
+      "if": { "properties": { "event": { "const": "rig_up" } }, "required": ["event"] },
+      "then": { "properties": { "data": {
+        "required": ["downSecs"],
+        "properties": { "downSecs": { "type": "number", "minimum": 0 } }
+      } } }
+    },
+    {
+      "if": { "properties": { "event": { "const": "shift_check" } }, "required": ["event"] },
+      "then": { "properties": { "data": {
+        "required": ["outcome"],
+        "properties": { "outcome": { "type": "string", "enum": ["raised", "passed", "passed_early"] } }
+      } } }
+    },
+    {
+      "if": { "properties": { "event": { "const": "session_ended" } }, "required": ["event"] },
+      "then": { "properties": { "data": {
+        "required": ["endedBy"],
+        "properties": { "endedBy": { "type": "string", "enum": ["operator", "shift_end"] } }
+      } } }
+    }
+  ]
+}

@@ -324,6 +324,11 @@ async function mountRig(opts) {
       };
     },
     log() { return byId["log"].querySelectorAll("p").map((p) => p.textContent.replace(/\s+/g, " ").trim()); },
+
+    /* The envelopes the uploader would drain - what the backend actually
+       receives, as opposed to the sentence the operator reads. */
+    events() { return global.rigEvents ? global.rigEvents() : []; },
+    eventsOf(name) { return this.events().filter((e) => e.event === name); },
     logOf(event) { return this.log().filter((l) => l.includes(event)); },
 
     /* Every timer and every frame this mount started, stopped. */

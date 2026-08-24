@@ -558,3 +558,125 @@ test("the camera grid cannot be shrunk below the panes it holds",
     assert.match(rule[0], /flex:\s*0\s+0\s+auto/,
       "a shrinkable .cams lets the panes overflow onto the metrics row");
   });
+
+/* ================================================================ events
+ *
+ * What the rig sends back, as opposed to the sentence it shows the
+ * operator. The drawer log is for the person standing at the rig and is
+ * unchanged; these assert the parallel machine-readable half against
+ * packages/schema, which is the same validator the ingest service will
+ * generate its models from.
+ */
+
+const EventSchema = require(path.resolve(__dirname, "../../packages/schema/event.js"));
+
+const invalid = (evs) => evs
+  .map((e) => ({ e, r: EventSchema.validate(e) }))
+  .filter((x) => !x.r.ok)
+  .map((x) => x.e.event + ": " + x.r.errors.join("; "));
+
+test("every event the rig emits validates against the shared contract",
+  withRig({ search: "?demo" }, async (rig) => {
+    // walk the whole loop, so this covers most of the buckets at once
+    rig.frames(1);
+    rig.press(2); rig.frames(1);            // check passed -> handover
+    rig.press(2); rig.frames(2);            // start recording
+    rig.press(3); rig.frames(1);            // save
+    rig.press(2); rig.frames(1);            // score 4 -> resetting
+    rig.press(2); rig.frames(1);            // next episode
+    rig.press(1); rig.frames(1);            // discard
+    rig.press(3); rig.frames(1);            // hardware issue
+    rig.press(1); rig.frames(2);            // gripper broken -> rig down
+    rig.press(2); rig.frames(1);            // problem solved
+
+    const evs = rig.events();
+    assert.ok(evs.length >= 6, "expected a spread of events, got " + evs.length);
+    assert.deepEqual(invalid(evs), [], "the rig emitted events the backend would reject");
+  }));
+
+test("stint_ended carries the four seconds columns, not a percentage",
+  withRig({ search: "?demo" }, async (rig) => {
+    toRecording(rig);
+    rig.frames(4);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);
+    rig.demoKey("h");
+    rig.frames(3);
+
+    const stint = rig.eventsOf("stint_ended");
+    assert.equal(stint.length, 1);
+    const d = stint[0].data;
+    for (const k of ["episodes", "recordedSecs", "assignedSecs", "faultSecs", "downSecs"]) {
+      assert.equal(typeof d[k], "number", k + " must be a number, not a formatted string");
+      assert.ok(d[k] >= 0, k + " must not be negative");
+    }
+    assert.equal(d.efficiency, undefined,
+      "a stored percentage cannot be corrected without re-running the floor");
+    assert.deepEqual(invalid(stint), []);
+  }));
+
+test("an episode keeps one id from the pedal press that started it",
+  withRig({ search: "?demo" }, async (rig) => {
+    toRecording(rig);
+    rig.frames(2);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);            // scored -> saved
+
+    const saved = rig.eventsOf("episode_saved");
+    assert.equal(saved.length, 1);
+    assert.match(saved[0].data.episodeId, /^[0-9a-f-]{36}$/i,
+      "the id names the video directory too, so it has to be real");
+    assert.equal(typeof saved[0].data.durationSecs, "number");
+    assert.ok([3, 4, 5].includes(saved[0].data.score));
+  }));
+
+test("every envelope carries the schedule it happened under",
+  withRig({ search: "?demo" }, async (rig) => {
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    const e = rig.events()[0];
+    const p = payloadFor("RIG-03");
+    assert.equal(e.rigId, "RIG-03");
+    assert.equal(e.shiftDate, p.shift.date, "shiftDate comes from the payload, not the rig's own clock");
+    assert.equal(e.shiftLabel, p.shift.label);
+    assert.equal(e.operatorId, FIRST.operator.id, "the rig never asks who anyone is - the payload says");
+    assert.equal(e.turnFrom, FIRST.from);
+  }));
+
+test("ids are unique and seq is monotonic, so a batch can be resent blindly",
+  withRig({ search: "?demo" }, async (rig) => {
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    rig.press(2); rig.frames(1);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);
+
+    const evs = rig.events();
+    const ids = evs.map((e) => e.eventId);
+    assert.equal(new Set(ids).size, ids.length, "two events share an id - ingest would drop one");
+    const seqs = evs.map((e) => e.seq);
+    assert.deepEqual(seqs, seqs.slice().sort((a, b) => a - b), "seq is the cursor; it has to only go up");
+  }));
+
+test("downtime records whether it was charged to the rig or the operator before",
+  withRig({ search: "?demo" }, async (rig) => {
+    toHandover(rig);
+    rig.press(3); rig.frames(1);
+    rig.press(1); rig.frames(2);            // found at handover
+
+    const down = rig.eventsOf("rig_down");
+    assert.equal(down.length, 1);
+    assert.equal(down[0].data.chargedTo, "previous_operator");
+    assert.equal(down[0].data.needsManager, false);
+    assert.equal(down[0].data.issue, "Gripper broken");
+    assert.deepEqual(invalid(down), []);
+  }));
+
+test("a rig on standby still reports, with no turn and no operator",
+  withRig(DEAD_HOURS, async (rig) => {
+    rig.frames(1);
+    const e = rig.events()[0];
+    assert.equal(e.turnFrom, null, "nothing is scheduled, so there is no turn");
+    assert.equal(e.operatorId, null);
+    assert.deepEqual(invalid([e]), [], "standby events still have to validate");
+  }));

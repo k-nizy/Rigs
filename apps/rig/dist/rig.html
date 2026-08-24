@@ -1181,6 +1181,7 @@ function boot(screen) {
     stint: 0,           // which 45-minute stint we are in
     stintAt: 0,         // shift seconds when this operator took the rig
     episode: 0,
+    episodeId: null,   // minted at start_episode, names the video too
     recordedSecs: 0,
     faultSecs: 0,
     downSecs: 0,
@@ -1198,7 +1199,8 @@ function boot(screen) {
   lastViewKey = null;
   lastPedalKey = null;
   holding = null;
-  emit("shift_check", "rig_shift_checks", "shift started, checklist raised");
+  emit("shift_check", "rig_shift_checks", "shift started, checklist raised",
+       { outcome: "raised" });
   /* Only a screen the app actually has. An unrecognised hash used to
      leave the rig on an undefined phase — blank stage, three dead
      pedals, nothing to press and no way back but a reload. */
@@ -1293,6 +1295,21 @@ function syncTurnKey() {
   turnKey = c ? c.turn.from : null;
 }
 
+/* The whole path taken through the issue tree, not just where it landed.
+   "Other > Other hardware > Cable" says more about a recurring fault than
+   "Cable" does on its own. */
+function issuePath(leaf) {
+  const walk = (node, trail) => {
+    if (node === leaf) return trail.concat(node.label);
+    for (const c of node.children || []) {
+      const hit = walk(c, trail.concat(node === ISSUE_TREE ? [] : [node.label]));
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return (walk(ISSUE_TREE, []) || [leaf.label]).join(" > ");
+}
+
 /* The operator whose stint just *ended*, which is not the one arriving.
    rotate() only runs once the boundary has passed, so current() already
    names the incoming operator; the outgoing one is still held by
@@ -1384,16 +1401,19 @@ function dispatch(intent) {
     case "fault_right": {
       S.fault = FAULTS[intent.split("_")[1]];
       go("fault_fixing");
-      emit("fault_opened", "rig_shift_checks", S.fault + " reported at shift check");
+      emit("fault_opened", "rig_shift_checks", S.fault + " reported at shift check",
+           { subsystem: S.fault });
       break;
     }
     case "fault_back":
-      emit("fault_reclassified", "rig_shift_checks", S.fault + " was the wrong subsystem");
+      emit("fault_reclassified", "rig_shift_checks", S.fault + " was the wrong subsystem",
+           { subsystem: S.fault });
       S.fault = null; go("fault_class");
       break;
     case "fault_fixed":
       emit("fault_closed", "rig_shift_checks",
-           S.fault + " fixed in " + clock(phaseSecs()) + " — not charged");
+           S.fault + " fixed in " + clock(phaseSecs()) + " — not charged",
+           { subsystem: S.fault, secondsCharged: 0, secondsSpent: Math.round(phaseSecs()) });
       S.fault = null; go("checklist");
       break;
     case "fault_cancel":
@@ -1401,7 +1421,8 @@ function dispatch(intent) {
       // clock — the excluded time is charged back to the operator.
       S.faultSecs = Math.max(0, S.faultSecs - phaseSecs());
       emit("fault_cancelled", "rig_shift_checks",
-           "report withdrawn — " + clock(phaseSecs()) + " charged to operator");
+           "report withdrawn — " + clock(phaseSecs()) + " charged to operator",
+           { subsystem: S.fault, secondsCharged: Math.round(phaseSecs()) });
       S.fault = null; go("checklist");
       break;
 
@@ -1409,10 +1430,13 @@ function dispatch(intent) {
       // Measured from the start of the shift, less any fault time — the
       // phase clock restarts each time the operator returns from a fault.
       S.checkedAt = S.t;
-      emit("shift_check", "rig_shift_checks", "checklist passed in " + clock(S.t - S.faultSecs));
       // A check run early goes back to Standby: the rig is ready, but
-      // nobody is due at it yet.
+      // nobody is due at it yet. Decided before the event is filed, so
+      // the two cannot disagree about which kind of check this was.
       const early = S.fromStandby && !current();
+      emit("shift_check", "rig_shift_checks", "checklist passed in " + clock(S.t - S.faultSecs),
+           { outcome: early ? "passed_early" : "passed",
+             secondsTaken: Math.round(S.t - S.faultSecs) });
       S.fromStandby = false;
       go(early ? "standby" : "handover");
       break;
@@ -1420,11 +1444,17 @@ function dispatch(intent) {
 
     case "start_episode":
       S.episode += 1;
+      /* Minted before RODA-RS would be told anything, so the video
+         directory on disk and the event that reports it name the same
+         take. No lookup table, no reconciliation, and an id that exists
+         even for a take the recorder failed to start. */
+      S.episodeId = uuid();
       go("recording");
       break;
 
     case "discard":
-      emit("episode_discarded", "episodes", "episode " + S.episode + " discarded after " + clock(phaseSecs()));
+      emit("episode_discarded", "episodes", "episode " + S.episode + " discarded after " + clock(phaseSecs()),
+           { episodeId: S.episodeId, durationSecs: Math.round(phaseSecs()) });
       S.episode -= 1;
       afterEpisode();
       break;
@@ -1438,7 +1468,8 @@ function dispatch(intent) {
       const score = Number(intent.slice(-1));
       S.recordedSecs += S.pendingSecs || 0;
       emit("episode_saved", "episodes",
-           "episode " + S.episode + " · " + clock(S.pendingSecs || 0) + " · scored " + score + "/5");
+           "episode " + S.episode + " · " + clock(S.pendingSecs || 0) + " · scored " + score + "/5",
+           { episodeId: S.episodeId, durationSecs: Math.round(S.pendingSecs || 0), score: score });
       S.pendingSecs = 0;
       afterEpisode();
       break;
@@ -1457,13 +1488,18 @@ function dispatch(intent) {
       go("rig_down");
       emit("rig_down", "rig_downtime_events",
            child.label + (child.needsManager ? " — manager needed" : "") +
-           (S.reportedAtHandover ? " · found at handover, charged to previous operator" : ""));
+           (S.reportedAtHandover ? " · found at handover, charged to previous operator" : ""),
+           { issue: child.label,
+             issuePath: issuePath(child),
+             needsManager: !!child.needsManager,
+             chargedTo: S.reportedAtHandover ? "previous_operator" : "rig" });
       break;
     }
 
     case "problem_solved":
       // downSecs already accrued frame by frame while the rig was down.
-      emit("rig_up", "rig_downtime_events", "resolved after " + clock(phaseSecs()) + " down");
+      emit("rig_up", "rig_downtime_events", "resolved after " + clock(phaseSecs()) + " down",
+           { downSecs: Math.round(phaseSecs()) });
       S.reportedIssue = null;
       go("resetting");
       break;
@@ -1473,7 +1509,8 @@ function dispatch(intent) {
       break;
 
     case "end_session":
-      emit("session_ended", "sessions", "operator ended session with the rig down");
+      emit("session_ended", "sessions", "operator ended session with the rig down",
+           { endedBy: "operator" });
       go("session_ended");
       break;
 
@@ -1492,8 +1529,17 @@ function afterEpisode() {
 function go(phase) { S.phase = phase; S.phaseAt = S.t; }
 
 function rotate() {
+  /* The sentence keeps the percentage because the operator reads it.
+     The data carries the four numbers it was made of, so the formula can
+     be corrected in six months and every shift already filed recomputes
+     correctly. A stored ratio cannot be. */
   emit("stint_ended", "rig_productivity_blocks",
-       outgoingOperator() + " · " + S.episode + " episodes · " + pct(efficiency()) + " efficiency");
+       outgoingOperator() + " · " + S.episode + " episodes · " + pct(efficiency()) + " efficiency",
+       { episodes: S.episode,
+         recordedSecs: Math.round(S.recordedSecs),
+         assignedSecs: Math.round(assignedSecs()),
+         faultSecs: Math.round(S.faultSecs),
+         downSecs: Math.round(S.downSecs) });
   S.stint += 1;
   S.stintAt = S.t;
   syncTurnKey();
@@ -1904,12 +1950,64 @@ function mountCameras() {
 // ------------------------------------------------------------------- log
 
 const logLines = [];
-function emit(event, bucket, detail) {
+
+/* Every event the rig sends back, in the shape packages/schema/event.js
+   validates. Two things this has to get right:
+
+   The id is minted here, at the moment the pedal was pressed, before
+   anything downstream is told. That is what lets the uploader resend a
+   batch blindly, forever, without ever asking whether the last attempt
+   landed - ingest dedupes on (rigId, eventId).
+
+   Everything outside `data` comes from the schedule the desk pushed, not
+   from the rig's own reckoning. The payload is the dimension table for
+   the whole event stream, so a rig that made up its own shift date would
+   quietly orphan every row it filed. */
+const envelopes = [];
+let seq = 0;
+
+function uuid() {
+  if (typeof crypto === "object" && crypto.randomUUID) return crypto.randomUUID();
+  // Older webviews: still a v4-shaped id, still unique enough to dedupe on.
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+function envelope(event, bucket, data) {
+  const c = current();
+  return {
+    eventId: uuid(),
+    seq: seq++,
+    at: new Date().toISOString(),
+    rigId: RIG_ID,
+    shiftDate: PAYLOAD ? PAYLOAD.shift.date : null,
+    shiftLabel: PAYLOAD ? PAYLOAD.shift.label : null,
+    // Null on standby: nothing is scheduled, but the rig still reports.
+    turnFrom: c ? c.turn.from : null,
+    operatorId: c ? c.turn.operator.id : null,
+    bucket: bucket,
+    event: event,
+    data: data || {},
+  };
+}
+
+/* `detail` is the sentence on the operator's drawer log and stays exactly
+   as it was - it is for the person standing at the rig, not the database,
+   and it is good. `data` is the parallel machine-readable half. */
+function emit(event, bucket, detail, data) {
+  envelopes.push(envelope(event, bucket, data));
   logLines.push({ at: clock(S ? S.t : 0), event, bucket, detail });
   const el = document.getElementById("log");
   el.innerHTML = logLines.slice(-40).map((l) =>
     `<p><time>${l.at}</time><b>${l.event} <span class="bucket">→ ${l.bucket}</span><br>${l.detail}</b></p>`).join("");
 }
+
+/* What the uploader will drain. Exposed so the headless tests can assert
+   the shape the backend is going to receive, rather than the sentence the
+   operator reads. */
+window.rigEvents = () => envelopes.slice();
 
 let toastTimer;
 function toast(msg) {
