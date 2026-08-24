@@ -282,3 +282,19 @@ async def test_the_schedule_is_returned_verbatim(client, session):
 async def test_a_rig_nothing_was_pushed_to_gets_a_404(client):
     r = await client.get("/api/rigs/RIG-11/schedule")
     assert r.status_code == 404
+
+
+async def test_a_cursor_of_zero_is_a_real_cursor(client):
+    """seq 0 is the first event of a rig's life.
+
+    Treating it as "nothing held" - which `or -1` does, because 0 is
+    falsy - would tell a rig that had sent exactly one event that the
+    server had none, and it would resend that event forever.
+    """
+    ev = envelope(0)
+    r = await client.post(f"/api/rigs/{RIG}/events", json={"events": [ev]})
+    assert r.status_code == 200
+    assert r.json()["cursor"] == 0, "the cursor collapsed to -1 on a falsy seq"
+
+    c = await client.get(f"/api/rigs/{RIG}/cursor")
+    assert c.json()["seq"] == 0

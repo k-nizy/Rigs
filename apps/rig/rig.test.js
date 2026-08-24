@@ -680,3 +680,127 @@ test("a rig on standby still reports, with no turn and no operator",
     assert.equal(e.operatorId, null);
     assert.deepEqual(invalid([e]), [], "standby events still have to validate");
   }));
+
+/* ============================================================== uploading
+ *
+ * The seam between the rig and the backend. The whole design is one idea:
+ * the rig keeps events until the server says it has them, and never stops
+ * trying. Ingest dedupes on (rigId, eventId), so re-sending is free and
+ * asking "did that land?" is unnecessary.
+ */
+
+/* A server that accepts everything, and records what it was sent. */
+function acceptingServer(state) {
+  return async (url, opts) => {
+    if (url.includes("/cursor")) {
+      return { ok: true, json: async () => ({ rigId: "RIG-03", seq: state.cursor ?? -1 }) };
+    }
+    if (url.includes("/events")) {
+      const body = JSON.parse(opts.body);
+      state.received.push(...body.events);
+      state.batches = (state.batches || 0) + 1;
+      return { ok: true, json: async () => ({ accepted: body.events.length }) };
+    }
+    return { ok: false, status: 404 };
+  };
+}
+
+test("filed events reach the server",
+  withRig({ search: "?demo" }, async (rig) => {
+    const state = { received: [], cursor: -1 };
+    global.fetch = acceptingServer(state);
+
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    await rig.upload();
+
+    assert.ok(state.received.length >= 2, "nothing was uploaded");
+    assert.equal(rig.outbox().queued, 0, "the outbox should be empty once acknowledged");
+    assert.deepEqual(
+      state.received.map((e) => e.event).slice(0, 2),
+      ["shift_check", "shift_check"]);
+  }));
+
+test("events are held, not lost, while the server is unreachable",
+  withRig({ search: "?demo" }, async (rig) => {
+    global.fetch = async () => { throw new Error("no network"); };
+
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    await rig.upload();
+
+    const box = rig.outbox();
+    assert.ok(box.queued >= 2, "a rig with no network must keep its events");
+    assert.equal(box.state, "offline");
+    assert.ok(box.failures >= 1);
+  }));
+
+test("the queue drains when the network comes back",
+  withRig({ search: "?demo" }, async (rig) => {
+    global.fetch = async () => { throw new Error("no network"); };
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    await rig.upload();
+    const held = rig.outbox().queued;
+    assert.ok(held >= 2);
+
+    const state = { received: [], cursor: -1 };
+    global.fetch = acceptingServer(state);
+    await rig.upload();
+
+    assert.equal(rig.outbox().queued, 0, "the backlog should clear in one flush");
+    assert.equal(state.received.length, held, "every held event should arrive");
+  }));
+
+test("a rig carries on from the sequence the server already holds",
+  withRig({ search: "?demo", fetchImpl: async (url) => {
+    if (url.includes("/cursor")) return { ok: true, json: async () => ({ rigId: "RIG-03", seq: 416 }) };
+    if (url.includes("/api/rigs/")) return { ok: false, status: 404 };
+    return { ok: false, status: 404 };
+  } }, async (rig) => {
+    /* A restarted rig counting from zero again would send seq backwards,
+       and seq is the cursor the server reads. */
+    rig.frames(1);
+    const first = rig.events()[0];
+    assert.ok(first.seq > 416,
+      `seq restarted at ${first.seq}; the server already holds 416`);
+  }));
+
+test("a batch the server refuses is set aside, not retried forever",
+  withRig({ search: "?demo" }, async (rig) => {
+    global.fetch = async (url) => {
+      if (url.includes("/cursor")) return { ok: true, json: async () => ({ seq: -1 }) };
+      return { ok: false, status: 422 };
+    };
+
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    await rig.upload();
+
+    const box = rig.outbox();
+    assert.equal(box.queued, 0, "a poison batch must not block the outbox forever");
+    assert.ok(box.rejected >= 2, "the events are set aside, not dropped");
+    assert.equal(box.state, "rejected");
+    assert.ok(rig.log().some((l) => l.includes("refused")),
+      "a rig filing events its own schema rejects should say so out loud");
+  }));
+
+test("a rig that cannot reach the server says so on the wall",
+  withRig({}, async (rig) => {
+    global.fetch = async () => { throw new Error("no network"); };
+    rig.frames(1);
+    await rig.upload();
+    assert.match(rig.$("rail-mode").textContent, /queued/,
+      "an operator should be able to see that nobody has their events");
+  }));
+
+test("uploading does not interrupt the operator",
+  withRig({ search: "?demo" }, async (rig) => {
+    global.fetch = async () => { throw new Error("no network"); };
+    toRecording(rig);
+    const before = rig.screen();
+    await rig.upload();
+    rig.frames(3);
+    assert.equal(rig.screen(), before, "a failed upload changed what the operator sees");
+    assert.deepEqual(rig.errors, []);
+  }));

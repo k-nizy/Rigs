@@ -908,17 +908,145 @@ function envelope(event, bucket, data) {
    as it was - it is for the person standing at the rig, not the database,
    and it is good. `data` is the parallel machine-readable half. */
 function emit(event, bucket, detail, data) {
-  envelopes.push(envelope(event, bucket, data));
+  const e = envelope(event, bucket, data);
+  envelopes.push(e);
+  // Held until the server acknowledges it. A rig with no network keeps
+  // working and keeps filing; the outbox grows and drains later.
+  outbox.push(e);
   logLines.push({ at: clock(S ? S.t : 0), event, bucket, detail });
   const el = document.getElementById("log");
   el.innerHTML = logLines.slice(-40).map((l) =>
     `<p><time>${l.at}</time><b>${l.event} <span class="bucket">→ ${l.bucket}</span><br>${l.detail}</b></p>`).join("");
 }
 
-/* What the uploader will drain. Exposed so the headless tests can assert
-   the shape the backend is going to receive, rather than the sentence the
-   operator reads. */
+/* Everything the rig has ever filed this session. Exposed so the headless
+   tests can assert the shape the backend receives, rather than the
+   sentence the operator reads. */
 window.rigEvents = () => envelopes.slice();
+
+// ---------------------------------------------------------- the uploader
+
+/* Events reach the server from here, and the whole design is one idea:
+   the rig keeps them until the server says it has them, and never stops
+   trying. Ingest dedupes on (rigId, eventId), so re-sending a batch is
+   free and asking "did that land?" is unnecessary. That is what keeps
+   this short.
+
+   Nothing here blocks the operator. A rig with no network keeps working
+   and keeps filing; the outbox simply grows until the network returns. */
+
+const UPLOAD_BATCH = 100;
+const UPLOAD_IDLE_MS = 3000;     // how often to look when there is nothing wrong
+const UPLOAD_BACKOFF_MS = 1000;  // doubled per consecutive failure
+const UPLOAD_BACKOFF_MAX = 60000;
+
+const outbox = [];               // filed, not yet acknowledged
+const rejected = [];             // refused by the server: a bug, not a retry
+let uploadFailures = 0;
+let uploading = false;
+let uploadState = "idle";        // idle | sending | offline | rejected
+let uploadError = null;          // why the last attempt failed, for the drawer
+
+/* A rig that restarts begins counting from zero again, which would make
+   `seq` go backwards - and seq is the cursor the server reads to know
+   what it already holds. So on boot the rig asks what the server has and
+   carries on from there. This is the cursor protocol used for the reason
+   it exists, rather than only after a network drop. */
+async function alignSeq() {
+  try {
+    const r = await fetch("/api/rigs/" + encodeURIComponent(RIG_ID) + "/cursor",
+                          { cache: "no-store" });
+    if (!r.ok) return false;
+    const { seq: held } = await r.json();
+    if (typeof held === "number" && held + 1 > seq) seq = held + 1;
+    return true;
+  } catch (e) {
+    return false;   // no server: seq starts at 0 and aligns when one appears
+  }
+}
+
+async function flush() {
+  if (uploading || !outbox.length) return;
+  uploading = true;
+  const batch = outbox.slice(0, UPLOAD_BATCH);
+  try {
+    const r = await fetch("/api/rigs/" + encodeURIComponent(RIG_ID) + "/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events: batch }),
+    });
+
+    if (r.ok) {
+      outbox.splice(0, batch.length);
+      uploadFailures = 0;
+      uploadState = outbox.length ? "sending" : "idle";
+    } else if (r.status === 422) {
+      /* The server refused the batch outright. Retrying will refuse it
+         again forever and the outbox would never drain, so the batch is
+         set aside rather than dropped: the floor keeps working, the
+         events are still in memory, and the drawer says so. A rig filing
+         events its own schema rejects is a bug in the rig, and it should
+         be loud rather than silent. */
+      rejected.push(...outbox.splice(0, batch.length));
+      uploadState = "rejected";
+      emitLog("upload_rejected", "sessions",
+              batch.length + " events refused by the server — see the log");
+    } else {
+      throw new Error("HTTP " + r.status);
+    }
+  } catch (e) {
+    uploadFailures += 1;
+    uploadState = "offline";
+    /* Kept and shown. A rig that cannot reach the server is a rig whose
+       events nobody has, and "offline" without a reason is the kind of
+       thing that costs an afternoon on a floor. */
+    uploadError = String((e && e.message) || e);
+    if (uploadFailures === 1) {
+      emitLog("upload_failed", "sessions", uploadError);
+    }
+  } finally {
+    uploading = false;
+    showMode();
+  }
+}
+
+function uploadDelay() {
+  if (!uploadFailures) return UPLOAD_IDLE_MS;
+  return Math.min(UPLOAD_BACKOFF_MS * Math.pow(2, uploadFailures - 1), UPLOAD_BACKOFF_MAX);
+}
+
+let uploadTimer = null;
+function startUploader() {
+  if (uploadTimer) return;
+  const tick = async () => {
+    await flush();
+    uploadTimer = setTimeout(tick, uploadDelay());
+  };
+  uploadTimer = setTimeout(tick, UPLOAD_IDLE_MS);
+}
+
+/* For the tests and the drawer: what the uploader is holding. */
+window.rigOutbox = () => ({
+  queued: outbox.length,
+  rejected: rejected.length,
+  failures: uploadFailures,
+  state: uploadState,
+  error: uploadError,
+  nextSeq: seq,
+});
+window.rigFlush = flush;
+
+/* The uploader writes to the operator's log without filing an event.
+   A refused batch is a fact about this rig's software, not about the
+   floor, and it has no business in the ledger. */
+function emitLog(event, bucket, detail) {
+  logLines.push({ at: clock(S ? S.t : 0), event, bucket, detail });
+  const el = document.getElementById("log");
+  if (el) {
+    el.innerHTML = logLines.slice(-40).map((l) =>
+      `<p><time>${l.at}</time><b>${l.event} <span class="bucket">→ ${l.bucket}</span><br>${l.detail}</b></p>`).join("");
+  }
+}
 
 let toastTimer;
 function toast(msg) {
@@ -1028,6 +1156,14 @@ function modeLine() {
   else if (SOURCE === "baked") bits.push("demo build");
   if (DEMO) bits.push("demo clock " + speed + "×");
   else if (!live) bits.push("shift clock " + speed + "×");
+  /* A rig that cannot reach the server is still a working rig - it keeps
+     recording and keeps filing - but it is not a rig whose events anyone
+     has. Saying so is the same rule as the rest of this line. */
+  if (uploadState === "offline" && outbox.length) {
+    bits.push(outbox.length + " events queued");
+  } else if (rejected.length) {
+    bits.push(rejected.length + " events refused");
+  }
   return bits.join(" · ");
 }
 
@@ -1064,7 +1200,11 @@ addEventListener("resize", () => { lastViewKey = null; render(); });
 
 async function start(rigId) {
   applyPayload(await loadPayload(rigId));
+  // Ask what the server already holds before filing anything, so `seq`
+  // carries on rather than restarting and going backwards.
+  await alignSeq();
   boot(location.hash.slice(1));   // boot() reads the turn in progress back itself
+  startUploader();
 }
 
 /* Demo affordance: watch any rig on the floor. A real rig is only ever

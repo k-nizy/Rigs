@@ -18,7 +18,12 @@ class RigEventRepository(BaseRepository[RigEvent]):
         rows = await self.session.execute(
             select(func.max(RigEvent.seq)).where(RigEvent.rig_id == rig_id)
         )
-        return rows.scalar() or -1
+        held = rows.scalar()
+        # `or -1` would be wrong here: seq 0 is a real cursor - it is the
+        # first event of a rig's life - and 0 is falsy, so a rig that had
+        # sent exactly one event would be told the server had none and
+        # would resend it forever.
+        return -1 if held is None else held
 
     async def append(self, rows: list[dict]) -> int:
         """Insert a batch, ignoring anything already held.

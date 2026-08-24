@@ -225,7 +225,11 @@ async function mountRig(opts) {
   global.Date = FakeDate;
   global.window = global;
   global.location = { hash: opts.hash ? "#" + opts.hash : "", search: opts.search || "" };
-  global.performance = { now: () => nowMs };
+  /* Only `now` is faked. Inheriting the rest matters: node's own fetch
+     reaches for performance.markResourceTiming, so a stub that replaces
+     the whole object breaks any test that talks to a real server. */
+  global.performance = Object.create(realPerf || Object.prototype);
+  global.performance.now = () => nowMs;
   global.requestAnimationFrame = (fn) => { if (running) queue.push(fn); return queue.length; };
   global.setTimeout = (fn, ms) => { const id = realSetTimeout(fn, ms); timeouts.push(id); return id; };
   global.addEventListener = (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); };
@@ -329,6 +333,11 @@ async function mountRig(opts) {
        receives, as opposed to the sentence the operator reads. */
     events() { return global.rigEvents ? global.rigEvents() : []; },
     eventsOf(name) { return this.events().filter((e) => e.event === name); },
+
+    /* What the uploader is holding, and a way to drain it on demand
+       rather than waiting for its timer. */
+    outbox() { return global.rigOutbox ? global.rigOutbox() : null; },
+    async upload() { if (global.rigFlush) await global.rigFlush(); await this.settle(); },
     logOf(event) { return this.log().filter((l) => l.includes(event)); },
 
     /* Every timer and every frame this mount started, stopped. */

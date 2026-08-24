@@ -5,16 +5,18 @@ accepts a percentage. The server stores the schedule it was pushed and
 reads it back; it never derives one.
 """
 
+import uuid
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.domains.alerts.repository import AlertRepository
 from core.domains.rig_events.repository import RigEventRepository
 from core.domains.rig_events.schema import EventBatch, IngestResult
 from core.domains.rig_status.repository import RigStatusRepository
+from core.domains.schedules.model import Schedule
 from core.domains.schedules.repository import ScheduleRepository
 from core.infrastructure.config import get_settings
 from core.infrastructure.database import get_session
@@ -127,17 +129,97 @@ async def heartbeat(
 async def schedule(rig_id: str, session: AsyncSession = Depends(get_session)) -> dict:
     """The payload this rig was pushed, returned verbatim. Stored opaque,
     read opaque - the rotation is computed in exactly one place and this
-    is not it."""
+    is not it.
+
+    Served at both `/schedule` and `/schedule.json`. The rig asks for the
+    second because that is what the existing static server answers to,
+    and a rig on the floor should not have to know which server it is
+    talking to. The end-to-end test caught this: the rig fell through to
+    generating its own schedule and said so on the wall, which is exactly
+    what that badge is for.
+    """
     sched = await ScheduleRepository(session).current_for_rig(rig_id)
     if sched is None:
         raise HTTPException(status_code=404, detail=f"nothing pushed to {rig_id}")
     return sched.payload
 
 
+
+@router.get("/rigs/{rig_id}/schedule.json")
+async def schedule_json(
+    rig_id: str, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """The same payload, at the path the rig actually asks for.
+
+    The existing static server answers `schedule.json`, and a rig on the
+    floor should not have to know which server it is talking to. Declared
+    as its own route rather than a second decorator on the one above:
+    stacking registers in the OpenAPI schema but does not route.
+    """
+    return await schedule(rig_id, session)
+
+
 @router.get("/health")
 async def health() -> dict:
     s = get_settings()
     return {"ok": True, "database": s.safe_url()}
+
+
+# ------------------------------------------------------ the schedule in
+
+
+class PushIn(BaseModel):
+    """Twelve payloads in one request, as the desk already sends them."""
+
+    payloads: list[dict] = Field(min_length=1, max_length=64)
+
+
+class PushOut(BaseModel):
+    pushId: uuid.UUID
+    pushedAt: datetime
+    count: int
+
+
+@router.post("/schedules/push", response_model=PushOut)
+async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
+    """Store what the desk pushed, whole and unexamined.
+
+    Validated for the handful of fields this service indexes on and
+    nothing more. The payload is a contract between the desk and the rig,
+    both of which run the same engine; this server is a courier and a
+    filing cabinet, and the moment it starts having opinions about turns
+    it becomes a third answer that can disagree.
+
+    All-or-nothing, like the ingest route and for the same reason: a
+    floor running half a schedule is worse than a floor running none.
+    """
+    push_id = uuid.uuid4()
+    pushed_at = datetime.now(timezone.utc)
+    rows = []
+
+    for i, payload in enumerate(body.payloads):
+        try:
+            rig_id = payload["rigId"]
+            shift = payload["shift"]
+            shift_date = date.fromisoformat(shift["date"])
+            shift_label = shift["label"]
+            if not isinstance(payload.get("turns"), list):
+                raise KeyError("turns")
+        except (KeyError, TypeError, ValueError) as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"payloads[{i}] is not a schedule this service can file: {e}",
+            )
+        rows.append(
+            Schedule(
+                push_id=push_id, pushed_at=pushed_at, rig_id=rig_id,
+                shift_date=shift_date, shift_label=shift_label, payload=payload,
+            )
+        )
+
+    session.add_all(rows)
+    await session.commit()
+    return PushOut(pushId=push_id, pushedAt=pushed_at, count=len(rows))
 
 
 # ------------------------------------------------------------- the floor

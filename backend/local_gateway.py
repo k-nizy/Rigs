@@ -11,6 +11,7 @@ be run and tested here before they are lifted across.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from local_dev_routes import dev
 from services.rigs.app import create_app
 
 app = FastAPI(title="rigs (local dev gateway)")
@@ -23,4 +24,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("", create_app())
+service = create_app()
+# Dev-only helpers, on the gateway rather than in the service, so the
+# thing that lifts into their tree carries none of them.
+service.include_router(dev)
+app.mount("", service)
