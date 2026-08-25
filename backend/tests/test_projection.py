@@ -384,3 +384,133 @@ async def test_one_fact_per_ledger_row_is_enforced_by_the_database(client, sessi
     with pytest.raises(IntegrityError):
         await session.commit()
     await session.rollback()
+
+
+# ------------------------------------------------- an outage nobody closed
+#
+# Only rig_up closed a downtime, and there are ordinary ways for it never
+# to arrive. The operator ends their session with the rig still down, a
+# technician fixes it, and the rig comes back with no memory of the
+# outage. Nothing closed the row, so the floor board showed a working rig
+# as down with the duration climbing for ever - the alert a manager is
+# most likely to act on, stuck permanently on a rig that is fine.
+
+
+class TestAnOutageNobodyClosed:
+
+    def _down(self, seq):
+        return env(seq, "rig_down", "rig_downtime_events",
+                   {"issue": "Gripper broken", "issuePath": "Gripper broken",
+                    "needsManager": False, "chargedTo": "rig"})
+
+    async def _rows(self, session):
+        rows = await session.execute(select(RigDowntimeEvent).order_by(RigDowntimeEvent.down_at))
+        return list(rows.scalars().all())
+
+    async def test_the_sequence_that_left_it_open(self, client, session):
+        """Down, session ended, rig restarts, work resumes. No rig_up ever."""
+        await ingest(client, [
+            self._down(0),
+            env(1, "session_ended", "sessions", {"endedBy": "operator"}),
+            # the rig restarts: a fresh boot raises its checklist, then passes it
+            env(2, "shift_check", "rig_shift_checks", {"outcome": "raised"}),
+            env(3, "shift_check", "rig_shift_checks", {"outcome": "passed"}),
+        ])
+        await project_batch(session)
+
+        rows = await self._rows(session)
+        assert len(rows) == 1
+        assert rows[0].up_at is not None, (
+            "the outage is still open, so the board will show this rig as down for ever"
+        )
+        assert rows[0].ended_by == "resumed"
+
+    async def test_a_recorded_take_also_proves_it(self, client, session):
+        await ingest(client, [
+            self._down(0),
+            env(1, "episode_saved", "episodes",
+                {"episodeId": str(uuid.uuid4()), "durationSecs": 92, "score": 4}),
+        ])
+        await project_batch(session)
+
+        rows = await self._rows(session)
+        assert rows[0].up_at is not None
+        assert rows[0].ended_by == "resumed"
+
+    async def test_an_operator_saying_so_is_recorded_as_such(self, client, session):
+        """The two closes are not the same number and must be tellable apart."""
+        await ingest(client, [
+            self._down(0),
+            env(1, "rig_up", "rig_downtime_events", {"downSecs": 180}),
+        ])
+        await project_batch(session)
+
+        rows = await self._rows(session)
+        assert rows[0].ended_by == "operator"
+        assert rows[0].down_secs == 180, "the rig counted this; it must not be recomputed"
+
+    async def test_a_heartbeat_is_not_evidence(self, client, session):
+        """It proves the software is running. It says nothing about the
+        gripper, and closing an outage on it would invent a repair."""
+        await ingest(client, [self._down(0)])
+        await project_batch(session)
+        r = await client.post(f"/api/rigs/{RIG}/heartbeat",
+                              json={"at": "2026-08-24T09:30:00Z"})
+        assert r.status_code == 200
+        await project_batch(session)
+
+        rows = await self._rows(session)
+        assert rows[0].up_at is None, "a heartbeat closed an outage"
+
+    async def test_raising_the_checklist_is_not_passing_it(self, client, session):
+        """`raised` is only the checklist appearing on boot."""
+        await ingest(client, [
+            self._down(0),
+            env(1, "shift_check", "rig_shift_checks", {"outcome": "raised"}),
+        ])
+        await project_batch(session)
+
+        rows = await self._rows(session)
+        assert rows[0].up_at is None
+
+    async def test_reporting_a_fault_is_not_evidence_either(self, client, session):
+        await ingest(client, [
+            self._down(0),
+            env(1, "fault_opened", "rig_shift_checks",
+                {"outcome": "failed", "subsystem": "Gripper"}),
+        ])
+        await project_batch(session)
+
+        rows = await self._rows(session)
+        assert rows[0].up_at is None, "a fault report is the opposite of working"
+
+    async def test_the_alert_clears(self, client, session):
+        """The whole point. A stuck alert teaches people to ignore the rest."""
+        from core.domains.alerts.repository import AlertRepository
+        from core.rules import floor as rules
+        from core.workflows.floor import sweep
+
+        await ingest(client, [self._down(0)])
+        await project_batch(session)
+        await sweep(session, now=T0 + timedelta(minutes=30))
+        open_kinds = [a.kind for a in await AlertRepository(session).open_alerts()]
+        assert rules.RIG_DOWN in open_kinds, "the outage should raise an alert"
+
+        await ingest(client, [
+            env(1, "shift_check", "rig_shift_checks", {"outcome": "passed"}),
+        ])
+        await project_batch(session)
+        await sweep(session, now=T0 + timedelta(minutes=40))
+
+        open_kinds = [a.kind for a in await AlertRepository(session).open_alerts()]
+        assert rules.RIG_DOWN not in open_kinds, (
+            "the rig is working and the board still says it is down"
+        )
+
+    async def test_work_with_no_outage_open_changes_nothing(self, client, session):
+        await ingest(client, a_stint())
+        await project_batch(session)
+        rows = await self._rows(session)
+        assert all(r.ended_by == "operator" for r in rows if r.up_at), (
+            "a normally closed outage was relabelled"
+        )

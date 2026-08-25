@@ -25,6 +25,19 @@ class RigDowntimeEvent(TimestampedBase):
     up_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     down_secs: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    # How it ended, in the same vocabulary sessions use.
+    #
+    #   "operator"  the person at the rig pressed Problem solved. down_secs
+    #               is what the rig counted, frame by frame.
+    #   "resumed"   nobody ever said it came back, but the rig filed work
+    #               afterwards, so it demonstrably did. down_secs here is
+    #               an upper bound, not a measurement: it was fixed at some
+    #               point at or before that work happened.
+    #
+    # Null on rows that are still open, and on rows projected before this
+    # column existed.
+    ended_by: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     issue: Mapped[str] = mapped_column(String(64), nullable=False)
     # The whole path taken through the issue tree, not just the leaf.
     # "Other > Other hardware > Cable" says more about a recurring fault

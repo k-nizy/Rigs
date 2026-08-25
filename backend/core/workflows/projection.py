@@ -85,6 +85,28 @@ async def _open_downtime(session: AsyncSession, ev: RigEvent) -> RigDowntimeEven
     return rows.scalar_one_or_none()
 
 
+# Events that prove a rig is working, for closing an outage nobody
+# closed. Deliberately short.
+#
+# A passed shift check means somebody stood at the rig and confirmed it.
+# An episode means somebody recorded with it. Both are impossible on a
+# broken rig.
+#
+# What is NOT here matters as much. A heartbeat proves the software is
+# running and says nothing about the gripper. `shift_check` with outcome
+# "raised" is only the checklist appearing on boot, not passing it. A
+# `stint_ended` can describe a turn that was entirely downtime. And
+# `fault_opened` is the opposite of evidence.
+PROVES_IT_WORKS = {"episode_saved", "episode_discarded"}
+PASSED_CHECK = {"passed", "passed_early"}
+
+
+def _is_working(ev: RigEvent, data: dict) -> bool:
+    if ev.event in PROVES_IT_WORKS:
+        return True
+    return ev.event == "shift_check" and data.get("outcome") in PASSED_CHECK
+
+
 async def project_one(session: AsyncSession, ev: RigEvent) -> str:
     """Apply one ledger row. Returns what it did, for the worker's log."""
     data = (ev.envelope or {}).get("data", {})
@@ -93,6 +115,16 @@ async def project_one(session: AsyncSession, ev: RigEvent) -> str:
     # for it. A rig on standby has no turn and no operator, and its events
     # still land - the key is simply (rig, shift, null, null).
     sess = await _open_session(session, ev)
+
+    # An outage nobody closed. Only rig_up used to close one, and there
+    # are ordinary ways for it never to arrive - the operator ends their
+    # session with the rig down, a technician fixes it, and the rig comes
+    # back with no memory of the outage. The row then stayed open for
+    # ever and the floor board showed a working rig as down.
+    if _is_working(ev, data):
+        stuck = await _open_downtime(session, ev)
+        if stuck is not None:
+            downtime_lifecycle.resume(stuck, ev.at)
 
     if ev.event in ("episode_saved", "episode_discarded"):
         saved = ev.event == "episode_saved"
@@ -150,7 +182,8 @@ async def project_one(session: AsyncSession, ev: RigEvent) -> str:
             # Replay can start mid-ledger; the matching rig_down may
             # simply not be in range. Not an error.
             return "rig_up with nothing open, ignored"
-        downtime_lifecycle.close(open_row, ev.at, data.get("downSecs"))
+        downtime_lifecycle.close(open_row, ev.at, data.get("downSecs"),
+                                 ended_by=downtime_lifecycle.OPERATOR)
         return "rig_up"
 
     if ev.event == "stint_ended":
