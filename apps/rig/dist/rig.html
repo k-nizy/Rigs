@@ -1589,8 +1589,25 @@ function nowMin() {
   return shiftStartMin() + S.t / 60;
 }
 
+/* A schedule that has run out is not a schedule.
+
+   `whoIsOn` matches on the time of day and nothing else, so last night's
+   sheet still cheerfully claims somebody is on at half past midnight
+   tonight - a different person, on a shift that ended twenty-four hours
+   ago. The rig believed it, and filed takes against yesterday.
+
+   Checking the window the desk wrote into the payload closes that. When
+   it does not cover now, this rig has no schedule and says so. Standby is
+   the truthful answer, and an idle rig gets noticed and fixed; one
+   quietly running the wrong roster does not.
+
+   Live only. The demo is one simulated shift with no calendar behind it,
+   so there is nothing for its date to be wrong against. */
+const scheduleIsCurrent = () => !live || RE.coversAt(PAYLOAD, Date.now());
+
 /* The whole of "who is at this rig right now" is this one call. */
-const current = () => (PAYLOAD ? RE.whoIsOn(PAYLOAD, nowMin()) : null);
+const current = () =>
+  (PAYLOAD && scheduleIsCurrent() ? RE.whoIsOn(PAYLOAD, nowMin()) : null);
 
 const operator     = () => { const c = current(); return c ? c.turn.operator.name : "—"; };
 const nextOperator = () => { const c = current(); return c && c.turn.relievedBy ? c.turn.relievedBy : "End of shift"; };
@@ -1913,8 +1930,15 @@ function rotate() {
      applying it would strand an operator on a dead screen mid-shift. A
      stale schedule that works beats a fresh one that stops the rig. */
 
-const RESYNC_IDLE_MS = 300000;   // five minutes, when nothing is wrong
-const RESYNC_HUNGRY_MS = 20000;  // when the payload has run out
+/* How long a corrected roster can take to reach the floor. Twelve rigs
+   asking every thirty seconds is under two kilobytes a second between
+   them, which is nothing, and it means a manager who fixes a name sees
+   it land while they are still looking at the screen.
+
+   A rig with no usable schedule asks far more often, because it is doing
+   no work until one arrives. */
+const RESYNC_IDLE_MS = 30000;    // half a minute, when the rig is working
+const RESYNC_HUNGRY_MS = 10000;  // when it has nothing it can run
 let resyncTimer = null;
 let resyncing = false;
 

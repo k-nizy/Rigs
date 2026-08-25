@@ -311,3 +311,104 @@ test("what the backend receives names the new operator too",
         "an episode reached the upload queue without enough to file it against");
     }
   }));
+
+/* ------------------------------------- a schedule that has run out
+
+   Found live, at half past midnight, on a floor where only the previous
+   day had been pushed. The rig was handed the Night sheet dated
+   YESTERDAY and ran it: `whoIsOn` matches on the time of day alone, so
+   00:30 fell inside a turn that had actually been worked twenty-four
+   hours earlier. The screen named a real operator, the pedals worked,
+   and every take would have been filed against the wrong shift on the
+   wrong day.
+
+   A rig with no schedule must look like a rig with no schedule. */
+
+const LIVE = { search: "" };          // no ?demo: the deployed clock
+
+function payloadDated(date, shift) {
+  const plan = RE.buildPlan(
+    Object.assign({}, ROSTER.defaults, { date, shift: shift || "morning" }),
+    ROSTER.groups);
+  return RE.rigPayload(plan, "RIG-03");
+}
+
+/* The rig reads its schedule while it BOOTS, so the payload has to be in
+   place before it mounts. The tests above set up a server afterwards on
+   purpose, because they are about picking a new schedule up later; these
+   are about what the rig does with the one it starts holding. */
+function withHeld(payload, opts, fn) {
+  return async () => {
+    const rig = await mountRig(Object.assign({ pushed: payload }, opts));
+    try { await fn(rig); } finally { rig.stop(); }
+  };
+}
+
+test("a sheet for today runs normally",
+  withHeld(payloadDated("2026-08-23", "morning"), LIVE, async (rig) => {
+    /* The control. The harness clock sits at 10:37 on 2026-08-23, inside
+       that day's Morning shift. Without this, the two tests below would
+       pass on a rig that was broken in some other way. */
+    await rig.settle();
+    assert.notEqual(rig.screen(), "standby",
+      "a schedule that covers right now was treated as expired");
+  }));
+
+test("a sheet from yesterday does not put somebody on the rig",
+  withHeld(payloadDated("2026-08-22", "morning"), LIVE, async (rig) => {
+    await rig.settle();
+    assert.equal(rig.screen(), "standby",
+      "the rig ran a schedule dated yesterday, so every take would be "
+      + "filed against a shift that already happened");
+  }));
+
+test("last night's sheet does not claim somebody is on tonight",
+  withHeld(payloadDated("2026-08-22", "night"),
+             Object.assign({ at: "00:30" }, LIVE), async (rig) => {
+    /* The exact shape of the live failure: a Night sheet whose turns span
+       00:00-08:00, read at 00:30 the FOLLOWING night. */
+    await rig.settle();
+    assert.equal(rig.screen(), "standby",
+      "at 00:30 the rig picked up a turn from the previous night's sheet");
+  }));
+
+test("an expired schedule cannot be driven into a take",
+  withHeld(payloadDated("2026-08-22", "morning"), LIVE, async (rig) => {
+    /* Standby still offers the pre-shift check - a technician sweeping the
+       floor at 07:40 should not have to wait for 08:00. So the rig does
+       move off standby when the pedal is pressed. What it must not do is
+       carry on into a take, because there is no valid schedule to file one
+       against. */
+    await rig.settle();
+    assert.equal(rig.screen(), "standby", "an expired sheet put the rig to work");
+
+    rig.press(2); rig.frames(2);
+    assert.equal(rig.screen(), "checklist", "standby should still allow a check");
+
+    rig.press(2); rig.frames(2);
+    assert.equal(rig.screen(), "standby",
+      "the check led into a shift, on a schedule that expired yesterday");
+
+    // Lean on it. No sequence of presses may reach a recording.
+    for (let i = 0; i < 12; i++) { rig.press((i % 3) + 1); rig.frames(2); }
+    assert.notEqual(rig.screen(), "recording",
+      "the rig was driven into a take with no schedule covering now");
+
+    const takes = rig.events().filter(e => e.bucket === "episodes");
+    assert.deepEqual(takes, [],
+      takes.length + " takes were filed against " + (takes[0] || {}).shiftDate +
+      ", a shift that was over before this rig booted");
+  }));
+
+test("a rig with nothing to run asks for a schedule more often than one that is working", () => {
+  /* Arithmetic rather than behaviour, but it is what makes "stay put"
+     bearable: a stranded rig recovers seconds after somebody pushes,
+     instead of sitting idle for a whole polling interval. */
+  const src = require("node:fs").readFileSync(
+    require("node:path").resolve(__dirname, "assets/rig.js"), "utf8");
+  const idle = Number(/RESYNC_IDLE_MS\s*=\s*(\d+)/.exec(src)[1]);
+  const hungry = Number(/RESYNC_HUNGRY_MS\s*=\s*(\d+)/.exec(src)[1]);
+  assert.ok(hungry < idle, "a stranded rig should ask more often, not less");
+  assert.ok(idle <= 60000,
+    "a corrected roster should reach the floor inside a minute, not " + (idle / 1000) + "s");
+});
