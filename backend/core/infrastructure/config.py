@@ -43,11 +43,22 @@ class Settings(BaseSettings):
     storage_secret_key: str = ""
     storage_local_root: str = "./.storage"
 
-    # How many days archived video is kept. 0 means keep it for ever, and
-    # is the default: how long this floor keeps its footage is a cost
-    # decision in petabytes a year and nobody has made it. The worker is
-    # built and tested; it does nothing until this is a number.
-    video_keep_days: int = 0
+    # How many days archived video is kept. Decided: 90.
+    #
+    # The default lives here rather than only in .env because .env does
+    # not travel - when core/ and services/rigs/ are lifted into the
+    # platform team's tree, this file goes and that one does not. A policy
+    # that only exists in an environment variable is a policy that gets
+    # lost at the handover and silently becomes "keep everything".
+    #
+    # At the plan's own sizing - three 1080p30 cameras at ~7 Mbps across
+    # twelve rigs, ~2.7 TB a day - ninety days is a steady state of
+    # roughly 245 TB, reached after ninety days and flat from then on.
+    # That is the number the cold tier has to be provisioned for.
+    #
+    # 0 still means keep everything for ever, and is what to set if the
+    # answer ever changes back.
+    video_keep_days: int = 90
 
     # The largest single video object the service will take through
     # itself. Only the gateway-upload model reads a body into memory, and

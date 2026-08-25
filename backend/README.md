@@ -128,9 +128,16 @@ climbing spool ends with a full disk, and that fails backwards - once the
 spool is full `confirm()` refuses, so twelve rigs correctly keep their
 own copies and the rig SSDs fill too.
 
-**Nothing is ever deleted from the archive** unless `VIDEO_KEEP_DAYS` is
-set. At the plan's sizing that is ~82 TB a month. The mechanism is built
-and tested; the number is a cost decision nobody has made.
+**Archived video is deleted after 90 days.** `VIDEO_KEEP_DAYS=90`, and
+that default is in `config.py`, not only in `.env`. Provision the cold
+tier for roughly **245 TB** - the steady state at this plan's sizing,
+reached after ninety days and flat from then on.
+
+One consequence worth knowing before the first run: pointing a fresh
+deployment at a *restored* database with episodes older than ninety days
+will expire them on the first drain cycle. That is the policy doing
+exactly what it says, but it is not usually what somebody restoring a
+backup expects. Set `VIDEO_KEEP_DAYS=0` first if you are restoring.
 
 **Watch `backend.projectionLagSecs` on `/api/floor/state`.** A projection
 worker that has died publishes nothing - the ledger keeps accepting, the

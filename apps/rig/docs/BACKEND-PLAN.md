@@ -456,16 +456,25 @@ happens to be what makes Phases 0 and 1 startable today.
   sit behind the platform team's gateway, which already owns who is
   allowed in. `DESK_TOKEN` exists so a deployment without that in front
   of it can still close the hole, and it is off by default.
-- **Retention.** Still open, and now the only thing standing between the
-  system and a disk that fills. The mechanism is built, tested and off:
-  `VIDEO_KEEP_DAYS=0` keeps everything for ever. What is missing is the
-  number, and it is a cost decision - at this plan's own sizing, ~2.7 TB
-  a day, ~82 TB a month, roughly a petabyte a year.
+- ~~**Retention.**~~ **Settled: 90 days.** `VIDEO_KEEP_DAYS=90`, and the
+  default lives in `config.py` rather than only in an environment file,
+  because `.env` does not travel into the platform team's tree and a
+  policy that only exists there silently becomes "keep everything" at the
+  handover.
 
-  Two parts of it are already answered. Discarded takes are never
+  At this plan's own sizing - ~2.7 TB a day across twelve rigs - ninety
+  days is a steady state of roughly **245 TB**. It climbs for ninety days
+  and is flat after that, and that is the number the cold tier has to be
+  provisioned for.
+
+  Two parts of it never needed deciding. Discarded takes are never
   uploaded at all, so they cost nothing. And the on-prem spool is not a
   retention question: it releases its copy as soon as the archive can
   account for it, because a spool that never frees is not a spool.
+
+  What is deleted is video and only video. The episode row, the score,
+  the attribution and the four seconds columns survive for ever - they
+  are the point of the system and they cost nothing.
 - **Review and QA of scores.** The operator scores their own take 3/4/5.
   Nothing yet says whether anyone checks.
 - **Crew changeover at the shift boundary.** Already open in `CLAUDE.md`,

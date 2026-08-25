@@ -630,9 +630,22 @@ async def _archived(session, store, archived_at):
     return ep, key
 
 
-async def test_with_no_policy_set_nothing_is_ever_deleted(client, session, store):
-    """The default. Nobody has decided how long this floor keeps footage,
-    so nothing decides it here either."""
+def test_the_policy_is_ninety_days_and_lives_in_the_code():
+    """Decided, and pinned here so it cannot drift quietly.
+
+    It lives in config.py rather than only in .env because .env does not
+    travel: when core/ and services/rigs/ lift into the platform team's
+    tree, this default goes with them and the environment file does not.
+    A retention policy that only exists in an env var is one that silently
+    becomes "keep everything" at the handover.
+    """
+    from core.infrastructure.config import Settings
+
+    assert Settings.model_fields["video_keep_days"].default == 90
+
+
+async def test_setting_zero_still_means_keep_everything(client, session, store):
+    """The way back. Whatever the default is, 0 must always mean never."""
     ep, key = await _archived(session, store, datetime(2020, 1, 1, tzinfo=timezone.utc))
 
     gone, _ = await expire_archive(session, keep_days=0)
