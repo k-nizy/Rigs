@@ -600,3 +600,91 @@ class TestTheBackendFallingBehind:
         await push_schedule(session)
         state = await floor_state(session, now=at(9))
         assert state["backend"] == {"unprojectedEvents": 0, "projectionLagSecs": 0.0}
+
+
+# ------------------------------------------------------- what the sweep costs
+#
+# The sweep runs every fifteen seconds for ever, so its cost is not a
+# micro-optimisation - it is a thing that either stays flat or eats the
+# floor. It was looking the schedule up once per productivity block, and a
+# day of blocks on a twelve-rig floor is ~400 rows, so ~400 sequential
+# round trips every sweep. Measured at ~190ms of a 213ms sweep.
+#
+# Counting queries rather than milliseconds on purpose. A timing assertion
+# on a developer laptop is a flake; "does this scale with the number of
+# blocks" is the actual question and it has a yes/no answer.
+
+
+class TestTheSweepDoesNotScaleWithTheFloor:
+
+    async def _blocks(self, session, n, turn="08:00", offset=0):
+        for i in range(n):
+            session.add(RigProductivityBlock(
+                rig_id=RIG, shift_date=DAY, shift_label="Morning",
+                turn_from=turn, operator_id="op-a1", ended_at=at(8, 44),
+                episodes=1, recorded_secs=100.0, assigned_secs=2700.0,
+                fault_secs=0, down_secs=0, source_event=500000 + offset + i,
+            ))
+        await session.commit()
+
+    async def _queries_during_sweep(self, engine, session):
+        from sqlalchemy import event
+
+        seen = []
+
+        def count(conn, cursor, statement, params, context, many):
+            seen.append(statement)
+
+        event.listen(engine.sync_engine, "before_cursor_execute", count)
+        try:
+            await sweep(session, now=at(9))
+        finally:
+            event.remove(engine.sync_engine, "before_cursor_execute", count)
+        return seen
+
+    async def test_ten_times_the_blocks_does_not_mean_ten_times_the_queries(
+            self, client, session, engine):
+        await push_schedule(session)
+
+        await self._blocks(session, 5)
+        few = len(await self._queries_during_sweep(engine, session))
+
+        await self._blocks(session, 50, offset=1000)
+        many = len(await self._queries_during_sweep(engine, session))
+
+        assert many <= few + 2, (
+            "the sweep issued %d queries for 55 blocks against %d for 5 - it is "
+            "looking something up inside the loop again" % (many, few)
+        )
+
+    async def test_the_schedules_behind_a_day_of_blocks_are_read_once(
+            self, client, session, engine):
+        """Not once per block. The distinct shifts behind four hundred
+        blocks number in the single digits."""
+        await push_schedule(session)
+        await self._blocks(session, 40)
+
+        statements = await self._queries_during_sweep(engine, session)
+        schedule_reads = [q for q in statements if "FROM schedules" in q]
+        assert len(schedule_reads) <= 3, (
+            "%d reads of the schedules table for one shift's blocks: %s"
+            % (len(schedule_reads), schedule_reads[:2])
+        )
+
+    async def test_a_real_overrun_is_still_found_after_the_batching(
+            self, client, session, engine):
+        """The control. Making it fast is worthless if it stopped working."""
+        await push_schedule(session)
+        session.add(RigProductivityBlock(
+            rig_id=RIG, shift_date=DAY, shift_label="Morning",
+            turn_from="08:00", operator_id="op-a1", ended_at=at(8, 50),
+            episodes=1, recorded_secs=100.0, assigned_secs=2700.0,
+            fault_secs=0, down_secs=0, source_event=600001,
+        ))
+        await session.commit()
+
+        await sweep(session, now=at(9))
+        overruns = [a for a in await AlertRepository(session).open_alerts()
+                    if a.kind == rules.TURN_OVERRAN]
+        assert len(overruns) == 1
+        assert "300s" in overruns[0].detail

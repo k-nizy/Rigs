@@ -150,6 +150,42 @@ says whether the other alerts can be believed.
 runs. If one fails part-way, Postgres leaves an INVALID index behind:
 drop it and run again rather than assuming it is usable.
 
+## What it costs, measured
+
+`python -m tools.benchmark --days 30` seeds a realistic floor into
+`rigs_test` and measures the two things that run for ever. Start from the
+floor rather than from a load generator: twelve rigs, three shifts,
+45-minute turns, an episode every couple of minutes.
+
+```
+  ~272 events per rig per shift
+  ~9,800 events per day across twelve rigs
+  ~0.11 events/second sustained
+  ~3.6 million ledger rows after a year
+```
+
+So throughput is not the risk, and quoting a big ingest number would be
+reassuring about the wrong thing. Projection runs ~400 events/s, which is
+roughly 3,700x what the floor produces. What matters is the other end -
+the sweep every fifteen seconds and the board the desk polls:
+
+```
+  floor sweep            31.6 ms      0.21% of its 15-second budget
+  /api/floor/state       15.1 ms
+```
+
+That sweep was **222 ms** until this benchmark existed. It looked the
+schedule up once per productivity block, and a day of blocks on a
+twelve-rig floor is ~400 rows - so ~400 sequential round trips, every
+fifteen seconds, about 190 ms of a 213 ms sweep. It is one query now.
+`TestTheSweepDoesNotScaleWithTheFloor` counts queries rather than
+milliseconds, so the regression is caught on any machine.
+
+One number worth having before you need it: at ~400 events/s, restoring
+a year of ledger takes about **two and a half hours** of projection after
+the events are back in. The restore itself is fast; rebuilding the facts
+is not.
+
 ## If the database is lost
 
 The ledger is the system. Every other table is derived from it and can be

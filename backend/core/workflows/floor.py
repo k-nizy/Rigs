@@ -18,7 +18,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.domains.alerts.repository import AlertRepository
@@ -29,7 +29,6 @@ from core.domains.rig_shift_checks.model import RigShiftCheck
 from core.domains.rig_status.model import RigStatus
 from core.domains.rig_status.repository import RigStatusRepository
 from core.domains.schedules.model import Schedule
-from core.domains.schedules.repository import ScheduleRepository
 from core.rules import floor as rules
 from core.rules.efficiency import Stint, efficiency
 
@@ -93,6 +92,31 @@ async def _repeat_faults(session: AsyncSession, since_days: int) -> list[tuple[s
         .group_by(RigShiftCheck.rig_id, RigShiftCheck.subsystem)
     )
     return [(r[0], r[1], r[2]) for r in rows.all()]
+
+
+async def _schedules_for(session: AsyncSession, blocks: list[Any]) -> dict:
+    """The schedule in force for each block's shift, in one query.
+
+    Keyed on (rig, shift_date, shift_label) - the same key
+    `ScheduleRepository.for_shift` uses one at a time. A shift can have
+    been pushed more than once, and the latest push wins, which is why
+    this walks in `pushed_at` order and lets later rows overwrite earlier
+    ones rather than picking arbitrarily.
+    """
+    wanted = {(b.rig_id, b.shift_date, b.shift_label) for b in blocks
+              if b.turn_from is not None}
+    if not wanted:
+        return {}
+
+    rows = await session.execute(
+        select(Schedule)
+        .where(
+            tuple_(Schedule.rig_id, Schedule.shift_date, Schedule.shift_label)
+            .in_(list(wanted))
+        )
+        .order_by(Schedule.pushed_at)
+    )
+    return {(s.rig_id, s.shift_date, s.shift_label): s for s in rows.scalars().all()}
 
 
 async def _overruns(session: AsyncSession, look_back_hours: int) -> list[Any]:
@@ -182,17 +206,22 @@ async def sweep(
         if hit:
             found.append(hit)
 
-    schedules = ScheduleRepository(session)
-    for block in await _overruns(session, overrun_look_back_hours):
+    blocks = await _overruns(session, overrun_look_back_hours)
+    # One query, not one per block. A day's blocks on a twelve-rig floor
+    # is ~400 rows, and looking the schedule up inside the loop made that
+    # ~400 sequential round trips every fifteen seconds - measured at
+    # ~190ms of a 213ms sweep, which is almost all of it. The distinct
+    # shifts behind those blocks number in the single digits.
+    in_force = await _schedules_for(session, blocks)
+
+    for block in blocks:
         # The schedule that was in force for *this block's* shift, not
         # whatever happens to have been pushed most recently. Turn labels
         # like "01:00" repeat on every shift of every day, so matching a
         # finished block against the current schedule silently measures it
         # against a boundary on another date - which read as a turn that
         # had overrun by twenty-three hours.
-        sched = await schedules.for_shift(
-            block.rig_id, block.shift_date, block.shift_label
-        )
+        sched = in_force.get((block.rig_id, block.shift_date, block.shift_label))
         if sched is None or block.turn_from is None:
             continue
         turn = next(
