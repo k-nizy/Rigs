@@ -25,7 +25,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.domains.episodes.model import Episode
@@ -187,12 +187,25 @@ async def project_batch(session: AsyncSession, limit: int = 500) -> tuple[int, l
 
     Ordered by id, which is insertion order, so a rig_down is always seen
     before the rig_up that closes it.
+
+    The rows are locked as they are claimed, so more than one worker can
+    run this safely. That matters because running one is a single point of
+    failure and the first thing anyone does about that is run two.
     """
     rows = await session.execute(
         select(RigEvent)
         .where(RigEvent.projected_at.is_(None))
         .order_by(RigEvent.id)
         .limit(limit)
+        # An actual claim, not a look. Without the lock this was a plain
+        # SELECT, so two workers - which is what anyone running this for
+        # availability will start - both read the same tail and both
+        # project it. Most of it collides on a unique constraint and rolls
+        # back harmlessly, but a batch of nothing but shift checks against
+        # an existing session has nothing to collide with, and quietly
+        # doubles. SKIP LOCKED rather than waiting: the second worker
+        # should take the next batch, not queue behind this one.
+        .with_for_update(skip_locked=True)
     )
     events = list(rows.scalars().all())
     if not events:

@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Date, DateTime, Float, Index, String
+from sqlalchemy import UniqueConstraint, BigInteger, Date, DateTime, Float, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.base.model import TimestampedBase
@@ -35,4 +35,12 @@ class RigShiftCheck(TimestampedBase):
 
     source_event: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
-    __table_args__ = (Index("ix_shift_checks_rig_shift", "rig_id", "shift_date", "shift_label"),)
+    __table_args__ = (
+        Index("ix_shift_checks_rig_shift", "rig_id", "shift_date", "shift_label"),
+        # One row per ledger row. Replaying the ledger must not double
+        # a fact, and this is what makes that true at the database
+        # rather than in the worker - the same guard the productivity
+        # blocks have always had, which was only ever applied to one
+        # of the three tables that needed it.
+        UniqueConstraint("source_event", name="uq_shift_checks_source_event"),
+    )

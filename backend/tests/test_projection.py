@@ -295,3 +295,92 @@ def test_unaccounted_seconds_are_visible():
     assert unaccounted_secs(s) == 100      # reset, review and idle
     overlapping = Stint(recorded_secs=300, assigned_secs=300, fault_secs=50, down_secs=50)
     assert unaccounted_secs(overlapping) < 0, "an impossible stint should read as impossible"
+
+
+# ------------------------------------------------------- more than one worker
+#
+# Running one projection worker is a single point of failure, and the
+# first thing anyone does about that is run two. Until the claim took a
+# row lock it was a plain SELECT, so both read the same tail and both
+# projected it.
+#
+# Most of that collided and rolled back harmlessly - the episode primary
+# key, the sessions constraint, the blocks constraint. A batch of nothing
+# but shift checks against a session that already exists had nothing to
+# collide with. Doubled shift checks inflate fault counts, and fault
+# counts are what repeat_fault alerts on.
+
+
+async def test_two_workers_claiming_at_once_project_each_row_once(client, session, engine):
+    """The claim is a claim, not a look."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    await ingest(client, a_stint())
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def worker():
+        async with maker() as s:
+            return await project_batch(s)
+
+    a, b = await asyncio.gather(worker(), worker())
+
+    # One of them takes the tail; the other finds it locked and skips.
+    assert {a[0], b[0]} == {7, 0}, (
+        "both workers claimed the same rows: %d and %d" % (a[0], b[0])
+    )
+    assert await counts(session) == {
+        "episodes": 3, "checks": 1, "downtime": 1, "blocks": 1, "sessions": 1,
+    }
+
+
+async def test_a_batch_of_only_shift_checks_cannot_double(client, session, engine):
+    """The case with nothing to collide with, which is the one that used to
+    get through. The session already exists, so nothing in this batch
+    touches a unique constraint except the one added for exactly this."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    await ingest(client, a_stint())
+    await project_batch(session)          # the session row now exists
+
+    await ingest(client, [
+        env(7, "shift_check", "rig_shift_checks", {"outcome": "passed"}),
+        env(8, "shift_check", "rig_shift_checks", {"outcome": "passed"}),
+    ])
+
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def worker():
+        async with maker() as s:
+            try:
+                return await project_batch(s)
+            except Exception:
+                return (0, [])            # a collision is an acceptable outcome
+
+    await asyncio.gather(worker(), worker())
+
+    rows = await session.execute(select(func.count()).select_from(RigShiftCheck))
+    assert rows.scalar() == 3, "a shift check was projected twice"
+
+
+async def test_one_fact_per_ledger_row_is_enforced_by_the_database(client, session):
+    """Not by the worker being careful. The worker can be replaced, run
+    twice, or replayed; the constraint cannot be talked out of it."""
+    from sqlalchemy.exc import IntegrityError
+
+    await ingest(client, a_stint())
+    await project_batch(session)
+
+    existing = (await session.execute(select(RigShiftCheck))).scalars().first()
+    session.add(RigShiftCheck(
+        rig_id=RIG, shift_date=existing.shift_date, shift_label=existing.shift_label,
+        turn_from=existing.turn_from, operator_id=existing.operator_id,
+        at=existing.at, event=existing.event, outcome=existing.outcome,
+        source_event=existing.source_event,
+    ))
+    with pytest.raises(IntegrityError):
+        await session.commit()
+    await session.rollback()
