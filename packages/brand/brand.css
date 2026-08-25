@@ -33,6 +33,10 @@
   --v-line-2:  #c7c7cc;
   --v-accent:  #d64d7a;   /* the one saturated colour; use it sparingly */
   --v-accent-ink: #ffffff;
+  /* The accent at low alpha. A token because box-shadow cannot fade a
+     colour on its own, and the alternative is hard-coding the accent
+     somewhere it will not follow the theme. */
+  --v-accent-glow: rgba(214, 77, 122, 0.55);
 
   /* Kept from the apps' own vocabulary rather than replaced. The desk
      tells break from think from work at a glance, and that is a job
@@ -68,6 +72,7 @@
     --v-line-2:  #3a3a42;
     --v-accent:  #e8688f;
     --v-accent-ink: #1c1c1e;
+    --v-accent-glow: rgba(232, 104, 143, 0.55);
 
     --v-work:    #5fbf87;
     --v-break:   #e0a33a;
@@ -87,6 +92,7 @@
   --v-line-2:  #3a3a42;
   --v-accent:  #e8688f;
   --v-accent-ink: #1c1c1e;
+  --v-accent-glow: rgba(232, 104, 143, 0.55);
 
   --v-work:    #5fbf87;
   --v-break:   #e0a33a;

@@ -3,157 +3,301 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Teleop Floor — Verlet Robotics</title>
-<meta name="description" content="Two screens and one schedule between them. The desk generates the rotation and pushes it out; each rig reads its own copy.">
+<title>Teleop Floor | Verlet Robotics</title>
+<meta name="description" content="The desk builds the shift. Every rig runs it.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="packages/brand/brand.css">
 <style>
+/* =====================================================================
+ * A control surface, not a brochure.
+ *
+ * The thing this page is the front door to is a floor: twelve machines,
+ * three shifts, a schedule drawn as a grid. So it is built like an
+ * instrument rather than a landing page - a graph ruling underneath
+ * everything, hairlines instead of shadows, panels with header strips,
+ * and one signal colour used only where something is live or actionable.
+ *
+ * The accent is the floor's own amber. It was already in this repo,
+ * described in the desk's stylesheet as "the rig-floor signal yellow",
+ * and it is the honest colour for this product.
+ *
+ * Type: Space Grotesk is technical without being a novelty, Inter is for
+ * reading, JetBrains Mono is for anything a machine produced. Numbers and
+ * ids are always mono - on these screens RIG-01 and RIG-07 have to stay
+ * apart at a glance.
+ * ===================================================================== */
+
+:root {
+  --bg:        #f7f7f4;   /* warm paper, not the blue-grey of a web app */
+  --bg-2:      #ffffff;
+  --grid:      #0f14180d; /* the ruling. barely there on purpose */
+  --ink:       #12171b;
+  --ink-2:     #48545d;
+  --ink-3:     #616e77;   /* 4.89:1 on the ground. #7d8b95 was 3.26 */
+  --rule:      #dcdcd4;
+  --rule-2:    #c3c3b8;
+  --signal:    #9a6408;   /* the floor's amber. 4.66:1 on the ground,
+                             5.00:1 on a panel. #b8790a was 3.63 */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:        #0c0f11;
+    --bg-2:      #14181b;
+    --grid:      #ffffff0a;
+    --ink:       #eef2f3;
+    --ink-2:     #aab6bd;
+    --ink-3:     #75838c;
+    --rule:      #232a2e;
+    --rule-2:    #354046;
+    --signal:    #f0b323;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0c0f11; --bg-2: #14181b; --grid: #ffffff0a;
+  --ink: #eef2f3; --ink-2: #aab6bd; --ink-3: #75838c;
+  --rule: #232a2e; --rule-2: #354046;
+  --signal: #f0b323;}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  background: var(--v-ground);
-  color: var(--v-ink);
-  font-family: var(--v-sans);
+  background-color: var(--bg);
+  /* The ruling. A schedule is a grid; the page it lives behind may as
+     well admit it. 32px squares, one hairline, almost invisible. */
+  background-image:
+    linear-gradient(to right, var(--grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  color: var(--ink);
+  font-family: Inter, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
+a { color: inherit; }
 
-/* The site's own header shape: mark and wordmark left, one action right,
-   a hairline under the whole thing. */
+.shell { max-width: 70rem; margin: 0 auto; padding: 0 clamp(1.1rem, 4vw, 3rem); }
+
+/* ------------------------------------------------------------- header */
+
 .top {
+  border-bottom: 1px solid var(--rule);
+  background: var(--bg);
+  position: sticky; top: 0; z-index: 20;
+}
+.top .shell {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 1rem;
-  padding: 1.05rem clamp(1.25rem, 5vw, 3rem);
-  border-bottom: 1px solid var(--v-line);
-  background: var(--v-ground);
+  gap: 1rem; height: 3.75rem;
 }
-.top .v-wordmark { font-size: 1.15rem; }
-.top nav { display: flex; align-items: center; gap: 1.25rem; }
-.top nav a { color: var(--v-ink-2); text-decoration: none; font-size: 0.875rem; }
-.top nav a:hover { color: var(--v-ink); }
+/* The mark on its own. With no wordmark beside it there is nothing to
+   balance against, so it carries a little more weight and the anchor
+   takes the accessible name the text used to give it. */
+.lockup { display: inline-flex; align-items: center; text-decoration: none; }
+.lockup .v-mark { width: 1.9rem; height: 1.9rem; }
+.lockup:focus-visible { outline: 2px solid var(--signal); outline-offset: 4px; }
+.top nav { display: flex; align-items: center; gap: 0.4rem; }
+.top nav a {
+  font-family: "JetBrains Mono", monospace; font-size: 0.7rem;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-2); text-decoration: none;
+  padding: 0.45rem 0.7rem; border-radius: 2px;
+}
+.top nav a:hover { color: var(--ink); background: var(--bg-2); }
 
-main {
-  max-width: 62rem;
-  margin: 0 auto;
-  padding: clamp(2.5rem, 8vw, 5.5rem) clamp(1.25rem, 5vw, 3rem) 4rem;
-  display: flex; flex-direction: column; gap: clamp(2.5rem, 6vw, 4rem);
+/* Square, not pill. This is a control, not a call to action. */
+.btn {
+  font-family: "JetBrains Mono", monospace; font-size: 0.7rem;
+  letter-spacing: 0.1em; text-transform: uppercase; font-weight: 500;
+  padding: 0.62rem 1rem; border-radius: 2px;
+  background: var(--ink); color: var(--bg);
+  border: 1px solid var(--ink); text-decoration: none;
+  display: inline-block; cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.btn:hover { background: transparent; color: var(--ink); }
+.btn--ghost { background: transparent; color: var(--ink); border-color: var(--rule-2); }
+.btn--ghost:hover { border-color: var(--ink); background: transparent; }
+.btn:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+/* --------------------------------------------------------------- hero */
+
+.hero { padding: clamp(3rem, 9vw, 6rem) 0 clamp(2rem, 5vw, 3.5rem); position: relative; }
+
+h1 {
+  font-family: "Space Grotesk", sans-serif; font-weight: 700;
+  font-size: clamp(2.9rem, 9vw, 5.75rem);
+  letter-spacing: -0.045em; line-height: 0.94;
+}
+.lede {
+  font-size: clamp(1.1rem, 2.4vw, 1.5rem); color: var(--ink-2);
+  margin-top: 1.1rem; max-width: 34ch; line-height: 1.35;
+}
+.actions { display: flex; gap: 0.6rem; margin-top: 2.1rem; flex-wrap: wrap; }
+
+/* --------------------------------------------------- the two panels */
+
+.panels {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+  gap: 1px; background: var(--rule);
+  border: 1px solid var(--rule);
+  margin-bottom: clamp(3rem, 7vw, 4.5rem);
 }
 
-/* The hero. Serif, tight, and one grey line under it — the whole of the
-   reference page's first screen is those two things and a lot of air. */
-.hero h1 {
-  font-family: var(--v-display);
-  font-weight: 400;
-  font-size: clamp(2.4rem, 7vw, 4.25rem);
-  letter-spacing: var(--v-display-tracking);
-  line-height: 1.02;
-  margin-top: 0.75rem;
+a.panel {
+  display: flex; flex-direction: column; text-decoration: none;
+  background: var(--bg-2); padding: 0;
+  transition: background .12s ease;
 }
-.hero .lede {
-  color: var(--v-muted);
-  font-size: clamp(1.05rem, 2.2vw, 1.4rem);
-  margin-top: 1.1rem;
-  max-width: 46ch;
-  line-height: 1.4;
-}
-.hero .actions { display: flex; align-items: center; gap: 1.1rem; margin-top: 2rem; flex-wrap: wrap; }
+a.panel:hover { background: var(--bg); }
+a.panel:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
 
-.apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1rem; }
-
-a.app {
-  display: block; text-decoration: none; color: inherit;
-  background: var(--v-panel);
-  border: 1px solid var(--v-line);
-  border-radius: var(--v-radius);
-  padding: 1.4rem 1.5rem 1.5rem;
-  transition: border-color .12s ease, transform .12s ease;
+/* The header strip. Every instrument has one. */
+.panel .strip {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; padding: 0.6rem 1.4rem;
+  border-bottom: 1px solid var(--rule);
+  font-family: "JetBrains Mono", monospace; font-size: 0.66rem;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3);
 }
-a.app:hover { border-color: var(--v-line-2); transform: translateY(-1px); }
-a.app:focus-visible { outline: 2px solid var(--v-accent); outline-offset: 2px; }
-a.app h2 {
-  font-family: var(--v-display); font-weight: 400;
-  font-size: 1.5rem; letter-spacing: var(--v-display-tracking);
-  margin-top: 0.55rem;
+.panel .strip span:last-child { color: var(--signal); }
+.panel .body { padding: 1.5rem 1.4rem 1.6rem; display: flex; flex-direction: column; flex: 1; }
+.panel h2 {
+  font-family: "Space Grotesk", sans-serif; font-weight: 700;
+  font-size: 1.7rem; letter-spacing: -0.03em;
 }
-a.app p { color: var(--v-ink-2); font-size: 0.92rem; margin-top: 0.6rem; }
+.panel .sub { color: var(--ink-2); font-size: 0.94rem; margin-top: 0.5rem; }
 
+.panel ul { list-style: none; margin-top: 1.3rem; display: grid; }
+.panel li {
+  font-size: 0.875rem; color: var(--ink-2);
+  padding: 0.55rem 0 0.55rem 1.6rem; position: relative;
+  border-top: 1px dashed var(--rule);
+}
+.panel li:first-child { border-top: 0; padding-top: 0; }
+.panel li:first-child::before { top: 0.16em; }
+.panel li::before {
+  content: "+"; position: absolute; left: 0; top: 0.72em;
+  font-family: "JetBrains Mono", monospace; font-size: 0.8rem;
+  color: var(--signal); line-height: 1;
+}
+.panel .go {
+  margin-top: auto; padding-top: 1.4rem;
+  font-family: "JetBrains Mono", monospace; font-size: 0.7rem;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink);
+}
+a.panel:hover .go { color: var(--signal); }
+
+/* ------------------------------------------------------------ the steps */
+
+.how { border-top: 1px solid var(--rule); padding: clamp(2.5rem, 6vw, 3.75rem) 0; }
 .how h2 {
-  font-family: var(--v-display); font-weight: 400;
-  font-size: clamp(1.5rem, 3vw, 2rem);
-  letter-spacing: var(--v-display-tracking);
+  font-family: "Space Grotesk", sans-serif; font-weight: 700;
+  font-size: clamp(1.5rem, 3.2vw, 2.1rem); letter-spacing: -0.03em;
 }
 .steps {
   list-style: none; counter-reset: step;
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
-  gap: 1.75rem 2rem; margin-top: 1.75rem;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0; margin-top: 1.9rem;
+  border-top: 1px solid var(--rule);
 }
-.steps li { counter-increment: step; }
+.steps li {
+  counter-increment: step; padding: 1.4rem 1.5rem 1.5rem 0;
+  border-right: 1px solid var(--rule);
+}
+.steps li:last-child { border-right: 0; }
+.steps li:not(:first-child) { padding-left: 1.5rem; }
 .steps li::before {
-  content: counter(step);
-  font-family: var(--v-mono); font-size: 0.7rem; color: var(--v-accent);
-  display: block; margin-bottom: 0.6rem;
+  content: counter(step, decimal-leading-zero);
+  font-family: "JetBrains Mono", monospace; font-weight: 700;
+  font-size: 0.72rem; color: var(--signal);
+  display: block; margin-bottom: 0.9rem;
 }
-.steps h3 { font-size: 1rem; font-weight: 500; letter-spacing: -0.01em; }
-.steps p { color: var(--v-ink-2); font-size: 0.92rem; margin-top: 0.4rem; }
-
-.note { font-size: 0.92rem; color: var(--v-ink-2); max-width: 68ch; }
-.note code, .flow code {
-  font-family: var(--v-mono); font-size: 0.82em;
-  background: var(--v-sunk); border: 1px solid var(--v-line);
-  padding: 0.06rem 0.32rem; border-radius: var(--v-radius-sm);
+.steps h3 {
+  font-family: "Space Grotesk", sans-serif; font-weight: 600;
+  font-size: 1rem; letter-spacing: -0.015em;
 }
-hr.rule { border: 0; border-top: 1px solid var(--v-line); }
+.steps p { color: var(--ink-2); font-size: 0.9rem; margin-top: 0.45rem; }
 
 footer {
-  border-top: 1px solid var(--v-line);
-  padding: 1.4rem clamp(1.25rem, 5vw, 3rem);
+  border-top: 1px solid var(--rule);
+  font-family: "JetBrains Mono", monospace; font-size: 0.68rem;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3);
+}
+footer .shell {
   display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
-  font-size: 0.8rem; color: var(--v-muted);
+  padding-top: 1.35rem; padding-bottom: 1.35rem;
+}
+footer a { color: var(--ink-3); text-decoration: none; }
+footer a:hover { color: var(--ink); }
+
+@media (max-width: 46rem) {
+  .steps li { border-right: 0; border-bottom: 1px solid var(--rule); padding-left: 0; }
+  .steps li:last-child { border-bottom: 0; }
+  .steps li:not(:first-child) { padding-left: 0; }
 }
 </style>
 </head>
 <body>
 
 <header class="top">
-  <a class="v-lockup" href="/">
-    <span class="v-mark" aria-hidden="true"></span>
-    <span class="v-wordmark">Verlet Robotics</span>
-  </a>
-  <nav>
-    <a href="rotation-desk-v1/">Desk</a>
-    <a href="apps/rig/">Rig</a>
-    <a class="v-btn" href="rotation-desk-v1/">Open the desk</a>
-  </nav>
+  <div class="shell">
+    <a class="lockup" href="/" aria-label="Verlet Robotics">
+      <span class="v-mark" aria-hidden="true"></span>
+    </a>
+    <!-- Navigation only. The actions live in the hero, under the line
+         that explains them - the same button in both places is the same
+         decision asked twice. -->
+    <nav>
+      <a href="rotation-desk-v1/">Desk</a>
+      <a href="apps/rig/">Rig</a>
+    </nav>
+  </div>
 </header>
 
-<main>
+<div class="shell">
 
   <section class="hero">
-    <h1>Teleop Floor</h1>
-    <p class="lede">One rotation for the whole floor. The desk builds it, every rig runs it, and nobody has to type anything into a rig.</p>
+    <h1>Teleop&nbsp;Floor</h1>
+    <p class="lede">The desk builds the shift. Every rig runs it.</p>
     <div class="actions">
-      <a class="v-btn" href="rotation-desk-v1/">Open the desk</a>
-      <a class="v-btn v-btn--quiet" href="apps/rig/">Open a rig</a>
+      <a class="btn" href="rotation-desk-v1/">Open the desk</a>
+      <a class="btn btn--ghost" href="apps/rig/">Open a rig</a>
     </div>
   </section>
 
-  <section class="apps">
-    <a class="app" href="rotation-desk-v1/">
-      <span class="v-eyebrow">Manager</span>
-      <h2>Rotation Desk</h2>
-      <p>Build the shift, see the whole floor at a glance, and push it out. Live shows who is on every rig right now, how long is left on their turn, who takes over and where they go next &mdash; and flags a rig that has gone quiet or that nobody arrived at.</p>
+  <section class="panels">
+    <a class="panel" href="rotation-desk-v1/">
+      <div class="strip"><span>For the manager</span><span>01</span></div>
+      <div class="body">
+        <h2>Rotation Desk</h2>
+        <p class="sub">Build the shift, watch the whole floor, and push it out.</p>
+        <ul>
+          <li>Who is on every rig right now, and how long is left on their turn</li>
+          <li>Who takes over next, and whether the person leaving goes to break or think</li>
+          <li>A rig that has gone quiet, or that nobody arrived at</li>
+          <li>Whether the shift comes out even, before you push it</li>
+        </ul>
+        <span class="go">Open the desk &rarr;</span>
+      </div>
     </a>
 
-    <a class="app" href="apps/rig/">
-      <span class="v-eyebrow">Operator</span>
-      <h2>Rig Pedal Loop</h2>
-      <p>Three foot pedals and nothing to sign into. The screen already knows whose turn it is, counts down to the handover, and says who is taking over and whether you are going to break or to think.</p>
+    <a class="panel" href="apps/rig/">
+      <div class="strip"><span>For the operator</span><span>02</span></div>
+      <div class="body">
+        <h2>Rig Pedal Loop</h2>
+        <p class="sub">Three foot pedals, and nothing to sign into.</p>
+        <ul>
+          <li>The screen already knows whose turn it is</li>
+          <li>Counts down to the handover and names who is taking over</li>
+          <li>The right pedal reports a problem, on any screen</li>
+          <li>A recording always finishes before a handover</li>
+        </ul>
+        <span class="go">Open a rig &rarr;</span>
+      </div>
     </a>
   </section>
-
-  <hr class="rule">
 
   <section class="how">
     <h2>How a shift runs</h2>
@@ -164,64 +308,23 @@ footer {
       </li>
       <li>
         <h3>One button puts it on the floor</h3>
-        <p>Every rig picks up its own copy. The desk checks first that each operator gets six hours of work, an hour of break and an hour of think time, and tells you if the shape does not come out even.</p>
+        <p>Every rig picks up its own copy. The desk checks first that each operator gets six hours of work, an hour of break and an hour of think time.</p>
       </li>
       <li>
         <h3>The rig takes it from there</h3>
-        <p>It signs in whoever the schedule says is there, and hands over at the right minute &mdash; but never in the middle of a take. A recording always finishes first.</p>
+        <p>It signs in whoever the schedule says is there, and hands over at the right minute. Never in the middle of a take.</p>
       </li>
     </ol>
   </section>
 
-</main>
+</div>
 
 <footer>
-  <span>&copy; 2026 Verlet Robotics</span>
-  <!-- Filled in below. Empty if the script does not run, because a wrong
-       shift on a wall is worse than no shift. -->
-  <span class="v-eyebrow" id="now"></span>
+  <div class="shell">
+    <span>&copy; 2026 Verlet Robotics</span>
+    <span><a href="rotation-desk-v1/">Desk</a> &middot; <a href="apps/rig/">Rig</a></span>
+  </div>
 </footer>
-
-<script src="packages/engine/rotation-engine.js"></script>
-<script>
-/* Which shift is running, right now.
- *
- * Read from the engine's own SHIFTS table rather than written out here.
- * The times were hard-coded on this page and nowhere else was, which is
- * exactly how a landing page ends up quietly disagreeing with the floor
- * it describes. The desk and the rig read the same table.
- */
-(function () {
-  var RE = window.RotationEngine;
-  var out = document.getElementById("now");
-  if (!RE || !RE.SHIFTS || !out) return;
-
-  var LEN = 480;   // every shift is eight hours
-
-  function current(mins) {
-    for (var i = 0; i < RE.SHIFTS.length; i++) {
-      var s = RE.SHIFTS[i];
-      if (mins >= s.start && mins < s.start + LEN) return s;
-    }
-    return null;
-  }
-
-  function tick() {
-    var d = new Date();
-    var mins = d.getHours() * 60 + d.getMinutes();
-    var s = current(mins);
-    if (!s) { out.textContent = ""; return; }
-
-    var left = s.start + LEN - mins;
-    var h = Math.floor(left / 60), m = left % 60;
-    out.textContent = s.label + " shift · "
-      + (h ? h + "h " + m + "m" : m + "m") + " left";
-  }
-
-  tick();
-  setInterval(tick, 30000);
-}());
-</script>
 
 </body>
 </html>
