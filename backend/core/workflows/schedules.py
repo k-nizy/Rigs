@@ -66,7 +66,7 @@ async def in_force(session: AsyncSession, rig_id: str,
             return sched
 
     if recent:
-        return recent[0]
+        return _nearest(recent, now)
 
     # Nothing near today at all. Fall back to whatever this rig was last
     # pushed, so a demo or a long-idle floor still has something to show.
@@ -77,3 +77,43 @@ async def in_force(session: AsyncSession, rig_id: str,
         .limit(1)
     )
     return rows.scalar_one_or_none()
+
+
+def _nearest(rows: list[Schedule], now: datetime) -> Schedule:
+    """Which schedule to hand back when none of them is actually running.
+
+    Every rig on a floor is pushed together and must land on the SAME
+    answer here. Otherwise one rig sits in Standby against the Day sheet
+    while the rig beside it sits in Standby against the Night one, out of
+    a single push, and the floor looks like it is running three different
+    schedules at once.
+
+    Returning "whichever row came back first" did exactly that. All the
+    rows of one push share a `pushed_at` to the microsecond, so ordering
+    by it leaves them all tied, and a tied ORDER BY lets the database
+    return them in any order it likes - a different order per query, and
+    so a different shift per rig, from identical data.
+
+    The choice is therefore made from the schedules themselves: the next
+    shift due to start, or if they have all finished, the one that
+    finished most recently. Both are properties the desk wrote into the
+    payload, identical on all twelve rigs, and the same rule the push
+    server applies.
+    """
+    dated = []
+    for sched in rows:
+        window = rules.shift_window(sched.payload, sched.shift_date, now.tzinfo)
+        if window is not None:
+            dated.append((window, sched))
+
+    # A tie-break that does not depend on row order, only on the payload.
+    key = lambda s: (s.shift_date, s.shift_label)
+
+    if not dated:
+        return sorted(rows, key=key)[0]
+
+    upcoming = [(w[0], s) for w, s in dated if w[0] > now]
+    if upcoming:
+        return min(upcoming, key=lambda pair: (pair[0], key(pair[1])))[1]
+
+    return max(dated, key=lambda pair: (pair[0][1], key(pair[1])))[1]

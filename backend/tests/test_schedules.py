@@ -15,13 +15,14 @@ into the payload and compare it against now. Every test below is really
 asking the same question: did we select, or did we calculate?
 """
 
+import itertools
 import uuid
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select
 
 from core.domains.schedules.model import Schedule
-from core.workflows.schedules import in_force
+from core.workflows.schedules import _nearest, in_force
 
 RIG = "RIG-03"
 UTC = timezone.utc
@@ -252,3 +253,141 @@ async def test_pushing_the_day_twice_replaces_rather_than_collides(client, sessi
     at_ten = datetime(2026, 8, 25, 10, 0, tzinfo=UTC)
     got = await in_force(session, RIG, at_ten)
     assert got is not None and got.shift_label == "Morning"
+
+
+# ------------------------------------------- one floor, one answer
+
+async def test_every_rig_gets_the_same_answer_when_nothing_is_running(client, session):
+    """Twelve rigs, one push, and they must not disagree.
+
+    Reported from the floor: RIG-01 and RIG-02 were showing the Day shift
+    while RIG-03 sat in Standby, out of a single push, at the same instant.
+
+    The cause was a tie. Every row of one push carries the same
+    `pushed_at` to the microsecond, so ordering by it leaves all of them
+    equal, and a tied ORDER BY lets the database hand them back in any
+    order - a different order per query, and therefore a different shift
+    per rig, from identical data. The floor looked like it was running
+    three schedules at once.
+    """
+    payloads = []
+    for i in range(1, 13):
+        for label in ("Morning", "Day", "Night"):
+            payloads.append(payload(label, rig=f"RIG-{i:02d}"))
+    r = await client.post("/api/schedules/push", json={"payloads": payloads})
+    assert r.status_code == 200, r.text
+
+    # Every shift of the 25th has finished by 01:00 on the 26th.
+    after_all = datetime(2026, 8, 26, 1, 0, tzinfo=UTC)
+    answers = {}
+    for i in range(1, 13):
+        rig = f"RIG-{i:02d}"
+        got = await in_force(session, rig, after_all)
+        assert got is not None, rig + " was given nothing at all"
+        answers[rig] = (got.shift_label, got.shift_date)
+
+    distinct = set(answers.values())
+    assert len(distinct) == 1, (
+        "one push produced " + str(len(distinct)) + " different answers across the "
+        "floor: " + "; ".join(f"{r}={l} {d}" for r, (l, d) in sorted(answers.items()))
+    )
+
+
+async def test_it_is_the_same_answer_asked_over_and_over(client, session):
+    """The tie made it unstable per query, not just per rig, so asking the
+    same question twice could give two answers."""
+    for label in ("Morning", "Day", "Night"):
+        await push(session, label)
+
+    after_all = datetime(2026, 8, 26, 1, 0, tzinfo=UTC)
+    seen = set()
+    for _ in range(8):
+        got = await in_force(session, RIG, after_all)
+        seen.add((got.shift_label, got.shift_date))
+    assert len(seen) == 1, "the same rig got " + str(len(seen)) + " different answers: " + str(seen)
+
+
+async def test_when_they_have_all_ended_it_is_the_one_that_ended_last(client, session):
+    """Chosen from the payloads themselves, so it cannot depend on row order."""
+    for label in ("Morning", "Day", "Night"):
+        await push(session, label)
+
+    after_all = datetime(2026, 8, 26, 1, 0, tzinfo=UTC)
+    got = await in_force(session, RIG, after_all)
+    assert got.shift_label == "Day", (
+        "the last shift to finish on the 25th was Day (16:00-00:00), but the rig "
+        "was handed " + got.shift_label
+    )
+
+
+async def test_before_the_day_starts_it_is_the_shift_about_to_begin(client, session):
+    """A rig booting early should be waiting on the right shift, not the
+    one that finished yesterday."""
+    await push(session, "Morning")
+    await push(session, "Day")
+
+    early = datetime(2026, 8, 25, 5, 0, tzinfo=UTC)   # before Morning at 08:00
+    got = await in_force(session, RIG, early)
+    assert got.shift_label == "Morning", (
+        "at 05:00 the next shift to start is Morning, but the rig was handed "
+        + got.shift_label
+    )
+
+
+async def test_a_covering_shift_still_wins_over_the_fallback(client, session):
+    """The fallback must never shadow a shift that is genuinely running."""
+    for label in ("Morning", "Day", "Night"):
+        await push(session, label)
+
+    mid_morning = datetime(2026, 8, 25, 10, 0, tzinfo=UTC)
+    assert (await in_force(session, RIG, mid_morning)).shift_label == "Morning"
+
+
+def _row(label, day=DAY, rig=RIG):
+    """A Schedule that was never persisted. `_nearest` reads only the
+    payload, the date and the label, so it needs nothing from the database
+    - which is the point: this tests the rule, not the query plan."""
+    return Schedule(
+        push_id=uuid.uuid4(), pushed_at=datetime(2026, 8, 25, 7, 0, tzinfo=UTC),
+        rig_id=rig, shift_date=day, shift_label=label,
+        payload=payload(label, day=day, rig=rig),
+    )
+
+
+def test_the_answer_cannot_depend_on_the_order_the_rows_arrive_in():
+    """The property itself, pinned directly.
+
+    The floor test above is only a canary: it catches this if the database
+    happens to vary its row order on that particular run, and it did not.
+    A tie in ORDER BY is free to come back either way, so a test that
+    waits for it to misbehave is a test that passes until it matters.
+
+    This asks the question the bug was really about - does the same set of
+    schedules, handed over in a different order, produce a different
+    answer - and it can only be satisfied by not looking at order at all.
+    """
+    rows = [_row("Morning"), _row("Day"), _row("Night")]
+    after_all = datetime(2026, 8, 26, 1, 0, tzinfo=UTC)
+
+    answers = {
+        (_nearest(list(order), after_all).shift_label)
+        for order in itertools.permutations(rows)
+    }
+    assert answers == {"Day"}, (
+        "six orderings of one push produced " + str(len(answers)) + " answers " +
+        str(sorted(answers)) + " - the choice still depends on row order"
+    )
+
+
+def test_the_shift_about_to_start_is_also_order_independent():
+    rows = [_row("Morning"), _row("Day"), _row("Night")]
+    early = datetime(2026, 8, 25, 5, 0, tzinfo=UTC)   # Night has ended, Morning is next
+
+    answers = {
+        (_nearest(list(order), early).shift_label)
+        for order in itertools.permutations(rows)
+    }
+    assert answers == {"Morning"}, (
+        "before the Morning shift the rig should be waiting on Morning, got " +
+        str(sorted(answers))
+    )

@@ -152,13 +152,20 @@ function pick(held, now) {
   // Nothing covers now. Show the shift that starts next, so a rig sitting
   // before its first turn is waiting on the right one rather than holding
   // a finished schedule. The rig reads that as Standby, which is true.
-  let next = null, soonest = Infinity;
-  held.forEach(p => {
-    const w = RE.shiftWindow(p);
-    if (!w || w.start < now) return;
-    if (w.start - now < soonest) { soonest = w.start - now; next = p; }
-  });
-  return next || held[held.length - 1];
+  const dated = held.map(p => [RE.shiftWindow(p), p]).filter(x => x[0]);
+  if (!dated.length) return held[0];
+
+  // Chosen from the payloads, never from the order they arrived in. Every
+  // rig on the floor holds the same shifts, so every rig has to land on
+  // the same answer - otherwise one rig waits in Standby against the Day
+  // sheet while its neighbour waits against the Night one, out of a
+  // single push.
+  const upcoming = dated.filter(x => x[0].start > now);
+  if (upcoming.length) {
+    return upcoming.reduce((a, b) => (b[0].start < a[0].start ? b : a))[1];
+  }
+  // They have all finished: the one that finished most recently.
+  return dated.reduce((a, b) => (b[0].end > a[0].end ? b : a))[1];
 }
 
 function sendRigSchedule(res, rigId) {
