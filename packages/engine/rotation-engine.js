@@ -455,6 +455,96 @@
     return null;
   }
 
+  /* ------------------------------------------------ which shift is running
+
+     A payload covers ONE shift. A rig that is handed a whole day, or a
+     server holding three payloads per rig, has to answer "which of these
+     is running right now" - and that answer must be a COMPARISON, never a
+     calculation. The desk already wrote the window into the payload:
+     `shift.date`, `start`, `end` and `tz`. This reads it back.
+
+     The distinction is the founding rule of the system. Working out when
+     a shift runs, rather than reading what the desk said, would be a
+     second opinion about the schedule - and the first one able to
+     disagree with the desk that made it. */
+
+  /* Minutes that `tz` is ahead of UTC at a given instant. Uses the
+     formatter to render that instant in the zone, then reads the wall
+     clock back - the standard way to get at the tz database without
+     shipping one. */
+  function zoneOffset(utcMs, tz) {
+    var dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+    var p = {};
+    dtf.formatToParts(new Date(utcMs)).forEach(function (x) { p[x.type] = x.value; });
+    var asUTC = Date.UTC(+p.year, +p.month - 1, +p.day,
+                         (+p.hour) % 24, +p.minute, +p.second);
+    return asUTC - utcMs;
+  }
+
+  /* A wall-clock time on the floor, as an instant. Guess, then correct -
+     the second pass matters on the two days a year a shift starts inside
+     a daylight-saving jump. */
+  function floorInstant(y, mo, d, hh, mi, tz) {
+    var guess = Date.UTC(y, mo - 1, d, hh, mi);
+    var off = zoneOffset(guess, tz);
+    var ms = guess - off;
+    var again = zoneOffset(ms, tz);
+    return again === off ? ms : guess - again;
+  }
+
+  /* The half-open window [start, end) this payload covers, in real time.
+     Null if the payload does not carry one - malformed rather than
+     malicious, but it must not be treated as covering everything. */
+  function shiftWindow(payload) {
+    var s = payload && payload.shift;
+    if (!s) return null;
+    var d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s.date || ""));
+    var t = /^(\d{2}):(\d{2})$/.exec(String(s.start || ""));
+    if (!d || !t) return null;
+
+    var startMin = (+t[1]) * 60 + (+t[2]);
+    var mins = SHIFT_MINUTES;
+    var e = /^(\d{2}):(\d{2})$/.exec(String(s.end || ""));
+    if (e) {
+      // The desk is the authority on length, not the constant here.
+      mins = ((((+e[1]) * 60 + (+e[2])) - startMin) + 1440) % 1440;
+      if (mins === 0) mins = 1440;          // a full round trip, not zero
+    }
+
+    var start = floorInstant(+d[1], +d[2], +d[3], +t[1], +t[2], s.tz || "UTC");
+    return { start: start, end: start + mins * 60000 };
+  }
+
+  var asMs = function (at) {
+    if (at == null) return Date.now();
+    if (at instanceof Date) return at.getTime();
+    return typeof at === "number" ? at : Date.parse(at);
+  };
+
+  function coversAt(payload, at) {
+    var w = shiftWindow(payload);
+    if (!w) return false;
+    var ms = asMs(at);
+    return ms >= w.start && ms < w.end;
+  }
+
+  /* The one of these payloads whose own window contains `at`, or null.
+     Deliberately does not fall back: what to show when no shift is
+     running is the caller's decision, and hiding it here would let a
+     finished schedule look like a live one. */
+  function inForce(payloads, at) {
+    if (!Array.isArray(payloads)) return null;
+    var ms = asMs(at);
+    for (var i = 0; i < payloads.length; i++) {
+      if (coversAt(payloads[i], ms)) return payloads[i];
+    }
+    return null;
+  }
+
   // ------------------------------------------------------------- export
 
   root.RotationEngine = {
@@ -478,6 +568,9 @@
 
     rigPayload: rigPayload,
     whoIsOn: whoIsOn,
+    shiftWindow: shiftWindow,
+    coversAt: coversAt,
+    inForce: inForce,
 
     hhmm: hhmm,
     blockStart: blockStart,

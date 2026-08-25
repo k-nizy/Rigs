@@ -27,6 +27,7 @@ const fs   = require("node:fs");
 const path = require("node:path");
 
 const { validate } = require("../../packages/schema/payload.js");
+const RE = require("../../packages/engine/rotation-engine.js");
 
 const ROOT      = path.resolve(__dirname, "..", "..");
 const STATE     = process.env.STATE_FILE || path.join(__dirname, "state.json");
@@ -45,7 +46,7 @@ const MIME      = {
 
 /* ------------------------------------------------------------- the store
  *
- * { pushedAt: "2026-08-22T09:00:00Z", rigs: { "RIG-01": <payload>, ... } }
+ * { pushedAt: "2026-08-22T09:00:00Z", rigs: { "RIG-01": [<payload>, ...] } }
  *
  * Kept in memory and written to disk on every accepted push, so a rig
  * restart or a server restart still shows the current shift. */
@@ -121,18 +122,49 @@ async function handlePush(req, res) {
     return sendJSON(res, 422, { error: "one or more payloads failed validation", problems });
   }
 
+  // Every shift of the day, not just the one on screen. A payload covers
+  // one shift, so keying a rig to a single payload meant the last one
+  // pushed silently won and the floor ran whichever shift happened to be
+  // written last.
   const next = { pushedAt: new Date().toISOString(), rigs: {} };
-  payloads.forEach(p => { next.rigs[p.rigId] = p; });
+  payloads.forEach(p => { (next.rigs[p.rigId] = next.rigs[p.rigId] || []).push(p); });
   store = next;
   persist();
 
   sendJSON(res, 200, { ok: true, pushedAt: store.pushedAt, count: payloads.length });
 }
 
+/* What this rig was pushed, oldest first. Tolerates a state.json written
+   before a push carried the whole day, so a restart across the change
+   does not 404 the floor. */
+function heldFor(rigId) {
+  const held = store.rigs[rigId];
+  if (!held) return [];
+  return Array.isArray(held) ? held : [held];
+}
+
+/* The schedule this rig should be running, by comparison against the
+   window the desk wrote - never by working out when a shift runs. */
+function pick(held, now) {
+  const live = RE.inForce(held, now);
+  if (live) return live;
+
+  // Nothing covers now. Show the shift that starts next, so a rig sitting
+  // before its first turn is waiting on the right one rather than holding
+  // a finished schedule. The rig reads that as Standby, which is true.
+  let next = null, soonest = Infinity;
+  held.forEach(p => {
+    const w = RE.shiftWindow(p);
+    if (!w || w.start < now) return;
+    if (w.start - now < soonest) { soonest = w.start - now; next = p; }
+  });
+  return next || held[held.length - 1];
+}
+
 function sendRigSchedule(res, rigId) {
-  const p = store.rigs[rigId];
-  if (!p) return sendJSON(res, 404, { error: "nothing pushed for " + rigId + " yet" });
-  sendJSON(res, 200, p);
+  const held = heldFor(rigId);
+  if (!held.length) return sendJSON(res, 404, { error: "nothing pushed for " + rigId + " yet" });
+  sendJSON(res, 200, pick(held, Date.now()));
 }
 
 /* --------------------------------------------------------------- static */

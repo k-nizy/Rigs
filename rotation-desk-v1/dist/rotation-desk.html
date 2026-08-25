@@ -1703,6 +1703,96 @@ pre.json .n { color: var(--accent); }
     return null;
   }
 
+  /* ------------------------------------------------ which shift is running
+
+     A payload covers ONE shift. A rig that is handed a whole day, or a
+     server holding three payloads per rig, has to answer "which of these
+     is running right now" - and that answer must be a COMPARISON, never a
+     calculation. The desk already wrote the window into the payload:
+     `shift.date`, `start`, `end` and `tz`. This reads it back.
+
+     The distinction is the founding rule of the system. Working out when
+     a shift runs, rather than reading what the desk said, would be a
+     second opinion about the schedule - and the first one able to
+     disagree with the desk that made it. */
+
+  /* Minutes that `tz` is ahead of UTC at a given instant. Uses the
+     formatter to render that instant in the zone, then reads the wall
+     clock back - the standard way to get at the tz database without
+     shipping one. */
+  function zoneOffset(utcMs, tz) {
+    var dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+    var p = {};
+    dtf.formatToParts(new Date(utcMs)).forEach(function (x) { p[x.type] = x.value; });
+    var asUTC = Date.UTC(+p.year, +p.month - 1, +p.day,
+                         (+p.hour) % 24, +p.minute, +p.second);
+    return asUTC - utcMs;
+  }
+
+  /* A wall-clock time on the floor, as an instant. Guess, then correct -
+     the second pass matters on the two days a year a shift starts inside
+     a daylight-saving jump. */
+  function floorInstant(y, mo, d, hh, mi, tz) {
+    var guess = Date.UTC(y, mo - 1, d, hh, mi);
+    var off = zoneOffset(guess, tz);
+    var ms = guess - off;
+    var again = zoneOffset(ms, tz);
+    return again === off ? ms : guess - again;
+  }
+
+  /* The half-open window [start, end) this payload covers, in real time.
+     Null if the payload does not carry one - malformed rather than
+     malicious, but it must not be treated as covering everything. */
+  function shiftWindow(payload) {
+    var s = payload && payload.shift;
+    if (!s) return null;
+    var d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s.date || ""));
+    var t = /^(\d{2}):(\d{2})$/.exec(String(s.start || ""));
+    if (!d || !t) return null;
+
+    var startMin = (+t[1]) * 60 + (+t[2]);
+    var mins = SHIFT_MINUTES;
+    var e = /^(\d{2}):(\d{2})$/.exec(String(s.end || ""));
+    if (e) {
+      // The desk is the authority on length, not the constant here.
+      mins = ((((+e[1]) * 60 + (+e[2])) - startMin) + 1440) % 1440;
+      if (mins === 0) mins = 1440;          // a full round trip, not zero
+    }
+
+    var start = floorInstant(+d[1], +d[2], +d[3], +t[1], +t[2], s.tz || "UTC");
+    return { start: start, end: start + mins * 60000 };
+  }
+
+  var asMs = function (at) {
+    if (at == null) return Date.now();
+    if (at instanceof Date) return at.getTime();
+    return typeof at === "number" ? at : Date.parse(at);
+  };
+
+  function coversAt(payload, at) {
+    var w = shiftWindow(payload);
+    if (!w) return false;
+    var ms = asMs(at);
+    return ms >= w.start && ms < w.end;
+  }
+
+  /* The one of these payloads whose own window contains `at`, or null.
+     Deliberately does not fall back: what to show when no shift is
+     running is the caller's decision, and hiding it here would let a
+     finished schedule look like a live one. */
+  function inForce(payloads, at) {
+    if (!Array.isArray(payloads)) return null;
+    var ms = asMs(at);
+    for (var i = 0; i < payloads.length; i++) {
+      if (coversAt(payloads[i], ms)) return payloads[i];
+    }
+    return null;
+  }
+
   // ------------------------------------------------------------- export
 
   root.RotationEngine = {
@@ -1726,6 +1816,9 @@ pre.json .n { color: var(--accent); }
 
     rigPayload: rigPayload,
     whoIsOn: whoIsOn,
+    shiftWindow: shiftWindow,
+    coversAt: coversAt,
+    inForce: inForce,
 
     hhmm: hhmm,
     blockStart: blockStart,
@@ -1828,7 +1921,11 @@ const GROUPS = window.DEMO_ROSTER.groups;
 
 const cfg = {
   shift: window.DEMO_ROSTER.defaults.shift,
-  date: new Date().toISOString().slice(0, 10),
+  /* The floor's date, not UTC's. toISOString() is UTC, so on a floor at
+     UTC+2 everything between midnight and 02:00 was dated to yesterday -
+     and a schedule dated yesterday covers a window that has already
+     closed, which puts every rig on Standby. */
+  date: new Date().toLocaleDateString("en-CA"),
   blockMin: FORMAT.blockMin,
   stintBlocks: FORMAT.stintBlocks,
   mode: FORMAT.mode,
@@ -1901,6 +1998,28 @@ function toast(msg) {
 
 /* Every payload the desk would push right now, for when there is no
  * server to ask. Same function the push itself uses. */
+/* Every shift of the day, which is what a push sends.
+ *
+ * A payload covers one shift. Pushing only the one on screen is why a rig
+ * ran until 16:00 and then went quiet: it was still holding a Morning
+ * schedule with no turns left in it, and nothing newer existed to pick
+ * up. Three shifts of twelve rigs is thirty-six payloads, well inside the
+ * sixty-four a push already accepts.
+ *
+ * The sheet is untouched. This is the same rotation drawn three times,
+ * once per shift, not a different format. */
+function dayPayloads() {
+  const out = [];
+  RE.SHIFTS.forEach(shift => {
+    const p = RE.buildPlan(Object.assign({}, cfg, { shift: shift.id }), GROUPS);
+    GROUPS.forEach(g => g.rigs.forEach(r => {
+      const one = RE.rigPayload(p, r);
+      if (one) out.push(one);
+    }));
+  });
+  return out;
+}
+
 function localPayloads() {
   const p = plan();
   const out = [];
@@ -2553,9 +2672,9 @@ function renderPushPanel(p) {
  * of valid and invalid payloads, so the floor never runs half-updated. */
 async function pushFloor() {
   const btn = $("btn-push");
-  const payloads = localPayloads();
+  const payloads = dayPayloads();
   btn.disabled = true;
-  $("push-note").textContent = "Pushing " + payloads.length + " rigs...";
+  $("push-note").textContent = "Pushing " + RE.SHIFTS.length + " shifts...";
   try {
     const res = await fetch("/api/push", {
       method: "POST",
@@ -2565,8 +2684,10 @@ async function pushFloor() {
     const body = await res.json().catch(() => ({}));
     if (res.ok) {
       const at = new Date(body.pushedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      $("push-note").textContent = "Pushed " + body.count + " rigs at " + at;
-      toast("Pushed " + body.count + " rigs");
+      const rigs = Math.round(body.count / RE.SHIFTS.length);
+      $("push-note").textContent = "Pushed " + rigs + " rigs, " +
+        RE.SHIFTS.length + " shifts, at " + at;
+      toast("Pushed " + rigs + " rigs for the day");
       await loadFloor(false);          // Live should now show the floor, not the plan
     } else {
       $("push-note").textContent = "Rejected: " + (body.error || res.status);

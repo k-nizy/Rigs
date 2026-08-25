@@ -1060,6 +1060,96 @@ body {
     return null;
   }
 
+  /* ------------------------------------------------ which shift is running
+
+     A payload covers ONE shift. A rig that is handed a whole day, or a
+     server holding three payloads per rig, has to answer "which of these
+     is running right now" - and that answer must be a COMPARISON, never a
+     calculation. The desk already wrote the window into the payload:
+     `shift.date`, `start`, `end` and `tz`. This reads it back.
+
+     The distinction is the founding rule of the system. Working out when
+     a shift runs, rather than reading what the desk said, would be a
+     second opinion about the schedule - and the first one able to
+     disagree with the desk that made it. */
+
+  /* Minutes that `tz` is ahead of UTC at a given instant. Uses the
+     formatter to render that instant in the zone, then reads the wall
+     clock back - the standard way to get at the tz database without
+     shipping one. */
+  function zoneOffset(utcMs, tz) {
+    var dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+    var p = {};
+    dtf.formatToParts(new Date(utcMs)).forEach(function (x) { p[x.type] = x.value; });
+    var asUTC = Date.UTC(+p.year, +p.month - 1, +p.day,
+                         (+p.hour) % 24, +p.minute, +p.second);
+    return asUTC - utcMs;
+  }
+
+  /* A wall-clock time on the floor, as an instant. Guess, then correct -
+     the second pass matters on the two days a year a shift starts inside
+     a daylight-saving jump. */
+  function floorInstant(y, mo, d, hh, mi, tz) {
+    var guess = Date.UTC(y, mo - 1, d, hh, mi);
+    var off = zoneOffset(guess, tz);
+    var ms = guess - off;
+    var again = zoneOffset(ms, tz);
+    return again === off ? ms : guess - again;
+  }
+
+  /* The half-open window [start, end) this payload covers, in real time.
+     Null if the payload does not carry one - malformed rather than
+     malicious, but it must not be treated as covering everything. */
+  function shiftWindow(payload) {
+    var s = payload && payload.shift;
+    if (!s) return null;
+    var d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s.date || ""));
+    var t = /^(\d{2}):(\d{2})$/.exec(String(s.start || ""));
+    if (!d || !t) return null;
+
+    var startMin = (+t[1]) * 60 + (+t[2]);
+    var mins = SHIFT_MINUTES;
+    var e = /^(\d{2}):(\d{2})$/.exec(String(s.end || ""));
+    if (e) {
+      // The desk is the authority on length, not the constant here.
+      mins = ((((+e[1]) * 60 + (+e[2])) - startMin) + 1440) % 1440;
+      if (mins === 0) mins = 1440;          // a full round trip, not zero
+    }
+
+    var start = floorInstant(+d[1], +d[2], +d[3], +t[1], +t[2], s.tz || "UTC");
+    return { start: start, end: start + mins * 60000 };
+  }
+
+  var asMs = function (at) {
+    if (at == null) return Date.now();
+    if (at instanceof Date) return at.getTime();
+    return typeof at === "number" ? at : Date.parse(at);
+  };
+
+  function coversAt(payload, at) {
+    var w = shiftWindow(payload);
+    if (!w) return false;
+    var ms = asMs(at);
+    return ms >= w.start && ms < w.end;
+  }
+
+  /* The one of these payloads whose own window contains `at`, or null.
+     Deliberately does not fall back: what to show when no shift is
+     running is the caller's decision, and hiding it here would let a
+     finished schedule look like a live one. */
+  function inForce(payloads, at) {
+    if (!Array.isArray(payloads)) return null;
+    var ms = asMs(at);
+    for (var i = 0; i < payloads.length; i++) {
+      if (coversAt(payloads[i], ms)) return payloads[i];
+    }
+    return null;
+  }
+
   // ------------------------------------------------------------- export
 
   root.RotationEngine = {
@@ -1083,6 +1173,9 @@ body {
 
     rigPayload: rigPayload,
     whoIsOn: whoIsOn,
+    shiftWindow: shiftWindow,
+    coversAt: coversAt,
+    inForce: inForce,
 
     hhmm: hhmm,
     blockStart: blockStart,
@@ -1394,6 +1487,8 @@ function boot(screen) {
     stintAt: 0,         // shift seconds when this operator took the rig
     episode: 0,
     episodeId: null,   // minted at start_episode, names the video too
+    episodeWho: null,  // the turn and operator that pressed start
+    stintWho: null,    // whose stint this is, captured when it began
     recordedSecs: 0,
     faultSecs: 0,
     downSecs: 0,
@@ -1411,6 +1506,11 @@ function boot(screen) {
   lastViewKey = null;
   lastPedalKey = null;
   holding = null;
+  /* The first stint of this boot belongs to whoever is on the rig now.
+     Captured for the same reason an episode is: a stint is a span of
+     time, and it is filed at the end of that span, by which point the
+     clock may already have moved on to the next operator. */
+  S.stintWho = current();
   emit("shift_check", "rig_shift_checks", "shift started, checklist raised",
        { outcome: "raised" });
   /* Only a screen the app actually has. An unrecognised hash used to
@@ -1661,12 +1761,20 @@ function dispatch(intent) {
          take. No lookup table, no reconciliation, and an id that exists
          even for a take the recorder failed to start. */
       S.episodeId = uuid();
+      /* Who is making this take, captured now rather than looked up when
+         it is saved. A take may run past a turn boundary - the rig
+         deliberately never cuts a recording - and the operator who
+         pressed this pedal is the one who did the work. Read at save
+         time instead, the take would be filed under whoever came on
+         next, and nothing downstream could tell. */
+      S.episodeWho = current();
       go("recording");
       break;
 
     case "discard":
       emit("episode_discarded", "episodes", "episode " + S.episode + " discarded after " + clock(phaseSecs()),
-           { episodeId: S.episodeId, durationSecs: Math.round(phaseSecs()) });
+           { episodeId: S.episodeId, durationSecs: Math.round(phaseSecs()) },
+           S.episodeWho);
       S.episode -= 1;
       afterEpisode();
       break;
@@ -1681,7 +1789,8 @@ function dispatch(intent) {
       S.recordedSecs += S.pendingSecs || 0;
       emit("episode_saved", "episodes",
            "episode " + S.episode + " · " + clock(S.pendingSecs || 0) + " · scored " + score + "/5",
-           { episodeId: S.episodeId, durationSecs: Math.round(S.pendingSecs || 0), score: score });
+           { episodeId: S.episodeId, durationSecs: Math.round(S.pendingSecs || 0), score: score },
+           S.episodeWho);
       queueVideo(S.episodeId);
       S.pendingSecs = 0;
       afterEpisode();
@@ -1722,8 +1831,11 @@ function dispatch(intent) {
       break;
 
     case "end_session":
+      /* The session belongs to the operator who held the stint, so it
+         closes the one that was opened rather than opening a second one
+         under whoever the clock has moved on to. */
       emit("session_ended", "sessions", "operator ended session with the rig down",
-           { endedBy: "operator" });
+           { endedBy: "operator" }, S.stintWho);
       go("session_ended");
       break;
 
@@ -1746,16 +1858,26 @@ function rotate() {
      The data carries the four numbers it was made of, so the formula can
      be corrected in six months and every shift already filed recomputes
      correctly. A stored ratio cannot be. */
+  /* Filed under whoever held the rig for this stint, not whoever the
+     clock says is on now. rotate() runs *after* the boundary - that is
+     the whole point of handoverDue, which waits for a take to land -
+     so reading the clock here credited an operator's entire turn to
+     the person who relieved them. The sentence already named the right
+     person via outgoingOperator(); only the data was wrong, which is
+     the worst way round because nobody at the rig could see it. */
   emit("stint_ended", "rig_productivity_blocks",
        outgoingOperator() + " · " + S.episode + " episodes · " + pct(efficiency()) + " efficiency",
        { episodes: S.episode,
          recordedSecs: Math.round(S.recordedSecs),
          assignedSecs: Math.round(assignedSecs()),
          faultSecs: Math.round(S.faultSecs),
-         downSecs: Math.round(S.downSecs) });
+         downSecs: Math.round(S.downSecs) },
+       S.stintWho);
   S.stint += 1;
   S.stintAt = S.t;
   syncTurnKey();
+  // The next stint belongs to whoever has just come on.
+  S.stintWho = current();
   S.episode = 0;
   S.recordedSecs = 0;
   S.faultSecs = 0;
@@ -1764,6 +1886,101 @@ function rotate() {
   S.handoverDue = false;
   go("handover");
 }
+
+// ------------------------------------------------------ keeping in step
+
+/* A payload covers one shift. Without this the rig read its schedule
+   once at boot and never again, so at 16:00 the Morning payload it was
+   holding ran out, `whoIsOn()` found nothing, and it dropped to Standby
+   until somebody walked round and reloaded twelve browsers. Three times
+   a day.
+
+   Two triggers, and they are different questions:
+
+     the payload has run out   ask now, and keep asking
+     everything is fine        ask occasionally, so a manager who fixes
+                               a roster mid-shift reaches the floor
+   Two rules, both of which protect work in progress:
+
+     never swap during a take. The rig already refuses to cut a
+     recording at a turn boundary; a schedule arriving mid-episode is
+     the same situation, and swapping would file the take under whoever
+     the new payload says is on.
+
+     never let a new payload put a working rig on Standby. If what
+     arrives leaves this rig with no turn covering now - the groups were
+     restructured, this rig was dropped while somebody fixed something -
+     applying it would strand an operator on a dead screen mid-shift. A
+     stale schedule that works beats a fresh one that stops the rig. */
+
+const RESYNC_IDLE_MS = 300000;   // five minutes, when nothing is wrong
+const RESYNC_HUNGRY_MS = 20000;  // when the payload has run out
+let resyncTimer = null;
+let resyncing = false;
+
+function pushId(p) {
+  /* Payloads carry no version, so identity is the shift they describe
+     plus who is in it. Enough to tell "the same schedule again" from "a
+     corrected roster", which is all this needs. */
+  if (!p || !p.shift) return "";
+  return [p.rigId, p.shift.date, p.shift.label,
+          (p.turns || []).map((t) => t.from + ":" + (t.operator && t.operator.id)).join(",")
+         ].join("|");
+}
+
+async function resync() {
+  if (resyncing || !PAYLOAD) return;
+
+  // Rule one: not while a take is in flight.
+  if (S && (S.phase === "recording" || S.phase === "review")) return;
+
+  resyncing = true;
+  try {
+    const next = await loadPayload(RIG_ID);
+    if (!next || next.rigId !== RIG_ID) return;        // never another rig's
+    if (pushId(next) === pushId(PAYLOAD)) return;      // the same schedule
+
+    // Rule two: not if it would strand a working operator.
+    const working = S && S.phase !== "standby" && S.phase !== "session_ended";
+    const covers = RE.whoIsOn(next, nowMin());
+    if (working && !covers) {
+      emitLog("schedule_held", "sessions",
+              "a new schedule arrived that does not cover this rig now — keeping the current one");
+      return;
+    }
+
+    /* applyPayload only. boot() would reset the state machine, clear the
+       drawer log and file a fresh shift check - it is what the demo's
+       rig switcher calls, and wiring it here would wipe the screen under
+       somebody mid-shift. */
+    applyPayload(next);
+    syncTurnKey();
+    lastViewKey = null;
+    const who = current();
+    emitLog("schedule_updated", "sessions",
+            who ? "Schedule updated — " + who.turn.operator.name + " on this rig now"
+                : "Schedule updated — nothing scheduled on this rig yet");
+    if (who) toast("Schedule updated — " + who.turn.operator.name);
+  } catch (e) {
+    // The floor keeps working on the schedule it has.
+  } finally {
+    resyncing = false;
+  }
+}
+
+function startResync() {
+  if (resyncTimer) return;
+  const beat = async () => {
+    await resync();
+    // Hungry while the rig has nothing to do, patient once it has.
+    const hungry = !PAYLOAD || !current();
+    resyncTimer = setTimeout(beat, hungry ? RESYNC_HUNGRY_MS : RESYNC_IDLE_MS);
+  };
+  resyncTimer = setTimeout(beat, RESYNC_HUNGRY_MS);
+}
+
+/* For the tests: ask now rather than waiting on the timer. */
+window.rigResync = resync;
 
 // ----------------------------------------------------------------- clock
 
@@ -2188,8 +2405,13 @@ function uuid() {
   });
 }
 
-function envelope(event, bucket, data) {
-  const c = current();
+function envelope(event, bucket, data, who) {
+  /* `who` is the turn and operator captured when the thing being reported
+     actually began, for events that span time. Without it this reads the
+     clock, which is right for a point-in-time fact and wrong for a take:
+     a recording that runs past a turn boundary would be filed under the
+     operator who came on next, not the one who made it. */
+  const c = who || current();
   return {
     eventId: uuid(),
     seq: seq++,
@@ -2209,8 +2431,8 @@ function envelope(event, bucket, data) {
 /* `detail` is the sentence on the operator's drawer log and stays exactly
    as it was - it is for the person standing at the rig, not the database,
    and it is good. `data` is the parallel machine-readable half. */
-function emit(event, bucket, detail, data) {
-  const e = envelope(event, bucket, data);
+function emit(event, bucket, detail, data, who) {
+  const e = envelope(event, bucket, data, who);
   envelopes.push(e);
   // Held until the server acknowledges it. A rig with no network keeps
   // working and keeps filing; the outbox grows and drains later.
@@ -2919,6 +3141,7 @@ async function start(rigId) {
   }
   startUploader();
   startVideoUploader();
+  startResync();
 }
 
 /* Demo affordance: watch any rig on the floor. A real rig is only ever
