@@ -21,7 +21,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from core.infrastructure.config import get_settings
@@ -120,8 +120,14 @@ app.include_router(service.router)
 
 
 @app.get("/")
-async def root() -> RedirectResponse:
-    return RedirectResponse("/rotation-desk-v1/")
+async def root() -> FileResponse:
+    """The landing page, which is a real file at the top of the repo.
+
+    This used to redirect to the desk, so `index.html` was never served
+    by anything and nobody would have noticed it was broken until a
+    stranger opened the site.
+    """
+    return FileResponse(REPO / "index.html")
 
 
 # Mounted after the API, so nothing static can shadow a route.
