@@ -177,8 +177,51 @@ footer {
 
 <footer>
   <span>&copy; 2026 Verlet Robotics</span>
-  <span class="v-eyebrow">Morning 08:00 &middot; Day 16:00 &middot; Night 00:00</span>
+  <!-- Filled in below. Empty if the script does not run, because a wrong
+       shift on a wall is worse than no shift. -->
+  <span class="v-eyebrow" id="now"></span>
 </footer>
+
+<script src="packages/engine/rotation-engine.js"></script>
+<script>
+/* Which shift is running, right now.
+ *
+ * Read from the engine's own SHIFTS table rather than written out here.
+ * The times were hard-coded on this page and nowhere else was, which is
+ * exactly how a landing page ends up quietly disagreeing with the floor
+ * it describes. The desk and the rig read the same table.
+ */
+(function () {
+  var RE = window.RotationEngine;
+  var out = document.getElementById("now");
+  if (!RE || !RE.SHIFTS || !out) return;
+
+  var LEN = 480;   // every shift is eight hours
+
+  function current(mins) {
+    for (var i = 0; i < RE.SHIFTS.length; i++) {
+      var s = RE.SHIFTS[i];
+      if (mins >= s.start && mins < s.start + LEN) return s;
+    }
+    return null;
+  }
+
+  function tick() {
+    var d = new Date();
+    var mins = d.getHours() * 60 + d.getMinutes();
+    var s = current(mins);
+    if (!s) { out.textContent = ""; return; }
+
+    var left = s.start + LEN - mins;
+    var h = Math.floor(left / 60), m = left % 60;
+    out.textContent = s.label + " shift · "
+      + (h ? h + "h " + m + "m" : m + "m") + " left";
+  }
+
+  tick();
+  setInterval(tick, 30000);
+}());
+</script>
 
 </body>
 </html>
