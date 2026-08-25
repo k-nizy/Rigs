@@ -206,6 +206,54 @@ falls back to a co-located `schedule.json` (still supported for a plain
 static deploy), and finally generates locally so the demo runs even with
 no server.
 
+## Running a floor day to day
+
+A payload covers **one shift**, and a push covers **one calendar day** -
+midnight to midnight, three shifts, twelve rigs, thirty six sheets. So
+the rule for whoever is managing the floor is one line:
+
+> Push once a day. Any time that day. Push again whenever the roster
+> changes.
+
+Timing does not affect coverage: a push made at nine in the morning and
+one made at four in the afternoon both cover the whole of that day,
+including the hours already gone. What it does affect is content -
+whatever is on the desk when the button is pressed is what the floor
+runs, and it reaches every rig within thirty seconds.
+
+The part that catches people is that **a Night shift belongs to the date
+it starts on**. Night runs 00:00-08:00, so the night that *follows*
+Tuesday is not on Tuesday's sheet; it starts at 00:00 on Wednesday and
+lives on Wednesday's. A floor that is only ever pushed in the morning
+therefore has no schedule for the night crew who arrive at midnight.
+
+When that happens the rigs **stay put**. They show Standby and refuse to
+start a take. That is deliberate and it is the important decision in this
+whole area, so it is worth being explicit about why.
+
+`whoIsOn()` matches on the time of day and nothing else, which means an
+expired sheet still cheerfully names somebody at half past midnight - a
+different person, on a shift that ended a day earlier. A rig that
+believed it would file every take under the wrong operator, against the
+wrong shift, on the wrong day, and *nothing downstream could tell*: the
+episode is well formed, the operator exists, the score is real. So the
+rig checks the window the desk wrote before trusting the sheet, and
+stops when it does not cover now.
+
+The trade is deliberate. Standby costs idle time, which is loud, cheap
+and recoverable - a rig with nothing to run asks for a schedule every ten
+seconds, so it starts working seconds after somebody pushes. A misfiled
+take costs provenance, which is silent, permanent and poisons the
+training data. There is no correction mechanism in the ledger. Refuse
+rather than guess, which is the same instinct as rejecting a bad push in
+full and storing measurements rather than percentages.
+
+Because the floor depends on a person remembering, the desk has to be
+honest about it. When nothing it holds covers the current minute the Live
+badge reads **"Nothing scheduled for now"** in the warning colour rather
+than "On the floor", so the one screen a manager would check to find out
+cannot quietly reassure them.
+
 ## What the reference sheet does not ask for
 
 The sheet defines the scope. It does not speak to:
