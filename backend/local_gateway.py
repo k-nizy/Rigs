@@ -65,7 +65,8 @@ async def lifespan(_: FastAPI):
                             name="sweep_floor"),
         asyncio.create_task(drain_run(poll_secs=30.0, batch=50,
                                       exit_after_empty=0,
-                                      keep_days=get_settings().video_keep_days),
+                                      keep_days=get_settings().video_keep_days,
+                                      pending_days=get_settings().video_pending_after_days),
                             name="drain_to_archive"),
     ]
     log.info("workers running: %s", ", ".join(t.get_name() for t in tasks))

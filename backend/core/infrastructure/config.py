@@ -60,6 +60,16 @@ class Settings(BaseSettings):
     # answer ever changes back.
     video_keep_days: int = 90
 
+    # How long a camera may sit "pending" - the rig asked where to put a
+    # take and never delivered it - before the service stops waiting.
+    # Decided: 7 days. A weekend plus a rig away for repair.
+    #
+    # Nothing is deleted; the bytes were never here. It only stops a take
+    # nobody will ever send from sitting in the backlog that is supposed
+    # to say whether the spool is healthy. A late arrival heals itself,
+    # because confirm() does not care what the row said before.
+    video_pending_after_days: int = 7
+
     # The largest single video object the service will take through
     # itself. Only the gateway-upload model reads a body into memory, and
     # this is the ceiling on what one request can cost. A presigned PUT

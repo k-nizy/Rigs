@@ -128,6 +128,13 @@ climbing spool ends with a full disk, and that fails backwards - once the
 spool is full `confirm()` refuses, so twelve rigs correctly keep their
 own copies and the rig SSDs fill too.
 
+**A take not uploaded within 7 days stops being owed.**
+`VIDEO_PENDING_AFTER_DAYS=7`. Nothing is deleted - the bytes were never
+here - it just stops a take nobody will send from inflating the backlog.
+It shows as `missing` rather than vanishing, and a rig back from a
+workshop that uploads late heals its own rows, because `confirm()` does
+not care what the row said before.
+
 **Archived video is deleted after 90 days.** `VIDEO_KEEP_DAYS=90`, and
 that default is in `config.py`, not only in `.env`. Provision the cold
 tier for roughly **245 TB** - the steady state at this plan's sizing,

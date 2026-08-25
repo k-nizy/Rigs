@@ -176,6 +176,58 @@ async def mark_missing(session: AsyncSession, episode_id: str, why: str) -> None
     await session.commit()
 
 
+async def expire_pending(session: AsyncSession, after_days: int,
+                         limit: int = 500) -> int:
+    """Stop waiting for takes that are never coming. Returns how many.
+
+    A camera becomes `pending` when the rig asks where to put it. If the
+    upload never completes - the rig was replaced, its disk was wiped, it
+    went for repair and came back empty - that row waits for ever, and the
+    backlog it sits in is the number somebody is supposed to look at to
+    decide whether the spool is healthy. A backlog full of takes nobody
+    will ever send stops being a signal.
+
+    Seven days: long enough to cover a weekend plus a rig away being
+    fixed, short enough that the number still means something.
+
+    Being wrong here is cheap, and that is deliberate. Nothing is
+    deleted - the bytes were never here, they are on the rig - and this
+    only changes a label. If the take does turn up afterwards, `confirm()`
+    sets the row straight back to `on_prem` without caring what it said
+    before, so a rig returning from three weeks in a workshop uploads its
+    backlog and the rows heal themselves.
+
+    Measured from `received_at`, the server's own clock, for the same
+    reason the projection lag is: a rig with a wrong clock must not be
+    able to age its own rows out early or keep them alive for ever.
+    """
+    if after_days <= 0:
+        return 0
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=after_days)
+    rows = await session.execute(
+        select(EpisodeVideo)
+        .where(
+            EpisodeVideo.state == PENDING,
+            EpisodeVideo.received_at < cutoff,
+        )
+        .order_by(EpisodeVideo.received_at)
+        .limit(limit)
+    )
+    given_up = list(rows.scalars().all())
+    for row in given_up:
+        row.state = MISSING
+        # The key is where it would have gone. object_key() is
+        # deterministic, so a late arrival recomputes the same one.
+        row.key = None
+
+    if given_up:
+        await session.commit()
+        log.info("stopped waiting for %d takes not uploaded within %d days",
+                 len(given_up), after_days)
+    return len(given_up)
+
+
 # ---------------------------------------------------------------- drain
 
 def _archive_matches(row: EpisodeVideo, landed) -> bool:

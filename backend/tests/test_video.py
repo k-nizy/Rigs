@@ -23,6 +23,7 @@ from core.infrastructure.storage import (
 from core.workflows.video import (
     ARCHIVED, MISSING, ON_PREM, PENDING,
     EXPIRED, VideoError, backlog, confirm, drain_batch, expire_archive,
+    expire_pending,
     mark_missing, release_spool,
     where_to_put,
 )
@@ -613,6 +614,159 @@ async def test_the_backlog_says_what_the_spool_is_holding(client, session, store
         "the spool reports as full after everything in it was archived and freed"
     )
     assert after["spool"]["bytes"] == 0
+
+
+# --------------------------------------------------- giving up on a take
+#
+# A camera becomes `pending` when the rig asks where to put it. If the
+# upload never completes - rig replaced, disk wiped, sent for repair and
+# came back empty - that row waits for ever, in the backlog that is
+# supposed to say whether the spool is healthy. A backlog full of takes
+# nobody will ever send stops being a signal.
+#
+# Nothing is deleted. The bytes were never here; they are on the rig.
+# This changes a label, and the label heals itself if the take turns up.
+
+
+async def _asked_for(session, ep, camera="front", days_ago=0):
+    """A camera the rig asked where to put, `days_ago` days ago."""
+    await where_to_put(session, str(ep.episode_id), camera)
+    row = await cam(session, ep, camera)
+    row.received_at = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    await session.commit()
+    return row
+
+
+async def test_a_take_still_within_the_window_is_still_waited_for(client, session, store):
+    ep = await an_episode(session)
+    await _asked_for(session, ep, days_ago=6)
+
+    assert await expire_pending(session, after_days=7) == 0
+    assert (await cam(session, ep)).state == PENDING
+
+
+async def test_a_take_that_never_arrived_stops_being_owed(client, session, store):
+    ep = await an_episode(session)
+    await _asked_for(session, ep, days_ago=8)
+
+    assert await expire_pending(session, after_days=7) == 1
+    row = await cam(session, ep)
+    assert row.state == MISSING
+    assert row.key is None
+
+
+async def test_the_boundary_is_a_boundary(client, session, store):
+    """Seven days means seven days, not six and not eight."""
+    ep = await an_episode(session)
+    await _asked_for(session, ep, "front", days_ago=7.5)
+    await _asked_for(session, ep, "wrist-l", days_ago=6.5)
+
+    assert await expire_pending(session, after_days=7) == 1
+    assert (await cam(session, ep, "front")).state == MISSING
+    assert (await cam(session, ep, "wrist-l")).state == PENDING
+
+
+async def test_a_take_that_turns_up_late_heals_itself(client, session, store):
+    """The reason being wrong here is cheap, and the one that matters.
+
+    A rig back from three weeks in a workshop uploads its backlog. The
+    rows were given up on; confirm() does not care what they said before.
+    """
+    ep = await an_episode(session)
+    await _asked_for(session, ep, days_ago=30)
+    await expire_pending(session, after_days=7)
+    assert (await cam(session, ep)).state == MISSING
+
+    key = object_key(RIG, str(ep.episode_id), "front")
+    await store.put(key, VIDEO)
+    result = await confirm(session, str(ep.episode_id), "front",
+                           sha256_of(VIDEO), len(VIDEO))
+
+    assert result["safeToDelete"] is True, "a rig was refused its own late take"
+    row = await cam(session, ep)
+    assert row.state == ON_PREM
+    assert row.key == key, "the key has to come back, and object_key is deterministic"
+    assert row.bytes == len(VIDEO)
+
+
+async def test_a_healed_take_drains_and_frees_like_any_other(client, session, store):
+    """All the way through, not just back to on_prem."""
+    ep = await an_episode(session)
+    await _asked_for(session, ep, days_ago=30)
+    await expire_pending(session, after_days=7)
+
+    key = object_key(RIG, str(ep.episode_id), "front")
+    await store.put(key, VIDEO)
+    await confirm(session, str(ep.episode_id), "front", sha256_of(VIDEO), len(VIDEO))
+
+    count, _ = await drain_batch(session)
+    assert count == 1
+    row = await cam(session, ep)
+    assert row.state == ARCHIVED and row.freed_at is not None
+    assert await store.head(key) is None
+
+
+async def test_nothing_that_arrived_is_ever_given_up_on(client, session, store):
+    """However old. on_prem, archived and expired are not waiting on
+    anything, so age is not a reason to relabel them."""
+    ep, key = await _landed(session, store)
+    row = await cam(session, ep)
+    row.received_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    await session.commit()
+
+    assert await expire_pending(session, after_days=7) == 0
+    assert (await cam(session, ep)).state == ON_PREM
+
+    await drain_batch(session)
+    assert await expire_pending(session, after_days=7) == 0
+    assert (await cam(session, ep)).state == ARCHIVED
+
+
+async def test_zero_waits_for_ever(client, session, store):
+    """The way back, same as retention."""
+    ep = await an_episode(session)
+    await _asked_for(session, ep, days_ago=400)
+
+    assert await expire_pending(session, after_days=0) == 0
+    assert (await cam(session, ep)).state == PENDING
+
+
+async def test_it_stops_inflating_the_backlog(client, session, store):
+    """The whole point. `pending` has to mean something somebody is
+    actually waiting for, or the number is not worth reading."""
+    ep = await an_episode(session)
+    for c in ("front", "wrist-l", "overhead"):
+        await _asked_for(session, ep, c, days_ago=9)
+
+    assert (await backlog(session))["byState"][PENDING]["cameras"] == 3
+
+    await expire_pending(session, after_days=7)
+
+    after = await backlog(session)
+    assert PENDING not in after["byState"], "a take nobody will send is still owed"
+    assert after["byState"][MISSING]["cameras"] == 3, (
+        "it has to still be visible - given up on is not the same as never happened"
+    )
+
+
+async def test_the_limit_is_respected(client, session, store):
+    """A floor coming back from a long outage should not be one enormous
+    transaction."""
+    ep = await an_episode(session)
+    for c in ("front", "wrist-l", "overhead"):
+        await _asked_for(session, ep, c, days_ago=9)
+
+    assert await expire_pending(session, after_days=7, limit=2) == 2
+    assert await expire_pending(session, after_days=7, limit=2) == 1
+    assert await expire_pending(session, after_days=7, limit=2) == 0
+
+
+def test_the_window_is_seven_days_and_lives_in_the_code():
+    """Decided, and pinned. Same reasoning as the retention policy: .env
+    does not travel into the platform team's tree."""
+    from core.infrastructure.config import Settings
+
+    assert Settings.model_fields["video_pending_after_days"].default == 7
 
 
 # -------------------------------------------------------- the retention

@@ -13,14 +13,14 @@ import asyncio
 import logging
 
 from core.infrastructure.database import sessionmaker
-from core.workflows.video import drain_batch, expire_archive
+from core.workflows.video import drain_batch, expire_archive, expire_pending
 from workers._signals import install_signal_handlers, is_shutdown_requested
 
 log = logging.getLogger("drain_to_archive")
 
 
 async def run(poll_secs: float, batch: int, exit_after_empty: int,
-              keep_days: int = 0) -> int:
+              keep_days: int = 0, pending_days: int = 0) -> int:
     maker = sessionmaker()
     empty = total = attempt = 0
     backoff_base = 2
@@ -33,6 +33,12 @@ async def run(poll_secs: float, batch: int, exit_after_empty: int,
                 # worker: they are the two ends of one lifecycle and the
                 # cadence that suits one suits the other. Does nothing at
                 # all unless a policy has been set.
+                # Takes the rig asked to upload and never delivered. Not
+                # a deletion - the bytes were never here - just the
+                # service no longer counting them as owed.
+                if pending_days > 0:
+                    await expire_pending(session, after_days=pending_days)
+
                 if keep_days > 0:
                     gone, gone_bytes = await expire_archive(
                         session, keep_days=keep_days, limit=batch)
@@ -71,6 +77,8 @@ def main() -> None:
     p.add_argument("--poll-secs", type=float, default=5.0)
     p.add_argument("--batch", type=int, default=50)
     p.add_argument("--exit-after-empty", type=int, default=0)
+    p.add_argument("--pending-days", type=int, default=s.video_pending_after_days,
+                   help="stop waiting for uploads older than this; 0 waits for ever")
     p.add_argument("--keep-days", type=int, default=s.video_keep_days,
                    help="delete archived video older than this; 0 keeps it for ever")
     p.add_argument("--log-level", default="INFO")
@@ -82,7 +90,7 @@ def main() -> None:
     )
     install_signal_handlers()
     asyncio.run(run(args.poll_secs, args.batch, args.exit_after_empty,
-                    args.keep_days))
+                    args.keep_days, args.pending_days))
 
 
 if __name__ == "__main__":
