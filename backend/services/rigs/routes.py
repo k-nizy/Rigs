@@ -23,7 +23,9 @@ from core.domains.schedules.repository import ScheduleRepository
 from core.infrastructure.config import Settings, get_settings
 from core.infrastructure.database import get_session
 from core.workflows.floor import floor_state, operator_efficiency
-from services.rigs.auth import desk_auth, rig_auth, rig_auth_for_key
+from services.rigs.auth import (
+    desk_auth, desk_read_auth, rig_auth, rig_auth_for_key, rig_rate_limit,
+)
 from core.infrastructure.storage import Storage, get_storage
 from core.workflows.video import VideoError, backlog, confirm, where_to_put
 
@@ -47,7 +49,7 @@ class HeartbeatOut(BaseModel):
 
 
 @router.get("/rigs/{rig_id}/cursor", response_model=CursorOut, tags=["ingest"],
-            dependencies=[Depends(rig_auth)],
+            dependencies=[Depends(rig_auth), Depends(rig_rate_limit)],
             summary="How far this rig's events have been accepted")
 async def cursor(rig_id: str, session: AsyncSession = Depends(get_session)) -> CursorOut:
     """The highest seq held for this rig, or -1 if none. The uploader asks
@@ -56,7 +58,7 @@ async def cursor(rig_id: str, session: AsyncSession = Depends(get_session)) -> C
 
 
 @router.post("/rigs/{rig_id}/events", response_model=IngestResult, tags=["ingest"],
-             dependencies=[Depends(rig_auth)],
+             dependencies=[Depends(rig_auth), Depends(rig_rate_limit)],
              summary="File a batch of events. Safe to send twice")
 async def ingest(
     rig_id: str, batch: EventBatch, session: AsyncSession = Depends(get_session)
@@ -117,7 +119,7 @@ async def ingest(
 
 
 @router.post("/rigs/{rig_id}/heartbeat", response_model=HeartbeatOut, tags=["ingest"],
-             dependencies=[Depends(rig_auth)],
+             dependencies=[Depends(rig_auth), Depends(rig_rate_limit)],
              summary="Say the rig is alive, and learn how far its clock has drifted")
 async def heartbeat(
     rig_id: str, beat: HeartbeatIn, session: AsyncSession = Depends(get_session)
@@ -139,7 +141,7 @@ async def heartbeat(
 
 
 @router.get("/rigs/{rig_id}/schedule", tags=["schedules"],
-            dependencies=[Depends(rig_auth)],
+            dependencies=[Depends(rig_auth), Depends(rig_rate_limit)],
             summary="The schedule currently in force for this rig")
 async def schedule(rig_id: str, session: AsyncSession = Depends(get_session)) -> dict:
     """The payload this rig was pushed, returned verbatim. Stored opaque,
@@ -161,7 +163,7 @@ async def schedule(rig_id: str, session: AsyncSession = Depends(get_session)) ->
 
 
 @router.get("/rigs/{rig_id}/schedule.json", tags=["schedules"],
-            dependencies=[Depends(rig_auth)],
+            dependencies=[Depends(rig_auth), Depends(rig_rate_limit)],
             summary="The same schedule, at the path the rig already fetches")
 async def schedule_json(
     rig_id: str, session: AsyncSession = Depends(get_session)
@@ -190,7 +192,7 @@ class ConfirmIn(BaseModel):
 
 
 @router.post("/rigs/{rig_id}/episodes/{episode_id}/video:presign", tags=["video"],
-             dependencies=[Depends(rig_auth)],
+             dependencies=[Depends(rig_auth), Depends(rig_rate_limit)],
              summary="Ask where to put one camera's video")
 async def video_presign(
     rig_id: str, episode_id: str, body: PresignIn,
@@ -209,7 +211,7 @@ async def video_presign(
 
 
 @router.post("/rigs/{rig_id}/episodes/{episode_id}/video:complete", tags=["video"],
-             dependencies=[Depends(rig_auth)],
+             dependencies=[Depends(rig_auth), Depends(rig_rate_limit)],
              summary="Confirm what landed. Only a yes here releases the rig's copy")
 async def video_complete(
     rig_id: str, episode_id: str, body: ConfirmIn,
@@ -290,6 +292,7 @@ async def storage_put(
 
 
 @router.get("/floor/video", tags=["video"],
+            dependencies=[Depends(desk_read_auth)],
             summary="What video is waiting, and what a real episode actually costs")
 async def video_backlog(session: AsyncSession = Depends(get_session)) -> dict:
     """What is waiting to reach the archive, and what a video actually
@@ -309,15 +312,25 @@ async def health(
     reading it would have kept sending a broken instance traffic. It runs
     a real query now, and says 503 when that fails.
 
-    It also reports whether auth is configured. A service that is quietly
-    unauthenticated looks exactly like a correctly configured one until
-    the day it does not, so this is something a deploy check can fail on.
+    It also reports every cross-cutting thing that can be off: rig auth,
+    desk auth, whether floor reads are protected, and the rate limit. A
+    service that is quietly open looks exactly like a correctly
+    configured one until the day it does not, so all of it is something a
+    deploy check can fail on rather than something to remember.
     """
     body = {
         "ok": True,
         "database": s.safe_url(),
         "rigAuth": "on" if s.auth_is_on else "off",
         "deskAuth": "on" if s.desk_token else "off",
+        # Reading the floor and writing to it are separate questions, so
+        # a deploy check can tell which of them is actually closed.
+        "floorReads": (
+            "protected" if (s.protect_floor_reads and s.desk_token) else "open"
+        ),
+        "rigRateLimit": (
+            f"{s.rig_rate_limit_per_min}/min" if s.rig_rate_limit_per_min else "off"
+        ),
     }
     try:
         await session.execute(text("SELECT 1"))
@@ -402,6 +415,7 @@ async def push_alias(body: PushIn, session: AsyncSession = Depends(get_session))
 
 
 @router.get("/state", tags=["schedules"],
+            dependencies=[Depends(desk_read_auth)],
             summary="What the floor is currently running, as the desk asks for it")
 async def state(session: AsyncSession = Depends(get_session)) -> dict:
     """What the floor is currently running, as the desk asks for it.
@@ -429,6 +443,7 @@ async def state(session: AsyncSession = Depends(get_session)) -> dict:
 
 
 @router.get("/floor/state", tags=["floor"],
+            dependencies=[Depends(desk_read_auth)],
             summary="The desk's live board: who is on, what is open, what is quiet")
 async def floor(session: AsyncSession = Depends(get_session)) -> dict:
     """The Live board: every rig, who is on it, when it was last heard
@@ -436,7 +451,9 @@ async def floor(session: AsyncSession = Depends(get_session)) -> dict:
     return await floor_state(session)
 
 
-@router.get("/floor/alerts", tags=["floor"], summary="What is open against the floor")
+@router.get("/floor/alerts", tags=["floor"],
+            dependencies=[Depends(desk_read_auth)],
+            summary="What is open against the floor")
 async def alerts(session: AsyncSession = Depends(get_session)) -> dict:
     """Everything currently wrong on the floor.
 
@@ -456,6 +473,7 @@ async def alerts(session: AsyncSession = Depends(get_session)) -> dict:
 
 
 @router.get("/floor/efficiency", tags=["floor"],
+            dependencies=[Depends(desk_read_auth)],
             summary="Efficiency per operator for one shift, computed at read time")
 async def efficiency_for_shift(
     shift_date: date, shift_label: str, session: AsyncSession = Depends(get_session)

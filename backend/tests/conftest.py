@@ -17,9 +17,23 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from core.base.model import Base  # noqa: E402
+
+# Every domain, imported for the side effect of registering its table on
+# Base.metadata. All of them, not the two this file happens to use: a
+# subset left `create_all` building a schema with a foreign key pointing
+# at a table that was not there, so running one test file on its own
+# failed while the whole suite passed - because some other module had
+# imported the missing model first. The same list as alembic/env.py.
+from core.domains.alerts import model as _alerts  # noqa: E402,F401
 from core.domains.episode_videos import model as _episode_videos  # noqa: E402,F401
+from core.domains.episodes import model as _episodes  # noqa: E402,F401
+from core.domains.rig_downtime_events import model as _downtime  # noqa: E402,F401
 from core.domains.rig_events import model as _rig_events  # noqa: E402,F401
+from core.domains.rig_productivity_blocks import model as _blocks  # noqa: E402,F401
+from core.domains.rig_shift_checks import model as _checks  # noqa: E402,F401
+from core.domains.rig_status import model as _status  # noqa: E402,F401
 from core.domains.schedules import model as _schedules  # noqa: E402,F401
+from core.domains.sessions import model as _sessions  # noqa: E402,F401
 from core.infrastructure import database  # noqa: E402
 from core.infrastructure.config import get_settings  # noqa: E402
 

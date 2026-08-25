@@ -96,6 +96,24 @@ class Settings(BaseSettings):
     # schedule push needs it. Unset, pushes are open and startup says so.
     desk_token: str = ""
 
+    # Requests per minute per rig on the rig-facing routes. 0 is off,
+    # and off is the default because the platform team's gateway may
+    # already own this - two limiters disagreeing is worse than one.
+    #
+    # A ceiling, not a target: the floor's sustained rate is about 0.01
+    # requests per second per rig. What this is sized for is a rig coming
+    # back from an outage and emptying its outbox, which is correct
+    # behaviour and must not be punished. Being refused is safe - the rig
+    # keeps the events, backs off, and ingest dedupes the retry.
+    rig_rate_limit_per_min: int = 0
+
+    # Whether reading the floor needs the desk token as well as writing to
+    # it. Off by default: /floor/state is what a wall display shows and
+    # what the desk polls, and making it need a secret is a product
+    # decision rather than a security default. Writes are gated by
+    # desk_token on their own.
+    protect_floor_reads: bool = False
+
     # SQLAlchemy pool. The default of 5 is sized for one process serving
     # requests; this service also runs three workers that each hold a
     # session while they work.

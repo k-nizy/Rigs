@@ -99,10 +99,20 @@ Four things this service does that a deployment has to get right.
 **Auth is off until it is configured.** `RIG_TOKENS` is a token per rig,
 placed by Ansible. Unset, any caller may file events for any rig - right
 for a laptop demo, wrong for a floor. It is not silent: startup logs it
-and `/api/health` answers `{"rigAuth": "off"}`, which is what a deploy
-check should fail on. Never share one token across rigs; a token names a
+and `/api/health` answers `{"rigAuth": "off"}`. It reports all four
+switches - `rigAuth`, `deskAuth`, `floorReads`, `rigRateLimit` - so a
+deploy check can fail on any of them rather than somebody remembering. Never share one token across rigs; a token names a
 rig, and one that speaks for all twelve is one compromised machine away
 from unattributable work.
+
+**Rate limiting and floor-read auth are off until configured.**
+`RIG_RATE_LIMIT_PER_MIN` and `PROTECT_FLOOR_READS`, both off, because the
+platform team's gateway may already own them and two implementations
+disagreeing is worse than one. If nothing is in front of this, turn them
+on. Being rate-limited cannot lose an event - the rig keeps them, backs
+off, and ingest dedupes the retry - which is what makes a limiter safe
+here at all. It is in-process, so N instances allow N times the limit;
+exactly-right limiting across instances is a gateway's job.
 
 **`/api/health` is a real check.** It runs a query and answers 503 when
 the database is unreachable, so a load balancer will take a broken

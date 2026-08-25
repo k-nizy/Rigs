@@ -27,9 +27,10 @@ from __future__ import annotations
 import hmac
 import logging
 
-from fastapi import Depends, Header, HTTPException, Path
+from fastapi import Depends, Header, HTTPException, Path, Response
 
 from core.infrastructure.config import Settings, get_settings
+from services.rigs.ratelimit import RateLimiter
 
 log = logging.getLogger("rigs.auth")
 
@@ -119,6 +120,72 @@ async def desk_auth(
         raise HTTPException(status_code=401, detail="the desk is not authorised")
 
 
+# One limiter for the process. Built lazily so a test can hand the app
+# different settings and get a limiter sized to them.
+_limiter: RateLimiter | None = None
+
+
+def limiter(settings: Settings) -> RateLimiter:
+    global _limiter
+    if _limiter is None or _limiter.per_minute != settings.rig_rate_limit_per_min:
+        _limiter = RateLimiter(per_minute=settings.rig_rate_limit_per_min)
+    return _limiter
+
+
+def reset_limiter() -> None:
+    """Tests call this. Nothing in the request path does."""
+    global _limiter
+    _limiter = None
+
+
+async def rig_rate_limit(
+    response: Response,
+    rig_id: str = Path(...),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """A ceiling per rig, applied after auth so the key is a rig somebody
+    owns rather than one a stranger named.
+
+    Refusing is safe: the rig keeps its events, backs off, and ingest
+    dedupes the retry, so nothing is lost by being told to wait. That is
+    the property that makes a limiter appropriate here at all.
+    """
+    wait = limiter(settings).allow(rig_id)
+    if wait <= 0:
+        return
+    # A 429 with no idea when to come back invites the tight retry loop
+    # the limit exists to stop.
+    raise HTTPException(
+        status_code=429,
+        detail=f"{rig_id} is over its rate limit",
+        headers={"Retry-After": str(max(1, int(wait + 0.5)))},
+    )
+
+
+async def desk_read_auth(
+    authorization: str | None = Header(default=None),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Reading the floor.
+
+    A separate switch from writing to it, because they are separate
+    questions. `/floor/state` is what a wall display shows and what the
+    desk polls; requiring a secret for it is a product decision, not a
+    security default. Pushing a schedule changes what twelve rigs do, and
+    that is gated by `desk_token` on its own.
+
+    With no desk token set there is nothing to check against, so this
+    stays open rather than locking everyone out of a board with a secret
+    nobody was given.
+    """
+    if not settings.protect_floor_reads or not settings.desk_token:
+        return
+    presented = _presented(authorization)
+    if presented is None or not hmac.compare_digest(presented, settings.desk_token):
+        log.warning("refused a floor read: no valid desk token")
+        raise HTTPException(status_code=401, detail="the desk is not authorised")
+
+
 def announce(settings: Settings) -> None:
     """Say what is open, at startup, where somebody will see it.
 
@@ -133,6 +200,13 @@ def announce(settings: Settings) -> None:
             "Set RIG_TOKENS before this reaches a floor."
         )
     if settings.desk_token:
-        log.info("desk auth: on")
+        log.info("desk auth: on (writes%s)",
+                 ", reads" if settings.protect_floor_reads else "")
     else:
         log.warning("desk auth: OFF - anyone who can reach this may push a schedule.")
+
+    if settings.rig_rate_limit_per_min > 0:
+        log.info("rig rate limit: %d requests/min per rig",
+                 settings.rig_rate_limit_per_min)
+    else:
+        log.warning("rig rate limit: OFF - one rig in a retry loop is unbounded.")
