@@ -1996,8 +1996,21 @@ function tick(now) {
      leave `last` alone so the first real frame starts from a standstill. */
   if (!S) { requestAnimationFrame(tick); return; }
   if (last === null) last = now;
-  const dt = Math.min(0.25, (now - last) / 1000) * speed;
+  const real = (now - last) / 1000;
   last = now;
+
+  /* At 1x the rig's clock IS the wall clock, so a frame gap counts in
+     full. It used to be capped at a quarter second whatever the speed,
+     which meant every stall longer than that was silently dropped: a
+     three-second take could be filed as zero seconds long, and a stint
+     could report less time than it was actually given.
+     
+     Efficiency survived that, because it divides two numbers that both
+     came from this clock and the loss cancelled. Durations did not.
+     
+     The cap belongs to the demo and only the demo. At 30x, one frame
+     after a backgrounded tab would otherwise leap half an hour. */
+  const dt = speed === 1 ? real : Math.min(0.25, real) * speed;
 
   if (S.phase !== "session_ended") {
     S.t += dt;

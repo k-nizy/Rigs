@@ -215,3 +215,99 @@ test("work already filed keeps the operator it was recorded under",
     assert.equal(after.operatorId, before.operatorId,
       "a schedule correction rewrote who recorded a take that was already filed");
   }));
+
+/* ------------------------------------------- the point of the whole thing
+
+   A manager changes who is on a rig and presses push. The rig picks it up
+   on its own within five minutes. From that moment the person actually
+   sitting there is the person the schedule now names - so every take they
+   record has to be filed under THEM, and land in the backend under them.
+
+   Everything above tests what the rig refuses to do. This tests what it is
+   FOR. Nothing asserted it until now: the tests checked that the new name
+   reached the screen, and that already-filed work was left alone, but not
+   that the next take actually belongs to the new operator. */
+
+test("after a correction, the next take is filed under the new operator",
+  withRig({ search: "?demo" }, async (rig) => {
+    const server = serving(payloadFor("RIG-03"));
+    await rig.settle();
+
+    // One take under the roster as originally pushed.
+    rig.press(2); rig.frames(1);
+    rig.press(2); rig.frames(4);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);
+    const before = rig.eventsOf("episode_saved")[0];
+    assert.ok(before, "no take was filed before the correction");
+    assert.notEqual(before.operatorId, "op-zz", "sanity: the roster starts uncorrected");
+
+    // The desk corrects the roster; the rig picks it up without a reload.
+    server.payload = renamed(server.payload, "Corrected Person");
+    await rig.resync();
+
+    // Back into a take.
+    for (let i = 0; i < 5 && rig.screen() !== "recording"; i++) { rig.press(2); rig.frames(3); }
+    assert.equal(rig.screen(), "recording", "could not start a second take");
+    rig.frames(10);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);
+
+    const takes = rig.eventsOf("episode_saved");
+    assert.equal(takes.length, 2, "expected a second take after the correction");
+    assert.equal(takes[1].operatorId, "op-zz",
+      "the new take was filed under " + takes[1].operatorId + ", but the corrected "
+      + "schedule says op-zz is the one on this rig");
+    assert.equal(takes[0].operatorId, before.operatorId,
+      "the correction reached back and rewrote a take that was already filed");
+  }));
+
+test("the new operator owns the stint, and the numbers that go with it",
+  withRig({ search: "?demo" }, async (rig) => {
+    /* Efficiency is computed per operator from four seconds columns. If the
+       stint is filed against the wrong person both operators are wrong: one
+       loses credit, the other gains work they never did. */
+    const server = serving(payloadFor("RIG-03"));
+    await rig.settle();
+
+    server.payload = renamed(server.payload, "Corrected Person");
+    await rig.resync();
+
+    for (let i = 0; i < 5 && rig.screen() !== "recording"; i++) { rig.press(2); rig.frames(3); }
+    assert.equal(rig.screen(), "recording", "could not start a take");
+    rig.frames(10);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);
+
+    for (const e of rig.eventsOf("episode_saved")) {
+      assert.equal(e.operatorId, "op-zz", "a take escaped the correction");
+      assert.ok(e.data.episodeId, "a take with no id cannot be joined to its video");
+    }
+  }));
+
+test("what the backend receives names the new operator too",
+  withRig({ search: "?demo" }, async (rig) => {
+    /* The rig can be right on screen and wrong in the envelope - that was
+       exactly the stint bug. So this asserts the thing that is actually
+       uploaded, not the thing that is displayed. */
+    const server = serving(payloadFor("RIG-03"));
+    await rig.settle();
+
+    server.payload = renamed(server.payload, "Corrected Person");
+    await rig.resync();
+
+    for (let i = 0; i < 5 && rig.screen() !== "recording"; i++) { rig.press(2); rig.frames(3); }
+    assert.equal(rig.screen(), "recording", "could not start a take");
+    rig.frames(10);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);
+
+    const filed = rig.events().filter(e => e.bucket === "episodes");
+    assert.ok(filed.length, "nothing was filed for upload");
+    for (const e of filed) {
+      assert.equal(e.operatorId, "op-zz",
+        "the envelope bound for the backend still names " + e.operatorId);
+      assert.ok(e.rigId && e.shiftDate && e.shiftLabel && e.turnFrom,
+        "an episode reached the upload queue without enough to file it against");
+    }
+  }));
