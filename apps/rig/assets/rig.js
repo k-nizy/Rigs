@@ -944,6 +944,20 @@ window.rigEvents = () => envelopes.slice();
 
 const RIG_TOKEN = (typeof window !== "undefined" && window.RIG_TOKEN) || "";
 
+/* Which rig this machine is.
+ *
+ * Ansible writes `rig-config.js` beside this file, per machine, from the
+ * same source as /etc/rig/id. Without it every rig boots as the default
+ * and asks the server for RIG-03's schedule - twelve machines that all
+ * believe they are the same one, filing every episode under one rig id
+ * and uploading video into one prefix. There is nothing downstream that
+ * could detect that, because from the server's side it is exactly what
+ * one very busy rig looks like.
+ *
+ * Not a URL parameter. The token travels with it, and tokens in URLs end
+ * up in access logs, browser history and referrer headers. */
+const CONFIGURED_RIG = (typeof window !== "undefined" && window.RIG_ID) || null;
+
 function ours(url) {
   const u = String(url);
   if (u.startsWith("/")) return true;                    // rooted at us
@@ -1622,5 +1636,5 @@ window.setLiveClock = function (on) {
   toast(on ? "Following the wall clock" : "Demo clock");
 };
 
-start();
+start(CONFIGURED_RIG);
 requestAnimationFrame(tick);

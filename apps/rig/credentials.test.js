@@ -160,3 +160,68 @@ test("the gateway upload model does carry it, because that one is ours",
     assert.ok(puts.every((c) => c.auth === "Bearer " + TOKEN),
       "an upload to our own service went out unauthenticated");
   }));
+
+
+/* =====================================================================
+ * which rig this machine is
+ *
+ * `start()` used to be called with no argument, so every rig fell back to
+ * the default and asked the server for RIG-03's schedule. Twelve machines
+ * all believing they were the same one, filing every episode under one
+ * rig id and uploading video into one prefix.
+ *
+ * Nothing downstream could have caught it. From the server's side twelve
+ * rigs reporting as RIG-03 is indistinguishable from one very busy rig -
+ * the events are well-formed, the schedule is real, the cursor advances.
+ * It would have been found by a manager asking why eleven rigs looked
+ * idle, which is a bad way to find it.
+ * ===================================================================== */
+
+test("a machine with no config asks for nothing in particular",
+  withRig({ search: "?demo" }, async (rig) => {
+    const seen = recording();
+    await rig.settle();
+    assert.equal(rig.journal().durable, false);
+  }));
+
+test("a configured machine asks the server for its own schedule",
+  withRig({ search: "?demo", rigId: "RIG-07" }, async (rig) => {
+    const asked = [];
+    global.fetch = async (url) => {
+      const u = String(url);
+      asked.push(u);
+      if (u.includes("/cursor")) return { ok: true, json: async () => ({ seq: 0 }) };
+      throw new Error("no server");
+    };
+    await global.switchRig("RIG-07");
+    assert.ok(asked.some((u) => u.includes("/rigs/RIG-07/schedule")),
+      "asked for: " + asked.join(", "));
+  }));
+
+test("two machines do not both believe they are the same rig", async () => {
+  /* The actual defect, written as the thing a floor would see. */
+  const seenBy = {};
+
+  for (const id of ["RIG-05", "RIG-09"]) {
+    const asked = [];
+    const rig = await mountRig({
+      search: "?demo", rigId: id, settle: false,
+      fetchImpl: async (url) => {
+        asked.push(String(url));
+        if (String(url).includes("/cursor")) return { ok: true, json: async () => ({ seq: 0 }) };
+        throw new Error("no server");
+      },
+    });
+    try {
+      await rig.settle();
+      seenBy[id] = asked.filter((u) => u.includes("/schedule"));
+    } finally { rig.stop(); }
+  }
+
+  assert.ok(seenBy["RIG-05"].some((u) => u.includes("RIG-05")),
+    "RIG-05 asked for: " + seenBy["RIG-05"].join(", "));
+  assert.ok(seenBy["RIG-09"].some((u) => u.includes("RIG-09")),
+    "RIG-09 asked for: " + seenBy["RIG-09"].join(", "));
+  assert.ok(!seenBy["RIG-09"].some((u) => u.includes("RIG-05")),
+    "one machine asked for another machine's schedule");
+});

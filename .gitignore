@@ -29,3 +29,9 @@ backend/.minio-data/
 # local dev server logs
 backend/.gateway.log
 backend/.gateway.err
+
+# transient uvicorn logs from a production-entrypoint smoke test
+backend/.prod.log
+backend/.prod.err
+# minted per-rig secrets, if anyone runs mint_tokens --out here
+rig-secrets/

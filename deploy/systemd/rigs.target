@@ -1,0 +1,16 @@
+# The whole service: the API and its three workers.
+#
+#   systemctl start rigs.target     # all four
+#   systemctl status rigs-*         # what each is doing
+#
+# Grouped so the workers cannot be forgotten. They are separate processes
+# on purpose - a worker that dies must not take the API with it, and the
+# API restarting must not lose a worker's place. `local_gateway.py` runs
+# them in-process for development and does not lift; this is the shape
+# that does.
+[Unit]
+Description=Rigs - service and workers
+Wants=rigs-api.service rigs-project.service rigs-sweep.service rigs-drain.service
+
+[Install]
+WantedBy=multi-user.target

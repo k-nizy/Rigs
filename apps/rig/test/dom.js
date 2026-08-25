@@ -258,6 +258,8 @@ async function mountRig(opts) {
   global.RIG_JOURNAL = opts.journal || undefined;
   /* The token Ansible places on the machine. */
   global.RIG_TOKEN = opts.token || undefined;
+  /* What Ansible writes into rig-config.js on each machine. */
+  global.RIG_ID = opts.rigId || undefined;
 
   const errors = [];
   new Function(fs.readFileSync(path.join(ROOT, "assets/rig.js"), "utf8"))();

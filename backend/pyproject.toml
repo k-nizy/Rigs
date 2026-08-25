@@ -30,5 +30,14 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
-[tool.setuptools]
-packages = ["core", "services"]
+[tool.setuptools.packages.find]
+# `workers` and `tools` belong here, not only `core` and `services`. The
+# workers are the production processes - systemd runs `python -m
+# workers.project_events` - and `tools.preflight` is the API unit's
+# ExecStartPre. Left out, they imported only because `python -m` puts the
+# working directory on sys.path, so the deployment worked by accident and
+# would have broken the first time anything ran from another directory.
+#
+# `find` rather than a list, so a new domain under core/ does not have to
+# be remembered here as well as in alembic/env.py and conftest.py.
+include = ["core*", "services*", "workers*", "tools*"]
