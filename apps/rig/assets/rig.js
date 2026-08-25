@@ -93,6 +93,8 @@ function boot(screen) {
     stintAt: 0,         // shift seconds when this operator took the rig
     episode: 0,
     episodeId: null,   // minted at start_episode, names the video too
+    episodeWho: null,  // the turn and operator that pressed start
+    stintWho: null,    // whose stint this is, captured when it began
     recordedSecs: 0,
     faultSecs: 0,
     downSecs: 0,
@@ -110,6 +112,11 @@ function boot(screen) {
   lastViewKey = null;
   lastPedalKey = null;
   holding = null;
+  /* The first stint of this boot belongs to whoever is on the rig now.
+     Captured for the same reason an episode is: a stint is a span of
+     time, and it is filed at the end of that span, by which point the
+     clock may already have moved on to the next operator. */
+  S.stintWho = current();
   emit("shift_check", "rig_shift_checks", "shift started, checklist raised",
        { outcome: "raised" });
   /* Only a screen the app actually has. An unrecognised hash used to
@@ -360,12 +367,20 @@ function dispatch(intent) {
          take. No lookup table, no reconciliation, and an id that exists
          even for a take the recorder failed to start. */
       S.episodeId = uuid();
+      /* Who is making this take, captured now rather than looked up when
+         it is saved. A take may run past a turn boundary - the rig
+         deliberately never cuts a recording - and the operator who
+         pressed this pedal is the one who did the work. Read at save
+         time instead, the take would be filed under whoever came on
+         next, and nothing downstream could tell. */
+      S.episodeWho = current();
       go("recording");
       break;
 
     case "discard":
       emit("episode_discarded", "episodes", "episode " + S.episode + " discarded after " + clock(phaseSecs()),
-           { episodeId: S.episodeId, durationSecs: Math.round(phaseSecs()) });
+           { episodeId: S.episodeId, durationSecs: Math.round(phaseSecs()) },
+           S.episodeWho);
       S.episode -= 1;
       afterEpisode();
       break;
@@ -380,7 +395,8 @@ function dispatch(intent) {
       S.recordedSecs += S.pendingSecs || 0;
       emit("episode_saved", "episodes",
            "episode " + S.episode + " · " + clock(S.pendingSecs || 0) + " · scored " + score + "/5",
-           { episodeId: S.episodeId, durationSecs: Math.round(S.pendingSecs || 0), score: score });
+           { episodeId: S.episodeId, durationSecs: Math.round(S.pendingSecs || 0), score: score },
+           S.episodeWho);
       queueVideo(S.episodeId);
       S.pendingSecs = 0;
       afterEpisode();
@@ -421,8 +437,11 @@ function dispatch(intent) {
       break;
 
     case "end_session":
+      /* The session belongs to the operator who held the stint, so it
+         closes the one that was opened rather than opening a second one
+         under whoever the clock has moved on to. */
       emit("session_ended", "sessions", "operator ended session with the rig down",
-           { endedBy: "operator" });
+           { endedBy: "operator" }, S.stintWho);
       go("session_ended");
       break;
 
@@ -445,16 +464,26 @@ function rotate() {
      The data carries the four numbers it was made of, so the formula can
      be corrected in six months and every shift already filed recomputes
      correctly. A stored ratio cannot be. */
+  /* Filed under whoever held the rig for this stint, not whoever the
+     clock says is on now. rotate() runs *after* the boundary - that is
+     the whole point of handoverDue, which waits for a take to land -
+     so reading the clock here credited an operator's entire turn to
+     the person who relieved them. The sentence already named the right
+     person via outgoingOperator(); only the data was wrong, which is
+     the worst way round because nobody at the rig could see it. */
   emit("stint_ended", "rig_productivity_blocks",
        outgoingOperator() + " · " + S.episode + " episodes · " + pct(efficiency()) + " efficiency",
        { episodes: S.episode,
          recordedSecs: Math.round(S.recordedSecs),
          assignedSecs: Math.round(assignedSecs()),
          faultSecs: Math.round(S.faultSecs),
-         downSecs: Math.round(S.downSecs) });
+         downSecs: Math.round(S.downSecs) },
+       S.stintWho);
   S.stint += 1;
   S.stintAt = S.t;
   syncTurnKey();
+  // The next stint belongs to whoever has just come on.
+  S.stintWho = current();
   S.episode = 0;
   S.recordedSecs = 0;
   S.faultSecs = 0;
@@ -887,8 +916,13 @@ function uuid() {
   });
 }
 
-function envelope(event, bucket, data) {
-  const c = current();
+function envelope(event, bucket, data, who) {
+  /* `who` is the turn and operator captured when the thing being reported
+     actually began, for events that span time. Without it this reads the
+     clock, which is right for a point-in-time fact and wrong for a take:
+     a recording that runs past a turn boundary would be filed under the
+     operator who came on next, not the one who made it. */
+  const c = who || current();
   return {
     eventId: uuid(),
     seq: seq++,
@@ -908,8 +942,8 @@ function envelope(event, bucket, data) {
 /* `detail` is the sentence on the operator's drawer log and stays exactly
    as it was - it is for the person standing at the rig, not the database,
    and it is good. `data` is the parallel machine-readable half. */
-function emit(event, bucket, detail, data) {
-  const e = envelope(event, bucket, data);
+function emit(event, bucket, detail, data, who) {
+  const e = envelope(event, bucket, data, who);
   envelopes.push(e);
   // Held until the server acknowledges it. A rig with no network keeps
   // working and keeps filing; the outbox grows and drains later.
