@@ -34,6 +34,21 @@ from core.rules import floor as rules
 from core.rules.efficiency import Stint, efficiency
 
 
+async def _projection_lag(session: AsyncSession) -> tuple[datetime | None, int]:
+    """The oldest event still waiting to become a fact, and how many.
+
+    `received_at`, not `at`: the server's own clock. A rig with a wrong
+    clock must not be able to invent this or hide it - this is the alert
+    that says whether the others can be believed.
+    """
+    rows = await session.execute(
+        select(func.min(RigEvent.received_at), func.count())
+        .where(RigEvent.projected_at.is_(None))
+    )
+    oldest, waiting = rows.one()
+    return oldest, int(waiting or 0)
+
+
 async def _last_event_at(session: AsyncSession, rig_id: str) -> datetime | None:
     rows = await session.execute(
         select(func.max(RigEvent.at)).where(RigEvent.rig_id == rig_id)
@@ -93,6 +108,8 @@ async def sweep(
     now: datetime | None = None,
     silent_after_secs: int = 180,
     idle_grace_secs: int = 300,
+    clock_tolerance_secs: int = 120,
+    projection_behind_after_secs: int = 120,
     repeat_fault_shifts: int = 3,
     repeat_fault_days: int = 7,
     overrun_look_back_hours: int = 24,
@@ -121,6 +138,14 @@ async def sweep(
             # A rig nobody can hear is not also idle - one cause, one alert.
             continue
 
+        # Checked before idleness is judged, because a wrong clock is one
+        # of the things that manufactures a false idle.
+        adrift = rules.clock_adrift(
+            rig_id, status.skew_secs if status else None, clock_tolerance_secs
+        )
+        if adrift:
+            found.append(adrift)
+
         sched = await _current_schedule(session, rig_id)
         if sched is None:
             continue
@@ -139,6 +164,13 @@ async def sweep(
             )
             if idle:
                 found.append(idle)
+
+    # Ourselves. Everything above asks whether the floor is working; this
+    # asks whether the answers can be trusted.
+    oldest, waiting = await _projection_lag(session)
+    behind = rules.projection_behind(oldest, waiting, now, projection_behind_after_secs)
+    if behind:
+        found.append(behind)
 
     for row in await _open_downtime(session):
         found.append(
@@ -233,7 +265,20 @@ async def floor_state(session: AsyncSession, now: datetime | None = None) -> dic
             "alerts": open_by_rig.get(rig_id, []),
         })
 
-    return {"at": now.isoformat(), "rigs": rigs}
+    # Whether this answer can be trusted. Every number above is derived
+    # from facts, and facts are produced by a worker that can die without
+    # saying so - in which case this whole board is a confident report
+    # about a floor that moved on hours ago. The measurements go out
+    # beside it rather than a verdict, same as everywhere else here.
+    oldest, waiting = await _projection_lag(session)
+    backend = {
+        "unprojectedEvents": waiting,
+        "projectionLagSecs": (
+            round((now - oldest).total_seconds(), 1) if oldest else 0.0
+        ),
+    }
+
+    return {"at": now.isoformat(), "rigs": rigs, "backend": backend}
 
 
 async def operator_efficiency(session: AsyncSession, shift_date, shift_label: str) -> list[dict]:

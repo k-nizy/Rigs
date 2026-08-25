@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from core.base.model import Base  # noqa: E402
+from core.domains.episode_videos import model as _episode_videos  # noqa: E402,F401
 from core.domains.rig_events import model as _rig_events  # noqa: E402,F401
 from core.domains.schedules import model as _schedules  # noqa: E402,F401
 from core.infrastructure import database  # noqa: E402

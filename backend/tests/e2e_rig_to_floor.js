@@ -184,10 +184,22 @@ function todaysPayload() {
 
     const vb = await api("GET", "/api/floor/video");
     assert.equal(vb.status, 200);
-    const spool = vb.body.byState.on_prem || vb.body.byState.archived;
-    assert.ok(spool && spool.episodes >= 1,
-      "nothing reached the spool: " + JSON.stringify(vb.body.byState));
-    ok("spool holds " + JSON.stringify(vb.body.byState));
+
+    /* All three, not one. A take is three cameras and the bookkeeping was
+       a single key on the episode, so `confirm()` overwrote it with
+       whichever landed last - one camera archived, two orphaned on the
+       spool for ever, and a backlog that reported a third of the truth. */
+    const landed = ["on_prem", "archived"].reduce(
+      (n, st) => n + ((vb.body.byState[st] || {}).cameras || 0), 0);
+    assert.ok(landed >= queued,
+      `only ${landed} of ${queued} cameras are accounted for: ` +
+      JSON.stringify(vb.body.byState));
+    ok(`${landed} cameras accounted for, spool holding ` +
+       `${vb.body.spool.cameras} (${vb.body.spool.bytes} bytes)`);
+
+    assert.ok(vb.body.measured.takes >= 1, "nothing was measured");
+    ok(`a take measures ${Math.round(vb.body.measured.bytesPerSecond)} B/s ` +
+       `against the plan's assumed ${vb.body.measured.planAssumedBytesPerSecond}`);
 
     console.log("\nend to end: pedal press -> envelope -> ledger -> facts -> board");
     console.log("             take -> presign -> bytes -> verified -> released");

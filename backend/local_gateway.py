@@ -24,8 +24,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from core.infrastructure.config import get_settings
 from local_dev_routes import dev
 from services.rigs.app import DESCRIPTION, TAGS, create_app
+from services.rigs.observability import configure as configure_logging
+from services.rigs.observability import install as install_observability
 
 from workers.drain_to_archive import run as drain_run
 from workers.project_events import run as project_run
@@ -50,6 +53,9 @@ async def lifespan(_: FastAPI):
     broken for no visible reason. That happened often enough to be worth
     removing. This is the dev harness, so it is the right place for it.
     """
+    # Logging that says which request a line belongs to. In their tree the
+    # gateway owns this; here nothing else would set it up.
+    configure_logging()
     tasks = [
         asyncio.create_task(project_run(poll_secs=2.0, batch=500,
                                         exit_after_empty=0, replay=False),
@@ -58,7 +64,8 @@ async def lifespan(_: FastAPI):
                                       silent_after=180, idle_grace=300),
                             name="sweep_floor"),
         asyncio.create_task(drain_run(poll_secs=30.0, batch=50,
-                                      exit_after_empty=0),
+                                      exit_after_empty=0,
+                                      keep_days=get_settings().video_keep_days),
                             name="drain_to_archive"),
     ]
     log.info("workers running: %s", ", ".join(t.get_name() for t in tasks))
@@ -94,6 +101,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# include_router carries routes and nothing else. That has now cost two
+# things: the OpenAPI metadata below, and the request id and exception
+# handlers here - both of which are correct on the service app that
+# actually lifts, and both of which silently were not on this harness.
+# Anything that is not a route has to be repeated on purpose.
+install_observability(app)
 
 service = create_app()
 # Dev-only helpers, on the gateway rather than in the service, so the

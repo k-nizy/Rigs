@@ -13,13 +13,14 @@ import asyncio
 import logging
 
 from core.infrastructure.database import sessionmaker
-from core.workflows.video import drain_batch
+from core.workflows.video import drain_batch, expire_archive
 from workers._signals import install_signal_handlers, is_shutdown_requested
 
 log = logging.getLogger("drain_to_archive")
 
 
-async def run(poll_secs: float, batch: int, exit_after_empty: int) -> int:
+async def run(poll_secs: float, batch: int, exit_after_empty: int,
+              keep_days: int = 0) -> int:
     maker = sessionmaker()
     empty = total = attempt = 0
     backoff_base = 2
@@ -28,6 +29,15 @@ async def run(poll_secs: float, batch: int, exit_after_empty: int) -> int:
         try:
             async with maker() as session:
                 count, keys = await drain_batch(session, limit=batch)
+                # Retention runs beside the drain rather than as its own
+                # worker: they are the two ends of one lifecycle and the
+                # cadence that suits one suits the other. Does nothing at
+                # all unless a policy has been set.
+                if keep_days > 0:
+                    gone, gone_bytes = await expire_archive(
+                        session, keep_days=keep_days, limit=batch)
+                    if gone:
+                        log.info("expired %d takes (%.1f GB)", gone, gone_bytes / 1e9)
             attempt = 0
         except Exception:
             attempt += 1
@@ -54,10 +64,15 @@ async def run(poll_secs: float, batch: int, exit_after_empty: int) -> int:
 
 
 def main() -> None:
+    from core.infrastructure.config import get_settings
+
+    s = get_settings()
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--poll-secs", type=float, default=5.0)
     p.add_argument("--batch", type=int, default=50)
     p.add_argument("--exit-after-empty", type=int, default=0)
+    p.add_argument("--keep-days", type=int, default=s.video_keep_days,
+                   help="delete archived video older than this; 0 keeps it for ever")
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args()
 
@@ -66,7 +81,8 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     install_signal_handlers()
-    asyncio.run(run(args.poll_secs, args.batch, args.exit_after_empty))
+    asyncio.run(run(args.poll_secs, args.batch, args.exit_after_empty,
+                    args.keep_days))
 
 
 if __name__ == "__main__":

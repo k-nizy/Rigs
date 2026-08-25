@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     # An absence has no event to subscribe to, so it has to be looked for.
     rig_silent_after_secs: int = 180
 
+    # How far a rig's clock may disagree with the server before it is
+    # worth saying so. The measurement includes one-way latency, so this
+    # is deliberately not tight - it is here to catch a machine that came
+    # up without NTP, not to police milliseconds.
+    clock_skew_tolerance_secs: int = 120
+
+    # How long an event may wait to become a fact before the service says
+    # it has fallen behind. A dead projection worker publishes nothing, so
+    # this is the only thing that notices.
+    projection_behind_after_secs: int = 120
+
     # Where video goes. With no endpoint configured the local stand-in is
     # used, which is a directory - real enough to exercise the whole path
     # and honest about not being S3.
@@ -31,6 +42,12 @@ class Settings(BaseSettings):
     storage_access_key: str = ""
     storage_secret_key: str = ""
     storage_local_root: str = "./.storage"
+
+    # How many days archived video is kept. 0 means keep it for ever, and
+    # is the default: how long this floor keeps its footage is a cost
+    # decision in petabytes a year and nobody has made it. The worker is
+    # built and tested; it does nothing until this is a number.
+    video_keep_days: int = 0
 
     # The largest single video object the service will take through
     # itself. Only the gateway-upload model reads a body into memory, and

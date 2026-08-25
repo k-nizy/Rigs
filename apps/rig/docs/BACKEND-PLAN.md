@@ -456,8 +456,16 @@ happens to be what makes Phases 0 and 1 startable today.
   sit behind the platform team's gateway, which already owns who is
   allowed in. `DESK_TOKEN` exists so a deployment without that in front
   of it can still close the hole, and it is off by default.
-- **Retention.** How long episodes live in cloud, and whether discarded
-  takes are kept at all. Cost scales directly with the answer.
+- **Retention.** Still open, and now the only thing standing between the
+  system and a disk that fills. The mechanism is built, tested and off:
+  `VIDEO_KEEP_DAYS=0` keeps everything for ever. What is missing is the
+  number, and it is a cost decision - at this plan's own sizing, ~2.7 TB
+  a day, ~82 TB a month, roughly a petabyte a year.
+
+  Two parts of it are already answered. Discarded takes are never
+  uploaded at all, so they cost nothing. And the on-prem spool is not a
+  retention question: it releases its copy as soon as the archive can
+  account for it, because a spool that never frees is not a spool.
 - **Review and QA of scores.** The operator scores their own take 3/4/5.
   Nothing yet says whether anyone checks.
 - **Crew changeover at the shift boundary.** Already open in `CLAUDE.md`,

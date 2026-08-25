@@ -4,6 +4,10 @@ A discarded take is a row, not an absence. The plan is explicit that the
 bucket carries takes "saved **or** discarded" - an operator throwing away
 a bad demonstration is a real event, and a floor where nothing is ever
 discarded is a floor worth asking about.
+
+The video lives in `episode_videos`, one row per camera. It used to be
+six columns here with a single `video_key`, which quietly meant a take
+was one camera and the other two were nobody's problem.
 """
 
 import uuid
@@ -58,19 +62,7 @@ class Episode(TimestampedBase):
     # rows - which is every table in production and no table in a fresh
     # test database. This one was caught by having run the end-to-end
     # script first.
-    video_state: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="pending", server_default="pending"
-    )
-    video_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    video_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    video_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    video_stored_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    video_archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
     __table_args__ = (
         Index("ix_episodes_rig_shift", "rig_id", "shift_date", "shift_label"),
-        # The drain worker's claim query: everything landed but not yet
-        # archived.
-        Index("ix_episodes_video_state", "video_state"),
         Index("ix_episodes_operator", "operator_id"),
     )

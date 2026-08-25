@@ -5,6 +5,7 @@ accepts a percentage. The server stores the schedule it was pushed and
 reads it back; it never derives one.
 """
 
+import logging
 import uuid
 from datetime import date, datetime, timezone
 
@@ -25,6 +26,8 @@ from core.workflows.floor import floor_state, operator_efficiency
 from services.rigs.auth import desk_auth, rig_auth, rig_auth_for_key
 from core.infrastructure.storage import Storage, get_storage
 from core.workflows.video import VideoError, backlog, confirm, where_to_put
+
+log = logging.getLogger("rigs.service")
 
 router = APIRouter()
 
@@ -222,10 +225,14 @@ async def video_complete(
         return await confirm(session, episode_id, body.camera, body.sha256, body.bytes)
     except VideoError as e:
         detail = str(e)
-        raise HTTPException(
-            status_code=404 if detail.startswith("no episode") else 409,
-            detail=detail,
-        )
+        missing = detail.startswith("no episode")
+        if not missing:
+            # The rig is about to keep bytes it hoped to be rid of, and
+            # will try again. If this line repeats for one episode, the
+            # take is not going to make it and somebody should look.
+            log.warning("video refused for %s episode %s camera %s: %s",
+                        rig_id, episode_id, body.camera, detail)
+        raise HTTPException(status_code=404 if missing else 409, detail=detail)
 
 
 @router.put("/storage/{key:path}", tags=["video"],

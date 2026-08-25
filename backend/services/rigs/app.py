@@ -9,6 +9,7 @@ from fastapi import FastAPI
 
 from core.infrastructure.config import get_settings
 from services.rigs.auth import announce
+from services.rigs.observability import install
 from services.rigs.routes import router
 
 
@@ -63,6 +64,7 @@ def create_app() -> FastAPI:
         description=DESCRIPTION,
         openapi_tags=TAGS,
     )
+    install(app)
     app.include_router(router, prefix="/api")
     # Before the first request, not after the first incident.
     announce(get_settings())

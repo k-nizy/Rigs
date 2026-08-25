@@ -120,6 +120,24 @@ python -m workers.sweep_floor           # absence detection, every 15s
 python -m workers.drain_to_archive      # on-prem spool -> cold tier
 ```
 
+**The spool has to drain.** Video is copied to the cold tier and the
+on-prem copy is then released - but only after the archive is asked what
+it holds, the same rule that lets a rig delete its own copy. Watch
+`spool.bytes` on `/api/floor/video`: it should oscillate, not climb. A
+climbing spool ends with a full disk, and that fails backwards - once the
+spool is full `confirm()` refuses, so twelve rigs correctly keep their
+own copies and the rig SSDs fill too.
+
+**Nothing is ever deleted from the archive** unless `VIDEO_KEEP_DAYS` is
+set. At the plan's sizing that is ~82 TB a month. The mechanism is built
+and tested; the number is a cost decision nobody has made.
+
+**Watch `backend.projectionLagSecs` on `/api/floor/state`.** A projection
+worker that has died publishes nothing - the ledger keeps accepting, the
+facts stop, and every board goes on answering with yesterday's episodes.
+The sweep raises `projection_behind` for it, and that is the alert that
+says whether the other alerts can be believed.
+
 **Migrations build indexes concurrently.** A plain `CREATE INDEX` locks
 `rig_events` against writes, and twelve rigs cannot file events while it
 runs. If one fails part-way, Postgres leaves an INVALID index behind:

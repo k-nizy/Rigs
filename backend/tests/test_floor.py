@@ -471,3 +471,132 @@ class TestAnOverrunIsMeasuredAgainstTheRightShift:
         found = await self._overruns(session)
         assert len(found) == 1, "a genuine overrun stopped being reported"
         assert "300s" in found[0].detail, found[0].detail
+
+
+# ------------------------------------------------------------ the clocks
+#
+# Skew was measured on every heartbeat and then never looked at, which is
+# the same as not measuring it. It is not cosmetic: rig_idle compares the
+# newest event's timestamp - the rig's own - against a boundary computed
+# here, so a rig running slow looks like a rig where nothing is happening.
+# A wrong clock manufactures the very alert this system exists to make
+# trustworthy.
+
+
+class TestAClockThatDisagrees:
+
+    def test_a_clock_within_tolerance_is_not_worth_saying(self):
+        assert rules.clock_adrift(RIG, 12.0, 120) is None
+
+    def test_a_rig_never_heard_from_has_no_clock_to_judge(self):
+        assert rules.clock_adrift(RIG, None, 120) is None
+
+    def test_a_clock_running_behind_is_reported_as_behind(self):
+        a = rules.clock_adrift(RIG, 600.0, 120)
+        assert a and a.kind == rules.CLOCK_ADRIFT
+        assert "600s behind" in a.detail
+
+    def test_a_clock_running_ahead_is_reported_as_ahead(self):
+        """Direction matters to whoever has to go and fix it."""
+        a = rules.clock_adrift(RIG, -600.0, 120)
+        assert a and "600s ahead of" in a.detail
+
+    def test_it_is_keyed_per_rig_so_sweeping_twice_opens_one(self):
+        a = rules.clock_adrift(RIG, 600.0, 120)
+        b = rules.clock_adrift(RIG, 640.0, 120)
+        assert a.key == b.key
+
+    async def test_the_sweep_raises_it_for_a_rig_whose_clock_is_out(self, client, session):
+        await push_schedule(session)
+        await RigStatusRepository(session).beat(
+            RIG, at(9), at(9) - timedelta(seconds=900), 900.0)
+        await session.commit()
+
+        await sweep(session, now=at(9), clock_tolerance_secs=120)
+        kinds = [a.kind for a in await AlertRepository(session).open_alerts()]
+        assert rules.CLOCK_ADRIFT in kinds
+
+    async def test_a_good_clock_raises_nothing(self, client, session):
+        await push_schedule(session)
+        await RigStatusRepository(session).beat(RIG, at(9), at(9), 0.4)
+        await session.commit()
+
+        await sweep(session, now=at(9), clock_tolerance_secs=120)
+        kinds = [a.kind for a in await AlertRepository(session).open_alerts()]
+        assert rules.CLOCK_ADRIFT not in kinds
+
+
+# ----------------------------------------------------------- ourselves
+#
+# The whole design is about noticing absences that nothing publishes. A
+# projection worker that has died is the same failure pointed at us: it
+# emits nothing, the ledger keeps accepting, and every board goes on
+# answering with yesterday's episodes. Nobody finds out by being told.
+
+
+class TestTheBackendFallingBehind:
+
+    def test_an_empty_queue_is_not_a_stall(self):
+        assert rules.projection_behind(None, 0, at(9), 120) is None
+
+    def test_a_recent_queue_is_ordinary_depth(self):
+        assert rules.projection_behind(at(8, 59), 40, at(9), 120) is None
+
+    def test_a_queue_that_has_stopped_moving_is_reported(self):
+        a = rules.projection_behind(at(8, 30), 1204, at(9), 120)
+        assert a and a.kind == rules.PROJECTION_BEHIND
+        assert "1204 events" in a.detail
+        assert "stale" in a.detail
+
+    def test_it_is_not_attributed_to_a_rig(self):
+        """No rig did this, and blaming one would send somebody to a
+        machine that is working perfectly."""
+        a = rules.projection_behind(at(8, 30), 5, at(9), 120)
+        assert a.rig_id == rules.FLOOR
+
+    async def _stale_ledger_row(self, session, received_at):
+        session.add(RigEvent(
+            rig_id=RIG, event_id=uuid.uuid4(), seq=1, at=received_at,
+            shift_date=DAY, shift_label="Morning", turn_from="08:00",
+            operator_id="op-a1", bucket="episodes", event="episode_saved",
+            envelope={}, received_at=received_at, projected_at=None,
+        ))
+        await session.commit()
+
+    async def test_the_sweep_notices_that_it_has_stopped_keeping_up(self, client, session):
+        await push_schedule(session)
+        await self._stale_ledger_row(session, at(8, 30))
+
+        await sweep(session, now=at(9), projection_behind_after_secs=120)
+        kinds = [a.kind for a in await AlertRepository(session).open_alerts()]
+        assert rules.PROJECTION_BEHIND in kinds, "a dead projection worker went unnoticed"
+
+    async def test_it_closes_once_the_backlog_is_projected(self, client, session):
+        """Reconciled like every other alert: it stops being true, so it
+        stops being open. No all-clear event required."""
+        await push_schedule(session)
+        await self._stale_ledger_row(session, at(8, 30))
+        await sweep(session, now=at(9), projection_behind_after_secs=120)
+
+        rows = await session.execute(select(RigEvent))
+        for row in rows.scalars().all():
+            row.projected_at = at(9)
+        await session.commit()
+
+        await sweep(session, now=at(9), projection_behind_after_secs=120)
+        kinds = [a.kind for a in await AlertRepository(session).open_alerts()]
+        assert rules.PROJECTION_BEHIND not in kinds
+
+    async def test_the_board_says_how_far_behind_it_is(self, client, session):
+        """A verdict is an alert; this is the measurement beside it."""
+        await push_schedule(session)
+        await self._stale_ledger_row(session, at(8, 30))
+
+        state = await floor_state(session, now=at(9))
+        assert state["backend"]["unprojectedEvents"] == 1
+        assert state["backend"]["projectionLagSecs"] == 1800.0
+
+    async def test_a_board_that_is_keeping_up_says_zero(self, client, session):
+        await push_schedule(session)
+        state = await floor_state(session, now=at(9))
+        assert state["backend"] == {"unprojectedEvents": 0, "projectionLagSecs": 0.0}

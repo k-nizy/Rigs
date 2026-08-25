@@ -21,7 +21,8 @@ from workers._signals import install_signal_handlers, is_shutdown_requested
 log = logging.getLogger("sweep_floor")
 
 
-async def run(every_secs: float, once: bool, silent_after: int, idle_grace: int) -> None:
+async def run(every_secs: float, once: bool, silent_after: int, idle_grace: int,
+              clock_tolerance: int = 120, projection_behind_after: int = 120) -> None:
     maker = sessionmaker()
     attempt = 0
     backoff_base = 2
@@ -30,7 +31,11 @@ async def run(every_secs: float, once: bool, silent_after: int, idle_grace: int)
         try:
             async with maker() as session:
                 result = await sweep(
-                    session, silent_after_secs=silent_after, idle_grace_secs=idle_grace
+                    session,
+                    silent_after_secs=silent_after,
+                    idle_grace_secs=idle_grace,
+                    clock_tolerance_secs=clock_tolerance,
+                    projection_behind_after_secs=projection_behind_after,
                 )
             attempt = 0
             if result["opened"] or result["resolved"]:
@@ -63,6 +68,9 @@ def main() -> None:
     p.add_argument("--once", action="store_true", help="sweep once and exit")
     p.add_argument("--silent-after", type=int, default=s.rig_silent_after_secs)
     p.add_argument("--idle-grace", type=int, default=300)
+    p.add_argument("--clock-tolerance", type=int, default=s.clock_skew_tolerance_secs)
+    p.add_argument("--projection-behind-after", type=int,
+                   default=s.projection_behind_after_secs)
     p.add_argument("--log-level", default="INFO")
     args = p.parse_args()
 
@@ -71,7 +79,8 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     install_signal_handlers()
-    asyncio.run(run(args.every_secs, args.once, args.silent_after, args.idle_grace))
+    asyncio.run(run(args.every_secs, args.once, args.silent_after, args.idle_grace,
+                    args.clock_tolerance, args.projection_behind_after))
 
 
 if __name__ == "__main__":

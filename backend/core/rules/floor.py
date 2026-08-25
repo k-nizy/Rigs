@@ -22,6 +22,12 @@ RIG_IDLE = "rig_idle"
 RIG_DOWN = "rig_down"
 REPEAT_FAULT = "repeat_fault"
 TURN_OVERRAN = "turn_overran"
+CLOCK_ADRIFT = "clock_adrift"
+PROJECTION_BEHIND = "projection_behind"
+
+# Not a rig. An alert about the service itself has to go somewhere, and
+# the column is not nullable; this reads as what it is on a board.
+FLOOR = "FLOOR"
 
 
 @dataclass(frozen=True)
@@ -89,6 +95,66 @@ def rig_idle(rig_id: str, turn_from: str | None, turn_started: datetime | None,
     return Alert(
         RIG_IDLE, rig_id, f"{RIG_IDLE}:{rig_id}:{turn_from}",
         f"nothing for {int(quiet)}s into the {turn_from} turn",
+    )
+
+
+def clock_adrift(rig_id: str, skew_secs: float | None,
+                 tolerance_secs: float) -> Alert | None:
+    """A rig whose clock disagrees with the server.
+
+    The reason this is measured at all is written on `TimestampedBase`:
+    twelve rigs disagreeing about the time makes the whole event stream
+    unsortable. It was measured on every heartbeat and then never looked
+    at, which is the same as not measuring it.
+
+    It costs more than tidiness. `rig_idle` compares the newest event's
+    timestamp - the rig's own - against a turn boundary computed here. A
+    rig running ten minutes slow looks like a rig where nothing has
+    happened for ten minutes, so a skewed clock manufactures exactly the
+    alert this system exists to make trustworthy.
+
+    The measurement includes one-way network latency, so it is a ceiling
+    on the true skew rather than the skew itself. That is fine for an
+    alert: a rig that looks ten minutes out is ten minutes out.
+    """
+    if skew_secs is None:
+        return None
+    off = abs(skew_secs)
+    if off <= tolerance_secs:
+        return None
+    # skew = server_now - rig_reported. Positive means the rig is behind.
+    direction = "behind" if skew_secs > 0 else "ahead of"
+    return Alert(
+        CLOCK_ADRIFT, rig_id, f"{CLOCK_ADRIFT}:{rig_id}",
+        f"clock is {int(off)}s {direction} the server",
+    )
+
+
+def projection_behind(oldest_unprojected_at: datetime | None, waiting: int,
+                      now: datetime, after_secs: float) -> Alert | None:
+    """The backend has stopped turning events into facts.
+
+    The whole design here is about noticing absences that nothing
+    publishes - a rig nobody came to, a rig that lost power. A projection
+    worker that has died is the same shape of failure pointed at
+    ourselves: it emits nothing, the ledger keeps accepting events, and
+    every board in the building goes on answering cheerfully with
+    yesterday's episodes. Nobody finds out by being told.
+
+    Measured on `received_at`, the server's own clock, deliberately. Using
+    the rig's `at` would let one rig with a wrong clock either invent this
+    alert or hide it, and this is the alert that says whether the other
+    ones can be believed.
+    """
+    if oldest_unprojected_at is None or waiting == 0:
+        return None
+    lag = (now - oldest_unprojected_at).total_seconds()
+    if lag <= after_secs:
+        return None      # ordinary queue depth, not a stall
+    return Alert(
+        PROJECTION_BEHIND, FLOOR, f"{PROJECTION_BEHIND}",
+        f"{waiting} events have been waiting up to {int(lag)}s to become facts - "
+        f"the floor board is stale",
     )
 
 

@@ -15,6 +15,7 @@ from core.infrastructure.config import get_settings
 
 # Imported for their side effect: registering tables on Base.metadata.
 from core.domains.alerts import model as _alerts  # noqa: F401
+from core.domains.episode_videos import model as _episode_videos  # noqa: F401
 from core.domains.episodes import model as _episodes  # noqa: F401
 from core.domains.rig_status import model as _status  # noqa: F401
 from core.domains.rig_downtime_events import model as _downtime  # noqa: F401

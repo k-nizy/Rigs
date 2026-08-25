@@ -59,7 +59,16 @@ class Storage(Protocol):
     async def head(self, key: str) -> Stored | None: ...
     async def put(self, key: str, data: bytes) -> Stored: ...
     async def copy_to_archive(self, key: str) -> str: ...
+    # What the cold tier actually holds. The spool copy is deleted on the
+    # strength of this answer, so it has to come from the archive itself
+    # rather than from the fact that a copy call returned.
+    async def head_archive(self, key: str) -> Stored | None: ...
     async def delete(self, key: str) -> None: ...
+    # Separate from delete() on purpose. Deleting from the spool is
+    # routine and reversible - the archive still has it. Deleting from
+    # the archive is the end of that take, for ever. Two names, so no
+    # caller can do the second while meaning the first.
+    async def delete_archived(self, key: str) -> None: ...
 
 
 def object_key(rig_id: str, episode_id: str, camera: str) -> str:
@@ -121,8 +130,20 @@ class LocalStorage:
         shutil.copy2(src, dst)
         return str(dst)
 
+    async def head_archive(self, key: str) -> Stored | None:
+        p = self.archive / key
+        if not p.exists():
+            return None
+        data = p.read_bytes()
+        return Stored(key=key, bytes=len(data), sha256=sha256_of(data))
+
     async def delete(self, key: str) -> None:
         p = self._path(key)
+        if p.exists():
+            p.unlink()
+
+    async def delete_archived(self, key: str) -> None:
+        p = self.archive / key
         if p.exists():
             p.unlink()
 
@@ -210,8 +231,28 @@ class MinioStorage:
         )
         return f"{self.archive_bucket}/{key}"
 
+    async def head_archive(self, key: str) -> Stored | None:
+        """The same question as head(), asked of the archive bucket.
+
+        Same rule as everywhere in this file: a checksum the store did not
+        compute is not a checksum. An object with none comes back with an
+        empty digest and the drain refuses to free the spool copy on the
+        strength of it.
+        """
+        try:
+            info = self.client.head_object(
+                Bucket=self.archive_bucket, Key=key, ChecksumMode="ENABLED")
+        except Exception:
+            return None
+        digest = info.get("ChecksumSHA256")
+        sha = base64.b64decode(digest).hex() if digest else ""
+        return Stored(key=key, bytes=int(info["ContentLength"]), sha256=sha)
+
     async def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)
+
+    async def delete_archived(self, key: str) -> None:
+        self.client.delete_object(Bucket=self.archive_bucket, Key=key)
 
 
 _storage: Storage | None = None

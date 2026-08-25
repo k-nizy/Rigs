@@ -56,11 +56,19 @@ def _check(rig_id: str, authorization: str | None, settings: Settings) -> None:
     expected = settings.rig_tokens.get(rig_id)
     presented = _presented(authorization)
     if expected is None or presented is None:
+        # Which rig and which half, in the log only. The reply still says
+        # neither - the log is for whoever is fixing it, the reply is for
+        # whoever might be probing it.
+        log.warning("refused %s: %s", rig_id,
+                    "no rig by that name" if expected is None else "no bearer token")
         raise HTTPException(status_code=401, detail=REFUSED)
 
     # compare_digest, not ==: an early return on the first wrong byte
     # leaks how much of the token the caller already has.
     if not hmac.compare_digest(presented, expected):
+        # Never the token, presented or expected. A log line is
+        # world-readable, because eventually it is.
+        log.warning("refused %s: token did not match", rig_id)
         raise HTTPException(status_code=401, detail=REFUSED)
 
 
