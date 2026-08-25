@@ -70,14 +70,15 @@ async def _open_downtime(session: AsyncSession) -> list[RigDowntimeEvent]:
     return list(rows.scalars().all())
 
 
-async def _repeat_faults(session: AsyncSession, since_days: int) -> list[tuple[str, str, int]]:
+async def _repeat_faults(session: AsyncSession, since_days: int,
+                         now: datetime) -> list[tuple[str, str, int]]:
     """Same subsystem, same rig, counted by distinct shift.
 
     Counted by shift rather than by occurrence on purpose: a gripper that
     fails four times in one shift is one bad day, and a gripper that fails
     once on each of four shifts is a gripper.
     """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).date()
+    cutoff = (now - timedelta(days=since_days)).date()
     rows = await session.execute(
         select(
             RigShiftCheck.rig_id,
@@ -119,8 +120,22 @@ async def _schedules_for(session: AsyncSession, blocks: list[Any]) -> dict:
     return {(s.rig_id, s.shift_date, s.shift_label): s for s in rows.scalars().all()}
 
 
-async def _overruns(session: AsyncSession, look_back_hours: int) -> list[Any]:
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=look_back_hours)
+async def _overruns(session: AsyncSession, look_back_hours: int,
+                    now: datetime) -> list[Any]:
+    """Blocks that ended inside the look-back window.
+
+    `now` is a parameter, not `datetime.now()`. It used to read the wall
+    clock while `sweep()` was handed an injected one, which made the sweep
+    quietly not a function of its own argument: the same call gave
+    different answers on different days. The tests that caught it were
+    controls asserting a real overrun still fires, and they passed in the
+    morning and failed in the afternoon - which is the worst way for a
+    test to be wrong.
+
+    It also matters beyond tests. Sweeping for a historical instant - a
+    replay, a backfill - would have silently used today's window.
+    """
+    cutoff = now - timedelta(hours=look_back_hours)
     rows = await session.execute(
         select(RigProductivityBlock).where(RigProductivityBlock.ended_at >= cutoff)
     )
@@ -201,12 +216,13 @@ async def sweep(
             rules.rig_down(row.rig_id, row.issue, row.needs_manager, row.down_at, now)
         )
 
-    for rig_id, subsystem, shifts in await _repeat_faults(session, repeat_fault_days):
+    for rig_id, subsystem, shifts in await _repeat_faults(
+            session, repeat_fault_days, now):
         hit = rules.repeat_fault(rig_id, subsystem, shifts, repeat_fault_shifts)
         if hit:
             found.append(hit)
 
-    blocks = await _overruns(session, overrun_look_back_hours)
+    blocks = await _overruns(session, overrun_look_back_hours, now)
     # One query, not one per block. A day's blocks on a twelve-rig floor
     # is ~400 rows, and looking the schedule up inside the loop made that
     # ~400 sequential round trips every fifteen seconds - measured at

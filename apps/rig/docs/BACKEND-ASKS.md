@@ -1,10 +1,20 @@
-# What we need from the backend departments — v2
+# What we need from the backend departments — v3
 
-**Revised after the platform team's reply describing their codebase.**
-The first version of this file asked a department we had never spoken to
-for everything at once. Their reply settled more than we asked and opened
-one question bigger than any of them. This version is the reply to the
-reply.
+**v1** asked a department we had never spoken to for everything at once.
+**v2** was the reply to their reply. **This version is written after
+building it.**
+
+That changes what this document is for. Almost nothing here is a request
+for help any more - the service exists, in your convention, with 242
+tests, and section 7 lists what is in the tree. What is left is a much
+shorter list of things only you can answer, and one of them we have
+narrowed from an open question to a choice between two implementations
+that both already work.
+
+Where we could not wait, we chose and said so - idempotency (5.1), the
+token scheme (5.2), retention. Every one of those is a small change if
+your answer differs, and cheaper now than at the handover, which is the
+whole reason they are flagged rather than buried.
 
 `BACKEND-PLAN.md` is still our plan; where it now disagrees with this
 file, this file wins and the plan needs amending.
@@ -99,10 +109,12 @@ Practical access, none of it blocking the contract work:
 
 ---
 
-## 2. What we would build, in your convention
+## 2. What we built, in your convention
 
-Written out so the answer to 1.1 can be concrete rather than
-theoretical.
+This was written as a proposal, so the answer to 1.1 could be concrete
+rather than theoretical. It is now a description: the tree below exists,
+with the tests in section 7 against it. It is here so you can object to
+the shape before it lands in your repository rather than after.
 
 ```
 services/rigs/
@@ -178,53 +190,119 @@ either side stops accepting a fixture, CI says so.
 
 ---
 
-## 4. The gap in your reply — video
+## 4. Video — one decision, and we have built both answers
 
-This is the substantive omission, and it is the highest-volume path in
-the entire system.
+This was written as an open question and you have not answered it. That
+is probably our fault for asking an open question, so here it is as a
+decision instead: **both implementations exist, both are tested, and we
+need you to point at one.** Nothing is blocked on the answer; what is
+blocked is knowing which one to provision for.
 
-The reply describes a request/response API and a boto3 client. It does
-not describe how bulk bytes move. Our sizing, which is still an estimate:
+### What it costs, so the choice is about a real number
 
 | | |
 |---|---|
-| one rig, one 8-hour shift | ~72 GB |
-| twelve rigs, one shift | ~0.9 TB |
-| the whole floor, three shifts | **~2.6 TB/day** |
-| sustained rate just to keep up | **~240 Mbps** |
-| a year, if nothing is deleted | ~950 TB |
+| one rig, sustained | 2.62 MB/s |
+| one rig, one 8-hour shift | ~76 GB |
+| twelve rigs, one shift | ~0.91 TB |
+| the whole floor, three shifts | **2.72 TB/day** |
+| sustained uplink just to keep up | **252 Mbps** |
+| cold tier at our 90-day retention | **245 TB steady state** |
 
-> **4.1 — How do 2.6 TB/day actually reach R2?** Presigned URLs direct
-> from the rigs, multipart through the gateway, or something else?
-> Streaming that volume through FastAPI workers is our concern; if you
-> have a pattern for large-object upload we should be using it.
->
-> **4.2 — Can rigs upload to an on-prem MinIO on the same switch, and
-> drain to R2 from there?** You listed MinIO as local dev only. We want
-> it as a production spool. The argument is the site uplink: rigs push to
-> a box on the same switch at wire speed and free their SSDs in minutes,
-> and that box owns the one slow conversation with the cloud and can be
-> hours behind without any rig noticing.
->
-> **4.3 — Is the resumable-upload and checksum-on-arrival behaviour
-> something your storage layer already does?** Our rig deletes its local
-> copy only after the server confirms a checksum. That rule is what makes
-> the rig SSD self-managing; everything else is retry.
+Retention is now decided at our end: 90 days, so the figure to provision
+is 245 TB flat rather than the ~993 TB/year an unbounded archive would
+reach. It climbs for ninety days and is level after that.
+
+These are still derived from "three 1080p30 cameras at ~7 Mbps", which is
+an assumption we wrote down. `GET /api/floor/video` reports the measured
+bytes-per-second beside that assumption, so the table corrects itself the
+moment a real episode lands. No real episode has landed yet - we have no
+camera until the Tauri shell exists - so treat the table as a plan, not a
+measurement, and expect it to move.
+
+### The two implementations, both working
+
+Everything about video sits behind one file,
+`core/infrastructure/storage.py`. `upload_target()` decides which model is
+in use and **nothing above it changes either way** - not the rig, not the
+bookkeeping, not the drain, not the rule that lets a rig delete its own
+copy. That is not a claim: the same end-to-end test runs against a local
+directory and against a real MinIO bucket, and neither needs a
+conditional anywhere else.
+
+**A. Presigned PUT straight to the object store.** The rig asks us where
+to put a take, we hand back a signed URL, the bytes never touch an
+application worker. `ChecksumSHA256` is part of the signature, so the
+store computes the digest as the bytes arrive and refuses a mismatch -
+which matters, because with a presigned PUT we never see the bytes and
+could not otherwise verify them.
+
+**B. Streamed through the service.** `PUT /api/storage/{key}`. Simpler to
+reason about and needs no presigning, and it means 2.72 TB/day crossing
+application workers. We have it because our local stand-in has no
+presigning, and we would not choose it for a floor.
+
+We assume **A**, and will ship A unless you say otherwise.
+
+### What we actually need from you
+
+> **4.1 — A or B?** If A, we need a bucket, credentials, and confirmation
+> that your storage layer permits `ChecksumSHA256` in a presigned PUT. If
+> B, we need to know that streaming that volume through your gateway is
+> acceptable to you, because it is not to us.
+
+> **4.2 — May MinIO be a production spool, not just local dev?** You
+> listed it as dev-only. We want it on the same switch as the rigs. The
+> argument is the uplink: rigs push at wire speed and free their SSDs in
+> minutes, and that box owns the one slow conversation with the cloud and
+> can be hours behind without any rig noticing. Our drain worker already
+> works this way and frees the spool only after the archive confirms what
+> it holds.
+
+> **4.3 — Does your storage layer already do resumable upload?** Ours does
+> not, deliberately: it is the one piece we did not build because it is
+> shaped differently under A than under B - S3 multipart versus a chunked
+> protocol of our own. If you have a pattern, we will use it. If not, tell
+> us and we will build the one that fits your answer to 4.1.
+
+The checksum-on-arrival rule is no longer a question. We built it: the rig
+deletes its local copy only after this service reads the object back out
+of the store and verifies size and digest. It is what makes the rig SSD
+self-managing, and it is tested against a real bucket.
+
+### If we do not hear back
+
+We ship **A**, against MinIO on the floor switch draining to R2, with no
+resumable upload. All three are reversible - A/B is one file, the spool is
+configuration, and resumable upload is additive. We would rather change
+one file later than hold the floor waiting.
 
 ---
 
 ## 5. Still open, and yours
 
-> **5.1 — What is your convention for idempotency keys?** Every event
-> carries a client-minted `eventId` and a per-rig `seq`. We need dedupe on
-> `(rigId, eventId)` so the uploader can retry blindly, forever, without
-> knowing whether its last attempt landed. That single property is what
-> keeps the retry logic twenty lines instead of two hundred.
+> **5.1 — Idempotency: built. Does it match your convention?** We could
+> not wait, so we chose: a client-minted `eventId`, a per-rig `seq`, and a
+> unique constraint on `(rigId, eventId)`. A resend reports
+> `accepted: 0`, and `GET /cursor` tells a rig where it got to. The
+> uploader retries blindly and the retry logic is twenty lines.
 >
-> **5.2 — Ed25519 TOFU: who enrols a rig, and what happens when one is
-> re-imaged?** Trust-on-first-use has to have a first use. Is enrolment a
-> human action, an Ansible action, or automatic on first contact — and
-> does a re-imaged RIG-07 present as a new station or the same one?
+> If your convention differs it is a small change at our end and we would
+> rather make it now than at the handover.
+>
+> **5.2 — We diverged from Ed25519 TOFU, and you should know before it
+> is expensive.** You suggested trust-on-first-use. We shipped a per-rig
+> bearer token placed by Ansible instead: simpler, no enrolment ceremony,
+> and no question about what a re-imaged RIG-07 presents as. A token names
+> exactly one rig and is refused for any other, so one compromised machine
+> cannot attribute work across the floor.
+>
+> If TOFU is a requirement rather than a suggestion, tell us. It replaces
+> one file and we would rather do it now.
+>
+> The original question still stands under either scheme: **who enrols a
+> rig, and what happens when one is re-imaged?** For us that is "Ansible
+> writes a token", but it is your provisioning story, not ours.
 >
 > **5.3 — The rigs have no person-level login, and we intend to keep it
 > that way.** You mention JWT for *human operators*, which we read as the
@@ -246,9 +324,21 @@ not describe how bulk bytes move. Our sizing, which is still an estimate:
 > domain events use it?** Ours are: episode saved, fault opened, rig down,
 > stint ended. Some of them want to fan out to notifications.
 >
-> **5.5 — Monitoring, logging, on-call.** What stack, and where should a
-> "rig has not been heard from in N minutes" alert land? We would rather
-> emit into what you run than invent a dashboard.
+> **5.5 — Monitoring, logging, on-call. We emit; where should it land?**
+> We did not invent a dashboard. What exists is: structured logs carrying
+> a request id taken from `X-Request-ID` when something upstream sets one,
+> so our lines join yours; `GET /api/health` that runs a real query and
+> answers 503 when the database is unreachable, and reports which of four
+> cross-cutting switches are off; and seven alert kinds reconciled by a
+> sweep, including two absences nothing can publish - a rig nobody can
+> hear, and a turn nobody arrived for.
+>
+> One of those seven watches us rather than the floor: if the projection
+> worker dies, the ledger keeps accepting and every board goes on
+> answering with yesterday's episodes. `/api/floor/state` reports the lag.
+>
+> Where does a "RIG-07 has not been heard from in three minutes" page
+> land, and in what format?
 
 ---
 
@@ -278,12 +368,18 @@ need pointing at them.
 > training pipeline want?** We assume mp4 per camera because we assume
 > that is what RODA-RS emits. If it wants LeRobot dataset format, MCAP,
 > rosbag or HDF5, that is a conversion built once now or retrofitted
-> across 950 TB later. Also: do they want the *discarded* takes, do they
-> need frame-level camera sync, and is operator identity PII here?
+> across the archive later. Also: do they want the *discarded* takes -
+> we currently never upload them, so they cost nothing and do not exist -
+> do they need frame-level camera sync, and is operator identity PII here?
 >
-> **6.4 — Who owns the R2 bill and the retention policy?** At full tilt
-> storage is the dominant cost of the whole system, and it is set by a
-> retention policy that does not exist. How long do episodes live, hot
+> **6.4 — Who owns the R2 bill?** The retention policy now exists at our
+> end: 90 days, which is 245 TB steady state rather than the ~993 TB a
+> year an unbounded archive reaches. It climbs for ninety days and is
+> level after that. We picked a number so the system could not quietly
+> fill a disk; whoever pays the bill should confirm or change it, and it
+> is one setting.
+>
+> The original question, still yours: how long do episodes live, hot
 > then cold then deleted — and are discarded takes kept at all?
 
 Also worth asking whoever runs config management:
@@ -294,51 +390,72 @@ Also worth asking whoever runs config management:
 
 ---
 
-## 7. What we are doing meanwhile
+## 7. What we built while waiting
 
-Phase 0 splits, and half of it needs nobody.
+This section used to say "Phase 0 splits, and half of it needs nobody",
+with the server side blocked on your answer to 1.1. You answered 1.1 -
+inside your codebase - and we built the rest. It is not a plan any more,
+so here is what is actually in the tree, in your convention, ready to
+lift.
 
-**0a — the rig side. Started, and unaffected by any answer above.**
+**`core/` and `services/rigs/` lift as-is.** FastAPI, SQLAlchemy 2 async,
+Alembic, `gateway -> services -> core` with the arrows enforced in CI by
+import-linter. `local_gateway.py` is a dev harness and does not lift;
+your gateway already exists.
 
-- real event identity in `emit()`: `eventId`, per-rig `seq`, ISO
-  timestamp, rig, shift date and label, turn, operator
-- **measurements, not conclusions** — the four seconds columns replace the
-  `"74% efficiency"` string the rig emits today, so the ratio is computed
-  at read time from one definition and can be corrected later
-- the on-screen `MM:SS` log stays exactly as it is; it is for the
-  operator, not the database, and it is good
+| | |
+|---|---|
+| The ledger | append-only, unique on `(rigId, eventId)`, cursor protocol |
+| Projection | five fact domains, claimed with `FOR UPDATE SKIP LOCKED` so more than one worker is safe |
+| Replay | every fact is derived; wipe and rebuild is tested |
+| Recovery | the whole database lost and rebuilt from envelopes alone, tested |
+| The floor sweep | seven alert kinds, including absences nothing publishes |
+| Video | both upload models, checksum-on-arrival, spool that frees itself, 90-day retention |
+| Auth | per-rig bearer tokens, constant-time, one token names one rig |
+| Limits | bounded uploads, optional per-rig rate limit, both reported by `/health` |
+| Tests | 242 backend, 175 JavaScript, three layering contracts, one end-to-end |
 
-**0b — the contract. Started, and useful under either answer to 1.1.**
+**Measured rather than assumed.** `tools/benchmark` seeds a realistic
+floor and times what runs continuously. The floor produces ~9,800 events
+a day, about 0.11 per second sustained; projection runs ~400 a second.
+The sweep takes 31.6 ms, 0.21% of its fifteen-second budget. Writing that
+benchmark found a query inside a loop costing 190 ms of a 213 ms sweep,
+which is the sort of thing that is invisible until somebody measures it.
 
-- the event schema as JSON Schema, with fixtures both sides must accept
-- the five-domain mapping in section 2, as a concrete proposal rather than a
-  conversation
+**What is not built, and why.**
 
-**0c — the server side. Blocked on 1.1**, and only on 1.1.
+- **The camera.** No Tauri shell yet, so no real video has ever moved
+  through the path. Every byte it has carried was synthetic. The sizing
+  table in section 4 is a plan until that changes.
+- **Resumable upload.** Deliberately: it is shaped differently under
+  answer A than answer B to 4.1, and building both would waste one.
 
 ---
 
 ## What we need, by when
 
+Everything not on this list is done or does not need you.
+
 | When | What | Blocks |
 |---|---|---|
-| **First** | Section 1.1 — inside your codebase, or alongside? | The entire server side |
-| **This week** | Section 6.3 — the training-data format | The event schema, which we are writing now |
-| **This week** | Section 5.3 — confirm no person-level login on the floor | The product, not just the plumbing |
-| **This week** | Section 6.1–6.4 — who do we talk to? | Everything not on your desk |
-| **Soon** | Section 4.1–4.3 — how video moves | All sizing, and the uploader |
-| **Soon** | Section 5.1 — idempotency convention | Blind retry, and a simple uploader |
-| **Before rollout** | Section 6.2 — machines, network, NTP | Twelve-machine provisioning |
-| **Before go-live** | Section 6.4 — retention and the bill | Cost, and how long we can run |
+| **Now** | 4.1 — presigned or through the gateway | Provisioning, and whether we build resumable upload |
+| **Now** | 4.2 — MinIO as a production spool | The floor's network design |
+| **Now** | 5.3 — confirm no person-level login on the floor | The product, not the plumbing |
+| **Now** | 6.1 — repo access and the contribution route | Handing any of the above over |
+| **This week** | 5.2 — is Ed25519 TOFU a requirement? | One file, cheap now and not later |
+| **This week** | 6.3 — the training-data format | Whether our episode rows are the right shape |
+| **Before rollout** | 6.2 — machines, network, NTP | Twelve-machine provisioning |
+| **Before go-live** | 6.4 — who pays for 245 TB | Cost |
 
 ## What we will assume if we hear nothing
 
-We build 0a and 0b as described, and Phase 1 behind `MockRoda`: the disk
-journal, the uploader, the on-prem spool, the whole pipeline end to end
-with fake video. None of that is wasted under either answer to 1.1.
+Presigned PUT straight to the store, MinIO on the floor switch draining
+to R2, no resumable upload, per-rig bearer tokens, 90-day retention.
 
-It stops where it needs a camera, a machine we do not own, or a bucket
-somebody pays for.
+Every one of those is reversible: the upload model is one file, the spool
+is configuration, resumable upload is additive, the token scheme is one
+file, and retention is a number. We would rather change one file later
+than hold twelve rigs waiting for an answer.
 
 ---
 
@@ -350,3 +467,9 @@ duration, bytes per camera, container, codec, resolution, frame rate.
 Every figure in section 4 is derived from "three 1080p30 cameras at ~7 Mbps," and
 that is a guess. It sets the SSD size, the uplink requirement, the spool
 disk and the R2 bill. Nothing else on this page would correct as much.
+
+There is somewhere for it to go. `GET /api/floor/video` already reports
+the measured bytes-per-second beside `planAssumedBytesPerSecond`, so the
+first real episode to land corrects the table by itself and everyone can
+see both numbers at once. Until then we are provisioning against an
+assumption, and saying so.

@@ -235,8 +235,8 @@ async def main(days: int, batch: int) -> None:
         # this says where to put an index.
         parts = {}
         parts["projection lag"], _ = await timed("", _projection_lag(s))
-        parts["repeat faults"], _ = await timed("", _repeat_faults(s, 7))
-        parts["overruns"], _ = await timed("", _overruns(s, 24))
+        parts["repeat faults"], _ = await timed("", _repeat_faults(s, 7, now))
+        parts["overruns"], _ = await timed("", _overruns(s, 24, now))
         t = time.perf_counter()
         for rig in RIGS:
             await _last_event_at(s, rig)

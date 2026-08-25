@@ -16,11 +16,14 @@ from sqlalchemy import select
 from core.domains.alerts.model import Alert
 from core.domains.alerts.repository import AlertRepository
 from core.domains.rig_events.model import RigEvent
+from core.domains.rig_shift_checks.model import RigShiftCheck
 from core.domains.rig_productivity_blocks.model import RigProductivityBlock
 from core.domains.rig_status.repository import RigStatusRepository
 from core.domains.schedules.model import Schedule
 from core.rules import floor as rules
-from core.workflows.floor import floor_state, operator_efficiency, sweep
+from core.workflows.floor import (
+    _overruns, _repeat_faults, floor_state, operator_efficiency, sweep,
+)
 from core.workflows.projection import project_batch
 
 RIG = "RIG-03"
@@ -688,3 +691,78 @@ class TestTheSweepDoesNotScaleWithTheFloor:
                     if a.kind == rules.TURN_OVERRAN]
         assert len(overruns) == 1
         assert "300s" in overruns[0].detail
+
+
+# ------------------------------------------------- the sweep and the clock
+#
+# Found by two control tests becoming a time bomb: they asserted a real
+# overrun still fires, passed in the morning and failed in the afternoon.
+# `_overruns` and `_repeat_faults` were reading the wall clock while
+# sweep() was handed an injected one, so the sweep was quietly not a
+# function of its own argument.
+
+
+class TestTheSweepUsesTheClockItWasGiven:
+
+    async def _block(self, session, ended_at, source=770001):
+        session.add(RigProductivityBlock(
+            rig_id=RIG, shift_date=DAY, shift_label="Morning",
+            turn_from="08:00", operator_id="op-a1", ended_at=ended_at,
+            episodes=1, recorded_secs=100.0, assigned_secs=2700.0,
+            fault_secs=0, down_secs=0, source_event=source,
+        ))
+        await session.commit()
+
+    async def test_an_overrun_is_found_however_long_ago_the_shift_was(
+            self, client, session):
+        """The same situation, swept from an instant an hour later, must
+        give the same answer whatever today's date happens to be."""
+        await push_schedule(session)
+        await self._block(session, at(8, 50))
+
+        await sweep(session, now=at(9))
+        found = [a for a in await AlertRepository(session).open_alerts()
+                 if a.kind == rules.TURN_OVERRAN]
+        assert len(found) == 1, (
+            "the overrun vanished - the look-back is reading a clock the "
+            "sweep was not given"
+        )
+
+    async def test_the_look_back_window_is_measured_from_that_instant(
+            self, client, session):
+        """Inside the window from one `now`, outside it from another. If
+        the wall clock were involved, both would answer the same."""
+        await push_schedule(session)
+        await self._block(session, at(8, 50))
+
+        inside = await _overruns(session, 24, at(9))
+        outside = await _overruns(session, 24, at(9) + timedelta(days=3))
+        assert len(inside) == 1
+        assert outside == [], "the look-back ignored the instant it was given"
+
+    async def test_repeat_faults_are_counted_from_that_instant_too(
+            self, client, session):
+        """Same defect, same fix, different rule."""
+        for i, day in enumerate((DAY, DAY - timedelta(days=1))):
+            session.add(RigShiftCheck(
+                rig_id=RIG, shift_date=day, shift_label="Morning",
+                turn_from="08:00", operator_id="op-a1", at=at(9),
+                event="fault_opened", outcome="failed", subsystem="Gripper",
+                source_event=780000 + i,
+            ))
+        await session.commit()
+
+        near = await _repeat_faults(session, 7, at(9))
+        far = await _repeat_faults(session, 7, at(9) + timedelta(days=30))
+        assert near and near[0][2] == 2
+        assert far == [], "the fault window ignored the instant it was given"
+
+    async def test_two_sweeps_at_the_same_instant_agree(self, client, session):
+        """The property in one line: the sweep is a function of its now."""
+        await push_schedule(session)
+        await self._block(session, at(8, 50))
+
+        first = await sweep(session, now=at(9))
+        second = await sweep(session, now=at(9))
+        assert first["found"] == second["found"]
+        assert second["opened"] == 0, "the same situation opened a second alert"
