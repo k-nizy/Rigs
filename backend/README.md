@@ -150,6 +150,41 @@ says whether the other alerts can be believed.
 runs. If one fails part-way, Postgres leaves an INVALID index behind:
 drop it and run again rather than assuming it is usable.
 
+## If the database is lost
+
+The ledger is the system. Every other table is derived from it and can be
+dropped and rebuilt, which means a backup of this service is a backup of
+one table - and the format is not a private one:
+
+**A backup is a file of envelopes.** Every ledger row keeps the envelope
+the rig actually sent, and those envelopes are exactly what
+`POST /api/rigs/{rig_id}/events` accepts. So a restore is a replay of the
+same route a rig uses, with the same idempotency: it can be interrupted,
+resumed, or run twice by two people at once.
+
+```sql
+-- the backup
+COPY (SELECT envelope FROM rig_events ORDER BY rig_id, seq)
+  TO '/backup/rig_events.jsonl';
+```
+
+To restore, POST them back in batches, grouped by rig, then let the
+projection worker rebuild the facts. `tests/test_recovery.py` runs this
+whole drill - lose everything, restore from envelopes alone, assert every
+fact comes back identical - so it is a path that gets exercised rather
+than one first attempted during an outage.
+
+**Two things to know before you need this.**
+
+Schedules are *not* in the ledger. They are pushed by the desk, so a
+restore comes back with correct facts and an empty floor board. Have the
+desk push again; `/api/state` will say `pushedAt: null` until it does.
+
+Restored rows are new rows. `id`, `source_event` and `received_at` differ
+from the originals - they are this database's bookkeeping, not facts
+about the floor - and every fact that describes what happened on the
+floor comes back identical. The test asserts exactly that distinction.
+
 ## Still open with the platform team
 
 Seven domains or one `rigs` domain with seven models (their question
