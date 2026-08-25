@@ -3,100 +3,157 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Teleop Floor</title>
+<title>Teleop Floor — Verlet Robotics</title>
+<meta name="description" content="Two screens and one schedule between them. The desk generates the rotation and pushes it out; each rig reads its own copy.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="packages/brand/brand.css">
 <style>
-:root {
-  --ground: #f4f6f7; --panel: #ffffff; --ink: #0f1418; --ink-2: #414c57;
-  --muted: #6f7b87; --line: #dbe1e7; --line-2: #bfc8d1; --accent: #b06d00;
-  --desk: #1f6f9a; --rig: #c2571b;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --ground: #0c0f12; --panel: #14181d; --ink: #e9edf1; --ink-2: #b0bac4;
-    --muted: #7c8794; --line: #242b33; --line-2: #384250; --accent: #ffc400;
-    --desk: #63aad4; --rig: #e5895a;
-  }
-}
-:root[data-theme="dark"] {
-  --ground: #0c0f12; --panel: #14181d; --ink: #e9edf1; --ink-2: #b0bac4;
-  --muted: #7c8794; --line: #242b33; --line-2: #384250; --accent: #ffc400;
-  --desk: #63aad4; --rig: #e5895a;
-}
 * { box-sizing: border-box; margin: 0; padding: 0; }
+
 body {
-  background: var(--ground); color: var(--ink);
-  font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
-  line-height: 1.5; padding: clamp(1.5rem, 6vw, 4rem);
+  background: var(--v-ground);
+  color: var(--v-ink);
+  font-family: var(--v-sans);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
 }
-main { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem; }
-.eyebrow {
-  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.7rem;
-  letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted);
+
+/* The site's own header shape: mark and wordmark left, one action right,
+   a hairline under the whole thing. */
+.top {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem;
+  padding: 1.05rem clamp(1.25rem, 5vw, 3rem);
+  border-bottom: 1px solid var(--v-line);
+  background: var(--v-ground);
 }
-h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); font-weight: 800; letter-spacing: -0.035em; line-height: 1; margin-top: 0.4rem; }
-header p { color: var(--ink-2); margin-top: 0.8rem; max-width: 60ch; font-size: 0.95rem; }
-.apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+.top .v-wordmark { font-size: 1.15rem; }
+.top nav { display: flex; align-items: center; gap: 1.25rem; }
+.top nav a { color: var(--v-ink-2); text-decoration: none; font-size: 0.875rem; }
+.top nav a:hover { color: var(--v-ink); }
+
+main {
+  max-width: 62rem;
+  margin: 0 auto;
+  padding: clamp(2.5rem, 8vw, 5.5rem) clamp(1.25rem, 5vw, 3rem) 4rem;
+  display: flex; flex-direction: column; gap: clamp(2.5rem, 6vw, 4rem);
+}
+
+/* The hero. Serif, tight, and one grey line under it — the whole of the
+   reference page's first screen is those two things and a lot of air. */
+.hero h1 {
+  font-family: var(--v-display);
+  font-weight: 400;
+  font-size: clamp(2.4rem, 7vw, 4.25rem);
+  letter-spacing: var(--v-display-tracking);
+  line-height: 1.02;
+  margin-top: 0.75rem;
+}
+.hero .lede {
+  color: var(--v-muted);
+  font-size: clamp(1.05rem, 2.2vw, 1.4rem);
+  margin-top: 1.1rem;
+  max-width: 46ch;
+  line-height: 1.4;
+}
+.hero .actions { display: flex; align-items: center; gap: 1.1rem; margin-top: 2rem; flex-wrap: wrap; }
+
+.apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 1rem; }
+
 a.app {
-  display: block; text-decoration: none; color: inherit; background: var(--panel);
-  border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 4px;
-  padding: 1.1rem 1.2rem 1.2rem;
+  display: block; text-decoration: none; color: inherit;
+  background: var(--v-panel);
+  border: 1px solid var(--v-line);
+  border-radius: var(--v-radius);
+  padding: 1.4rem 1.5rem 1.5rem;
+  transition: border-color .12s ease, transform .12s ease;
 }
-a.app:hover { border-color: var(--c); }
-a.app:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-a.app h2 { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
-a.app .who { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--c); }
-a.app p { color: var(--ink-2); font-size: 0.86rem; margin-top: 0.5rem; }
-a.app code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.76rem; color: var(--muted); display: block; margin-top: 0.7rem; }
-.rule { border: 0; border-top: 1px solid var(--line); }
-.note { font-size: 0.86rem; color: var(--ink-2); }
-.note b { font-weight: 600; color: var(--ink); }
-.note code, .flow code {
-  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.82rem;
-  background: var(--panel); border: 1px solid var(--line); padding: 0.05rem 0.3rem; border-radius: 3px;
+a.app:hover { border-color: var(--v-line-2); transform: translateY(-1px); }
+a.app:focus-visible { outline: 2px solid var(--v-accent); outline-offset: 2px; }
+a.app h2 {
+  font-family: var(--v-display); font-weight: 400;
+  font-size: 1.5rem; letter-spacing: var(--v-display-tracking);
+  margin-top: 0.55rem;
 }
+a.app p { color: var(--v-ink-2); font-size: 0.92rem; margin-top: 0.6rem; }
+a.app .path {
+  font-family: var(--v-mono); font-size: 0.75rem; color: var(--v-muted);
+  display: block; margin-top: 1rem;
+}
+
 .flow {
-  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
-  font-size: 0.8rem; color: var(--muted);
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  display: flex; align-items: center; gap: 0.55rem; flex-wrap: wrap;
+  font-family: var(--v-mono); font-size: 0.78rem; color: var(--v-muted);
 }
-.flow span.arrow { color: var(--line-2); }
+.flow .arrow { color: var(--v-line-2); }
+
+.note { font-size: 0.92rem; color: var(--v-ink-2); max-width: 68ch; }
+.note code, .flow code {
+  font-family: var(--v-mono); font-size: 0.82em;
+  background: var(--v-sunk); border: 1px solid var(--v-line);
+  padding: 0.06rem 0.32rem; border-radius: var(--v-radius-sm);
+}
+hr.rule { border: 0; border-top: 1px solid var(--v-line); }
+
+footer {
+  border-top: 1px solid var(--v-line);
+  padding: 1.4rem clamp(1.25rem, 5vw, 3rem);
+  display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  font-size: 0.8rem; color: var(--v-muted);
+}
 </style>
 </head>
 <body>
+
+<header class="top">
+  <a class="v-lockup" href="/">
+    <span class="v-mark" aria-hidden="true"></span>
+    <span class="v-wordmark">Verlet Robotics</span>
+  </a>
+  <nav>
+    <a href="rotation-desk-v1/">Desk</a>
+    <a href="apps/rig/">Rig</a>
+    <a class="v-btn" href="rotation-desk-v1/">Open the desk</a>
+  </nav>
+</header>
+
 <main>
 
-  <header>
-    <p class="eyebrow">16 operators &middot; 12 rigs &middot; 4 groups</p>
+  <section class="hero">
+    <p class="v-eyebrow">16 operators &middot; 12 rigs &middot; 4 groups</p>
     <h1>Teleop Floor</h1>
-    <p>Two screens and one schedule between them. The desk generates the rotation and pushes it out; each rig reads its own copy and already knows who is standing there. Neither can compute a different answer, because both run the same engine.</p>
-  </header>
+    <p class="lede">Two screens and one schedule between them.</p>
+    <div class="actions">
+      <a class="v-btn" href="rotation-desk-v1/">Open the desk</a>
+      <a class="v-btn v-btn--quiet" href="apps/rig/">Open a rig</a>
+    </div>
+  </section>
 
-  <div class="apps">
-    <a class="app" href="rotation-desk-v1/" style="--c: var(--desk)">
-      <span class="who">Manager</span>
-      <h2>Rotation Desk <span style="font-size:.72em;color:var(--muted)">v1</span></h2>
-      <p>Assign four operators and a task to each group of three rigs. The rotation is generated in the reference-sheet format, checked against the 6h / 1h / 1h budget, and handed to the rigs.</p>
-      <code>rotation-desk-v1/</code>
+  <section class="apps">
+    <a class="app" href="rotation-desk-v1/">
+      <span class="v-eyebrow">Manager</span>
+      <h2>Rotation Desk</h2>
+      <p>Assign four operators and a task to each group of three rigs. The rotation is generated in the reference-sheet format, checked against the 6h&nbsp;/&nbsp;1h&nbsp;/&nbsp;1h budget, and handed to the rigs.</p>
+      <span class="path">rotation-desk-v1/</span>
     </a>
 
-    <a class="app" href="apps/rig/" style="--c: var(--rig)">
-      <span class="who">Operator</span>
+    <a class="app" href="apps/rig/">
+      <span class="v-eyebrow">Operator</span>
       <h2>Rig Pedal Loop</h2>
       <p>One full-screen page, three foot pedals, no login and no task picker. It reads the pushed schedule and signs the right operator in when their turn starts.</p>
-      <code>apps/rig/</code>
+      <span class="path">apps/rig/</span>
     </a>
-  </div>
+  </section>
 
   <hr class="rule">
 
   <p class="flow">
-    <span>desk</span><span class="arrow">-&gt;</span>
-    <span>rigPayload()</span><span class="arrow">-&gt;</span>
-    <span>apps/rig/schedule.json</span><span class="arrow">-&gt;</span>
-    <span>whoIsOn()</span><span class="arrow">-&gt;</span>
+    <span>desk</span><span class="arrow">&rarr;</span>
+    <span>rigPayload()</span><span class="arrow">&rarr;</span>
+    <span>POST /api/schedules/push</span><span class="arrow">&rarr;</span>
+    <span>whoIsOn()</span><span class="arrow">&rarr;</span>
     <span>the operator is signed in</span>
   </p>
 
@@ -104,6 +161,16 @@ a.app code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0
     The schedule lives in <code>packages/engine/rotation-engine.js</code>, which both apps load. It has no DOM and no globals, so it runs in the browser and under node alike &mdash; and the rig cannot drift from the desk that scheduled it. The desk is locked to the reference sheet: 15-minute blocks, 45-minute turns, each operator holding one rig until they step off. <code>packages/engine/reference-sheet.test.js</code> holds that sheet cell by cell and fails the build if the engine stops drawing it.
   </p>
 
+  <p class="note">
+    What the rigs send back goes to <code>backend/</code> &mdash; an append-only ledger, from which every other table is derived. Episodes, faults, downtime and productivity, a floor board that notices the things nothing publishes, and a video path that lets a rig delete its own copy only once the bytes are verified.
+  </p>
+
 </main>
+
+<footer>
+  <span>&copy; 2026 Verlet Robotics</span>
+  <span class="v-eyebrow">Morning 08:00 &middot; Day 16:00 &middot; Night 00:00</span>
+</footer>
+
 </body>
 </html>
