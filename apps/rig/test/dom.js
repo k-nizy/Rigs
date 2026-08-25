@@ -224,7 +224,13 @@ async function mountRig(opts) {
 
   global.Date = FakeDate;
   global.window = global;
-  global.location = { hash: opts.hash ? "#" + opts.hash : "", search: opts.search || "" };
+  global.location = {
+    hash: opts.hash ? "#" + opts.hash : "",
+    search: opts.search || "",
+    /* Real pages have one, and code that decides what is same-origin has
+       to be exercised against a location that behaves like a browser's. */
+    origin: opts.origin || "http://localhost:8000",
+  };
   /* Only `now` is faked. Inheriting the rest matters: node's own fetch
      reaches for performance.markResourceTiming, so a stub that replaces
      the whole object breaks any test that talks to a real server. */
@@ -247,6 +253,11 @@ async function mountRig(opts) {
   const roster = require(path.join(REPO, "packages/demo-roster/demo-roster.js"));
   global.DEMO_ROSTER = structuredClone(roster);   // never let one test's edits reach the next
   global.PUSHED_SCHEDULE = opts.pushed || undefined;
+  /* The journal. A test that hands the same one to two mounts is
+     simulating a reload, which is the whole point of it existing. */
+  global.RIG_JOURNAL = opts.journal || undefined;
+  /* The token Ansible places on the machine. */
+  global.RIG_TOKEN = opts.token || undefined;
 
   const errors = [];
   new Function(fs.readFileSync(path.join(ROOT, "assets/rig.js"), "utf8"))();
@@ -343,6 +354,15 @@ async function mountRig(opts) {
        recorder of its own and drives the three steps by hand rather than
        waiting on the uploader's timer. */
     setVideoSource(fn) { if (global.setVideoSource) global.setVideoSource(fn); },
+    journal() { return global.rigJournal ? global.rigJournal() : null; },
+    /* What the injected journal is still holding - the durable half of
+       the outbox, as opposed to the in-memory one. */
+    journalHeld() {
+      return opts.journal && opts.journal.heldEvents ? opts.journal.heldEvents() : [];
+    },
+    journalVideos() {
+      return opts.journal && opts.journal.heldVideos ? opts.journal.heldVideos() : [];
+    },
     video() { return global.rigVideo ? global.rigVideo() : null; },
     async uploadVideo(times) {
       for (let i = 0; i < (times || 1); i++) {

@@ -914,6 +914,9 @@ function emit(event, bucket, detail, data) {
   // Held until the server acknowledges it. A rig with no network keeps
   // working and keeps filing; the outbox grows and drains later.
   outbox.push(e);
+  /* Journal before network, always. The uploader runs on a timer and is
+     never the thing holding an event; this is. */
+  onJournal(() => journal.appendEvent(e), "an event");
   logLines.push({ at: clock(S ? S.t : 0), event, bucket, detail });
   const el = document.getElementById("log");
   el.innerHTML = logLines.slice(-40).map((l) =>
@@ -924,6 +927,216 @@ function emit(event, bucket, detail, data) {
    tests can assert the shape the backend receives, rather than the
    sentence the operator reads. */
 window.rigEvents = () => envelopes.slice();
+
+// ------------------------------------------------------------ credentials
+
+/* The machine authenticates; the operator never does.
+
+   That is the whole of the rig's auth story and it is what lets this
+   screen keep having no login. Ansible places a token on the machine
+   beside `/etc/rig/id`, the page is served with it, and every call the
+   rig makes carries it. Nobody standing at the rig types anything.
+
+   Only same-origin calls get the header. A presigned upload URL points
+   at the object store, is already signed, and is not ours to add
+   credentials to - sending a bearer token to somebody else's bucket is
+   how a token ends up in somebody else's logs. */
+
+const RIG_TOKEN = (typeof window !== "undefined" && window.RIG_TOKEN) || "";
+
+function ours(url) {
+  const u = String(url);
+  if (u.startsWith("/")) return true;                    // rooted at us
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(u)) return true;      // no scheme: relative
+  /* Absolute, with a scheme. Ours only if it names our own origin - and
+     if we cannot tell what that is, the answer is no. An earlier version
+     fell back to `location.origin || ""`, and startsWith("") is true of
+     every string, so an unknown origin quietly sent the floor's token to
+     every host the rig was pointed at. */
+  const origin = (typeof location === "object" && location.origin) || null;
+  return !!origin && (u === origin || u.startsWith(origin + "/"));
+}
+
+function withToken(url, init) {
+  if (!RIG_TOKEN || !ours(url)) return init;
+  const opts = Object.assign({}, init);
+  opts.headers = Object.assign({}, opts.headers, {
+    Authorization: "Bearer " + RIG_TOKEN,
+  });
+  return opts;
+}
+
+/* Everything the rig sends goes through here, so a route added later
+   cannot quietly be the one that forgot to authenticate. */
+function api(url, init) {
+  return fetch(url, withToken(url, init));
+}
+
+// ----------------------------------------------------------- the journal
+
+/* The rig tells the operator, on the session-ended screen:
+
+       Downtime and episodes are queued for upload.
+
+   Until this existed that sentence was aspirational. The outbox was an
+   array, so a reload, a crash, a closed lid or a browser deciding to
+   discard a background tab took every event since boot with it - and the
+   screen said they were safe the whole time. A promise on a screen that
+   the code does not keep is worse than no promise.
+
+   The plan writes this as `/var/lib/rig/journal.ndjson`, flushed before
+   the UI advances, with the uploader a separate process reading from a
+   checkpoint. That is the Tauri shape and it is the right one. This is
+   the same property in the medium a browser actually has: IndexedDB,
+   which survives a reload, holds Blobs, and is measured in gigabytes
+   rather than the five megabytes of localStorage.
+
+   One honest difference. A browser cannot write synchronously, so "on
+   disk before the UI advances" becomes "handed to the store before the
+   network is touched". A hard power cut in the few milliseconds before
+   that transaction commits can still lose the last event. Closing that
+   window needs a synchronous write, which needs Tauri. Everything larger
+   than that window - which is every failure an operator will actually
+   have - is covered.
+
+   `window.RIG_JOURNAL` is the seam. Tauri injects a disk-backed one and
+   nothing below this line changes; the tests inject one that survives a
+   remount, which is what a reload is. */
+
+const memoryJournal = {
+  durable: false,
+  async load() { return { events: [], videos: [] }; },
+  async appendEvent() {},
+  async forgetEvents() {},
+  async putVideo() {},
+  async forgetVideo() {},
+};
+
+function browserJournal() {
+  const NAME = "rigs-rig-journal";
+  const VERSION = 1;
+  let opening = null;
+
+  function db() {
+    if (opening) return opening;
+    opening = new Promise((resolve, reject) => {
+      const req = indexedDB.open(NAME, VERSION);
+      req.onupgradeneeded = () => {
+        const d = req.result;
+        /* Keyed on what already makes each row unique. eventId is what
+           the server dedupes on, so re-appending the same event cannot
+           produce two of it here either. */
+        if (!d.objectStoreNames.contains("events")) {
+          d.createObjectStore("events", { keyPath: "eventId" })
+           .createIndex("rig", "rigId");
+        }
+        if (!d.objectStoreNames.contains("videos")) {
+          d.createObjectStore("videos", { keyPath: "key" })
+           .createIndex("rig", "rigId");
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return opening;
+  }
+
+  /* One transaction, resolved on complete rather than on the request -
+     a request that succeeded inside a transaction that then aborted did
+     not happen, and treating it as done would drop the only copy. */
+  function tx(store, mode, fn) {
+    return db().then((d) => new Promise((resolve, reject) => {
+      const t = d.transaction(store, mode);
+      let value;
+      const req = fn(t.objectStore(store));
+      if (req) req.onsuccess = () => { value = req.result; };
+      t.oncomplete = () => resolve(value);
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error || new Error("transaction aborted"));
+    }));
+  }
+
+  return {
+    durable: true,
+    async load(rigId) {
+      const events = (await tx("events", "readonly",
+        (s) => s.index("rig").getAll(rigId))) || [];
+      const videos = (await tx("videos", "readonly",
+        (s) => s.index("rig").getAll(rigId))) || [];
+      /* getAll comes back in key order, which is eventId - meaningless.
+         The uploader sends oldest first, so put them back in the order
+         they were filed. */
+      events.sort((a, b) => a.seq - b.seq);
+      return { events, videos };
+    },
+    appendEvent(ev) { return tx("events", "readwrite", (s) => s.put(ev)); },
+    forgetEvents(ids) {
+      return tx("events", "readwrite", (s) => { ids.forEach((id) => s.delete(id)); });
+    },
+    putVideo(item) { return tx("videos", "readwrite", (s) => s.put(item)); },
+    forgetVideo(key) { return tx("videos", "readwrite", (s) => s.delete(key)); },
+  };
+}
+
+let journal = memoryJournal;
+if (typeof window !== "undefined" && window.RIG_JOURNAL) {
+  journal = window.RIG_JOURNAL;
+} else if (typeof indexedDB !== "undefined" && indexedDB) {
+  try { journal = browserJournal(); } catch (e) { journal = memoryJournal; }
+}
+
+/* Writes are serialised. Two appends racing inside IndexedDB is safe, but
+   an append racing the forget that follows an acknowledgement is not: the
+   delete can land before the put and leave a row nobody will ever send. */
+let journalChain = Promise.resolve();
+let journalBroken = false;
+
+function onJournal(fn, what) {
+  journalChain = journalChain.then(fn).catch((e) => {
+    /* A journal that has stopped working must not stop the rig. The
+       operator keeps working and the events stay in memory; what changes
+       is that the screen may no longer promise they are safe. */
+    if (!journalBroken) {
+      journalBroken = true;
+      emitLog("journal_failed", "sessions",
+              what + " could not be written: " + String((e && e.message) || e));
+    }
+  });
+  return journalChain;
+}
+
+/* Read back whatever the last boot did not finish sending. */
+async function recoverJournal() {
+  let held;
+  try {
+    held = await journal.load(RIG_ID);
+  } catch (e) {
+    journalBroken = true;
+    return { events: 0, videos: 0 };
+  }
+  const events = (held && held.events) || [];
+  const videos = (held && held.videos) || [];
+
+  if (events.length) {
+    /* In front of anything filed this boot, because they are older. */
+    outbox.unshift(...events);
+    /* seq must not go backwards or repeat: it is the cursor the server
+       reads. alignSeq only ever raises it, so doing this first is safe. */
+    const highest = events.reduce((m, e) => Math.max(m, e.seq || 0), -1);
+    if (highest + 1 > seq) seq = highest + 1;
+  }
+  videos.forEach((v) => {
+    if (v && v.blob) videoQueue.push({ episodeId: v.episodeId, camera: v.camera, blob: v.blob });
+  });
+
+  /* Reported, not logged. boot() clears the drawer log and then files
+     the shift check, so a line written here is wiped a moment later and
+     the operator never sees that there is a backlog at all. */
+  return { events: events.length, videos: videos.length };
+}
+
+/* For the tests and the drawer. */
+window.rigJournal = () => ({ durable: !!journal.durable, broken: journalBroken });
 
 // ---------------------------------------------------------- the uploader
 
@@ -955,8 +1168,8 @@ let uploadError = null;          // why the last attempt failed, for the drawer
    it exists, rather than only after a network drop. */
 async function alignSeq() {
   try {
-    const r = await fetch("/api/rigs/" + encodeURIComponent(RIG_ID) + "/cursor",
-                          { cache: "no-store" });
+    const r = await api("/api/rigs/" + encodeURIComponent(RIG_ID) + "/cursor",
+                        { cache: "no-store" });
     if (!r.ok) return false;
     const { seq: held } = await r.json();
     if (typeof held === "number" && held + 1 > seq) seq = held + 1;
@@ -971,7 +1184,7 @@ async function flush() {
   uploading = true;
   const batch = outbox.slice(0, UPLOAD_BATCH);
   try {
-    const r = await fetch("/api/rigs/" + encodeURIComponent(RIG_ID) + "/events", {
+    const r = await api("/api/rigs/" + encodeURIComponent(RIG_ID) + "/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ events: batch }),
@@ -979,6 +1192,9 @@ async function flush() {
 
     if (r.ok) {
       outbox.splice(0, batch.length);
+      /* Only now. The server has them, so this rig no longer needs to. */
+      onJournal(() => journal.forgetEvents(batch.map((e) => e.eventId)),
+                "an acknowledgement");
       uploadFailures = 0;
       uploadState = outbox.length ? "sending" : "idle";
     } else if (r.status === 422) {
@@ -989,6 +1205,12 @@ async function flush() {
          events its own schema rejects is a bug in the rig, and it should
          be loud rather than silent. */
       rejected.push(...outbox.splice(0, batch.length));
+      /* Dropped from the journal too. A batch the server refuses will be
+         refused again on every boot for ever, and a journal that reloads
+         events nobody will accept never drains. They stay in memory and
+         in the log, which is where a bug in this rig belongs. */
+      onJournal(() => journal.forgetEvents(batch.map((e) => e.eventId)),
+                "a rejection");
       uploadState = "rejected";
       emitLog("upload_rejected", "sessions",
               batch.length + " events refused by the server — see the log");
@@ -1090,7 +1312,14 @@ function queueVideo(episodeId) {
   if (!videoSource || !episodeId) return;
   CAMERAS.forEach((cam) => {
     const blob = videoSource(episodeId, camSlug(cam));
-    if (blob) videoQueue.push({ episodeId, camera: camSlug(cam), blob });
+    if (!blob) return;
+    const camera = camSlug(cam);
+    videoQueue.push({ episodeId, camera, blob });
+    /* The take outlives the tab. Video is the one thing here with no
+       second copy anywhere until the server confirms it. */
+    onJournal(() => journal.putVideo({
+      key: episodeId + "/" + camera, rigId: RIG_ID, episodeId, camera, blob,
+    }), "a video");
   });
 }
 
@@ -1099,7 +1328,7 @@ async function sendVideo(item) {
                "/episodes/" + encodeURIComponent(item.episodeId);
   const json = { "Content-Type": "application/json" };
 
-  const asked = await fetch(base + "/video:presign", {
+  const asked = await api(base + "/video:presign", {
     method: "POST", headers: json,
     body: JSON.stringify({ camera: item.camera }),
   });
@@ -1117,10 +1346,12 @@ async function sendVideo(item) {
   const where = await asked.json();
 
   const buf = await item.blob.arrayBuffer();
-  const put = await fetch(where.url, { method: where.method || "PUT", body: buf });
+  /* where.url is absolute for a presigned upload and relative for the
+     gateway model; `api` adds the token only to the second. */
+  const put = await api(where.url, { method: where.method || "PUT", body: buf });
   if (!put.ok) throw new Error("put HTTP " + put.status);
 
-  const said = await fetch(base + "/video:complete", {
+  const said = await api(base + "/video:complete", {
     method: "POST", headers: json,
     body: JSON.stringify({
       camera: item.camera,
@@ -1146,6 +1377,8 @@ async function flushVideo() {
   try {
     const result = await sendVideo(item);
     videoQueue.shift();          // only now: the server has verified it
+    onJournal(() => journal.forgetVideo(item.episodeId + "/" + item.camera),
+              "a confirmed video");
     videoSent.push(result.key);
     videoFailures = 0;
     videoState = videoQueue.length ? "sending" : "idle";
@@ -1281,7 +1514,7 @@ async function loadPayload(rigId) {
   // to the co-located schedule.json (still supported for a plain static
   // deploy) and then to a locally generated schedule so the demo runs.
   try {
-    const r = await fetch("/api/rigs/" + encodeURIComponent(id) + "/schedule.json", { cache: "no-store" });
+    const r = await api("/api/rigs/" + encodeURIComponent(id) + "/schedule.json", { cache: "no-store" });
     if (r.ok) { SOURCE = "server"; return await r.json(); }
   } catch (e) { /* server not up */ }
   try {
@@ -1354,10 +1587,21 @@ addEventListener("resize", () => { lastViewKey = null; render(); });
 
 async function start(rigId) {
   applyPayload(await loadPayload(rigId));
+  /* Before anything is filed, and before the cursor is read: whatever the
+     last boot did not finish sending is still owed to the server, and its
+     sequence numbers have to be accounted for before new ones are minted. */
+  const owed = await recoverJournal();
   // Ask what the server already holds before filing anything, so `seq`
   // carries on rather than restarting and going backwards.
   await alignSeq();
   boot(location.hash.slice(1));   // boot() reads the turn in progress back itself
+  /* After boot, which clears the log. A backlog the operator cannot see
+     is the same as no backlog from where they are standing. */
+  if (owed && (owed.events || owed.videos)) {
+    emitLog("journal_recovered", "sessions",
+            owed.events + " events and " + owed.videos +
+            " videos were still waiting from before the last restart");
+  }
   startUploader();
   startVideoUploader();
 }

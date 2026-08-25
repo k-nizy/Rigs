@@ -154,7 +154,35 @@ checklist → handover → recording → review → resetting → (loop)
   episode to land before rotating.
 - The event log tags each event with its backend bucket (`episodes`,
   `rig_shift_checks`, `rig_downtime_events`, `rig_productivity_blocks`,
-  `sessions`). Nothing is persisted yet.
+  `sessions`). These are filed as real envelopes, journalled to IndexedDB
+  before the network is touched, and uploaded to `backend/`.
+- The rig has no login and never will: a token placed on the machine
+  authenticates it, and the operator authenticates nothing.
+
+## The return arrow (built)
+
+`backend/` is the other half: a FastAPI service on Postgres, laid out in
+the platform team's convention so `core/` and `services/rigs/` lift into
+their tree unmodified. Its own README covers it; three properties are
+worth knowing here because nothing in a route list shows them.
+
+**The ledger is the system.** `POST /api/rigs/:rigId/events` appends to an
+append-only table and every other table is *derived* from it. Replay is
+the property the design is arranged around.
+
+**Sending the same events twice is safe.** Unique on `(rigId, eventId)`,
+so a rig that loses its connection mid-batch retries blind and a resend
+reports `accepted: 0`. `GET .../cursor` tells it where it got to.
+
+**Measurements, not conclusions.** No percentage is stored. A productivity
+block keeps four seconds columns and efficiency is computed at read time
+from one definition, so correcting the formula corrects every shift ever
+recorded.
+
+The service stores the pushed payload opaque and reads it back. It never
+derives a rotation - that is the founding invariant, and a Python
+re-implementation would be a third answer and the first one that could
+silently disagree.
 
 ## The push (built)
 
@@ -182,14 +210,12 @@ no server.
 
 The sheet defines the scope. It does not speak to:
 
-- **Persistence of the rig event log.** Buckets are named in `emit()`
-  (`episodes`, `rig_shift_checks`, `rig_downtime_events`,
-  `rig_productivity_blocks`, `sessions`) but nothing writes them.
 - **Crew changeover at shift boundaries.** The engine hard-codes three
   8-hour shifts; the rig treats each boot as the start of a shift. No
   handover-window vs. cold-takeover decision has been made.
-- **Auth, accounts, permissions.** The rig has no login by design; the
-  desk has no gate.
+- **Accounts and permissions for people.** The rig authenticates as a
+  machine and that is settled; who may read the desk, and whether anyone
+  reviews the scores an operator gives their own takes, is not.
 
 These are open questions to answer when the product is ready, not
 implicit requirements to fill in.

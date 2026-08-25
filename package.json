@@ -3,7 +3,7 @@
   "private": true,
   "description": "Teleop floor: rotation desk and rig pedal loop, sharing one engine.",
   "scripts": {
-    "test": "node --test packages/engine/engine.test.js packages/engine/reference-sheet.test.js packages/schema/schema.test.js packages/schema/event.test.js apps/server/server.test.js rotation-desk-v1/desk.test.js apps/rig/rig.test.js",
+    "test": "node --test packages/engine/engine.test.js packages/engine/reference-sheet.test.js packages/schema/schema.test.js packages/schema/event.test.js apps/server/server.test.js rotation-desk-v1/desk.test.js apps/rig/rig.test.js apps/rig/journal.test.js apps/rig/credentials.test.js",
     "serve": "node apps/server/server.js",
     "build": "python rotation-desk-v1/tools/make-single-file.py && python apps/rig/tools/make-single-file.py"
   }

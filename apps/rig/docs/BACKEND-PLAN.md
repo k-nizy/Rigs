@@ -249,8 +249,21 @@ operator, on the session-ended screen:
 
 > Downtime and episodes are queued for upload.
 
-Today that sentence is aspirational. The journal is what makes it a
-statement of fact.
+That sentence was aspirational when this was written. It is now true in
+the browser: the rig journals to IndexedDB before it touches the network,
+reads back on boot whatever the last one did not finish sending, and
+forgets a row only when the server says it holds it. Video goes with it -
+bytes are the one thing here with no second copy anywhere until a take is
+confirmed.
+
+One honest gap remains, and it is the reason the disk journal above is
+still the target. A browser cannot write synchronously, so "flushed
+before the UI advances" becomes "handed to the store before the network
+is touched". A hard power cut in the few milliseconds before that
+transaction commits can still lose the last event. Every failure short of
+that - a reload, a crash, a closed lid, a discarded background tab - is
+covered. Closing the last window needs a synchronous write, which needs
+Tauri.
 
 ### Timestamps
 
@@ -431,11 +444,18 @@ happens to be what makes Phases 0 and 1 startable today.
 
 - **The RODA-RS API itself.** The adapter is a TODO by design. It is the
   one file in this plan written to be replaced.
-- **Auth.** There is still none, anywhere — which is a decision the repo
-  has been making implicitly and should now make on purpose. Recommended:
-  a per-rig token placed by Ansible, checked on ingest. The rig still has
-  no operator login; the *machine* authenticates, the person never does.
-  That preserves the app's central idea.
+- ~~**Auth.**~~ **Settled and built.** A per-rig token placed by Ansible
+  and checked on every rig-facing route: the *machine* authenticates, the
+  person never does, and the rig keeps its central idea of a screen with
+  no login. A token names one rig and is refused for any other, so one
+  compromised machine cannot attribute work across the floor. Unset, the
+  service is open and says so at startup and in `/api/health`, which is
+  what a deploy check reads.
+
+  Desk auth is deliberately **not** settled here. The desk is expected to
+  sit behind the platform team's gateway, which already owns who is
+  allowed in. `DESK_TOKEN` exists so a deployment without that in front
+  of it can still close the hole, and it is off by default.
 - **Retention.** How long episodes live in cloud, and whether discarded
   takes are kept at all. Cost scales directly with the answer.
 - **Review and QA of scores.** The operator scores their own take 3/4/5.
