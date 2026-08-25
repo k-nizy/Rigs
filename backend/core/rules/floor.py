@@ -237,6 +237,52 @@ def payload_zone(payload: dict, fallback: TzInfo) -> TzInfo:
         return fallback
 
 
+def shift_window(payload: dict, shift_date, tz: TzInfo) -> tuple[datetime, datetime] | None:
+    """When this payload's shift starts and ends, read from the payload.
+
+    The desk writes `start`, `end` and `tz` into every payload it pushes,
+    so asking whether a schedule is the one in force right now is a
+    comparison against something already written down - not a
+    calculation. That distinction is the whole reason this is allowed to
+    exist server-side at all: the rotation is computed in exactly one
+    shared JavaScript file, and a second implementation here would be a
+    third answer and the first that could silently disagree.
+
+    A shift whose `end` is not after its `start` has crossed midnight,
+    which the Day shift does every day: 16:00 to 00:00.
+    """
+    shift = payload.get("shift") or {}
+    start_s, end_s = shift.get("start"), shift.get("end")
+    if not start_s or not end_s:
+        return None
+
+    zone = payload_zone(payload, tz)
+
+    def at(hhmm: str) -> datetime | None:
+        try:
+            h, m = hhmm.split(":")
+            return datetime(shift_date.year, shift_date.month, shift_date.day,
+                            int(h), int(m), tzinfo=zone)
+        except (ValueError, AttributeError):
+            return None
+
+    start, end = at(start_s), at(end_s)
+    if start is None or end is None:
+        return None
+    if end <= start:
+        end += timedelta(days=1)
+    return start, end
+
+
+def shift_covers(payload: dict, shift_date, now: datetime, tz: TzInfo) -> bool:
+    """Is this the schedule in force at `now`?"""
+    window = shift_window(payload, shift_date, tz)
+    if window is None:
+        return False
+    start, end = window
+    return start <= now < end
+
+
 def turn_bounds(shift_date, turn: dict, tz: TzInfo) -> tuple[datetime, datetime]:
     """Absolute start and end of a turn, read from the pushed payload.
 

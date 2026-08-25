@@ -42,6 +42,21 @@ class Schedule(TimestampedBase):
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("push_id", "rig_id", name="uq_schedules_push_rig"),
+        # One row per rig per shift, per push.
+        #
+        # This was (push_id, rig_id), which assumed a push covered a
+        # single shift. It does not any more: the desk sends the whole
+        # day in one press, because a payload covers one shift and
+        # pushing only the current one is what left a rig holding a
+        # finished schedule at the boundary with nothing newer to pick
+        # up. Under the old key that push failed outright, since each
+        # rig appeared three times beneath one push id.
+        #
+        # The intent is unchanged and still holds: a rig cannot be given
+        # two versions of the same shift in one push, and every row of a
+        # push still shares its id, so an event can still name the exact
+        # schedule version in force when it happened.
+        UniqueConstraint("push_id", "rig_id", "shift_date", "shift_label",
+                         name="uq_schedules_push_rig_shift"),
         Index("ix_schedules_rig_shift", "rig_id", "shift_date", "shift_label"),
     )

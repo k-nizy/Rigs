@@ -357,6 +357,9 @@ async function mountRig(opts) {
        waiting on the uploader's timer. */
     setVideoSource(fn) { if (global.setVideoSource) global.setVideoSource(fn); },
     journal() { return global.rigJournal ? global.rigJournal() : null; },
+
+    /* Ask for a fresh schedule now rather than waiting on the timer. */
+    async resync() { if (global.rigResync) await global.rigResync(); await this.settle(); },
     /* What the injected journal is still holding - the durable half of
        the outbox, as opposed to the in-memory one. */
     journalHeld() {

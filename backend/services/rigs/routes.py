@@ -23,6 +23,7 @@ from core.domains.schedules.repository import ScheduleRepository
 from core.infrastructure.config import Settings, get_settings
 from core.infrastructure.database import get_session
 from core.workflows.floor import floor_state, operator_efficiency
+from core.workflows.schedules import in_force as schedules_in_force
 from services.rigs.auth import (
     desk_auth, desk_read_auth, rig_auth, rig_auth_for_key, rig_rate_limit,
 )
@@ -144,9 +145,16 @@ async def heartbeat(
             dependencies=[Depends(rig_auth), Depends(rig_rate_limit)],
             summary="The schedule currently in force for this rig")
 async def schedule(rig_id: str, session: AsyncSession = Depends(get_session)) -> dict:
-    """The payload this rig was pushed, returned verbatim. Stored opaque,
-    read opaque - the rotation is computed in exactly one place and this
-    is not it.
+    """The payload in force for this rig right now, returned verbatim.
+
+    Whichever pushed payload covers this instant, not whichever was
+    pushed last. A payload covers one shift, so serving the newest is
+    what left a rig holding a finished Morning schedule at 16:00 and
+    sitting on Standby until somebody reloaded it.
+
+    The choice is a comparison against the window the desk wrote into
+    the payload, never a calculation - stored opaque, read opaque, the
+    rotation is computed in exactly one place and this is not it.
 
     Served at both `/schedule` and `/schedule.json`. The rig asks for the
     second because that is what the existing static server answers to,
@@ -155,7 +163,7 @@ async def schedule(rig_id: str, session: AsyncSession = Depends(get_session)) ->
     generating its own schedule and said so on the wall, which is exactly
     what that badge is for.
     """
-    sched = await ScheduleRepository(session).current_for_rig(rig_id)
+    sched = await schedules_in_force(session, rig_id)
     if sched is None:
         raise HTTPException(status_code=404, detail=f"nothing pushed to {rig_id}")
     return sched.payload
@@ -371,10 +379,19 @@ async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> Pu
 
     All-or-nothing, like the ingest route and for the same reason: a
     floor running half a schedule is worse than a floor running none.
+
+    A push carries a whole day - every rig, every shift - because a
+    payload covers one shift, and pushing only the current one is what
+    left a rig holding a finished schedule at the boundary with nothing
+    newer to pick up.
     """
     push_id = uuid.uuid4()
     pushed_at = datetime.now(timezone.utc)
     rows = []
+    # One version of a shift per rig, per push. The database enforces it
+    # too, but reaching it means an IntegrityError surfacing as a 500 -
+    # a malformed push deserves to be told what is wrong with it.
+    seen: set[tuple[str, date, str]] = set()
 
     for i, payload in enumerate(body.payloads):
         try:
@@ -389,6 +406,15 @@ async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> Pu
                 status_code=422,
                 detail=f"payloads[{i}] is not a schedule this service can file: {e}",
             )
+        key = (rig_id, shift_date, shift_label)
+        if key in seen:
+            raise HTTPException(
+                status_code=422,
+                detail=(f"payloads[{i}] repeats {rig_id} {shift_label} on "
+                        f"{shift_date}; one push may carry one version of a shift"),
+            )
+        seen.add(key)
+
         rows.append(
             Schedule(
                 push_id=push_id, pushed_at=pushed_at, rig_id=rig_id,

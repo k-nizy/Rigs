@@ -495,7 +495,7 @@ test("with a server, Live says it is showing the floor",
 
 /* ------------------------------------------------------- the push */
 
-test("Push to floor sends twelve payloads that all validate",
+test("Push to floor sends every rig, for every shift of the day",
   withDesk({
     fetchImpl: (url, init) => {
       if (String(url) === "/api/state") return Promise.reject(new Error("empty"));
@@ -513,15 +513,34 @@ test("Push to floor sends twelve payloads that all validate",
     await new Promise(r => setImmediate(r));
     await new Promise(r => setImmediate(r));
 
-    assert.equal(sent.length, 12, "one payload per rig");
+    /* Twelve rigs across three shifts. A payload covers one shift, so
+       pushing only the one on screen is what left a rig holding a
+       finished Morning schedule at 16:00 with nothing newer to pick up. */
+    assert.equal(sent.length, 36, "twelve rigs, three shifts");
     sent.forEach(p => {
       const v = validate(p);
       assert.ok(v.ok, p.rigId + " failed validation: " + JSON.stringify(v.errors));
     });
-    assert.deepEqual(sent.map(p => p.rigId).sort(),
+
+    const rigs = [...new Set(sent.map(p => p.rigId))].sort();
+    assert.deepEqual(rigs,
       ["RIG-01", "RIG-02", "RIG-03", "RIG-04", "RIG-05", "RIG-06",
        "RIG-07", "RIG-08", "RIG-09", "RIG-10", "RIG-11", "RIG-12"]);
-    assert.match(desk.$("push-note").textContent, /^Pushed 12 rigs at /);
+
+    const shifts = [...new Set(sent.map(p => p.shift.label))].sort();
+    assert.deepEqual(shifts, ["Day", "Morning", "Night"],
+      "the whole day has to go up, or the floor stops at the first boundary");
+
+    // Every rig gets every shift, and no shift twice.
+    for (const r of rigs) {
+      const mine = sent.filter(p => p.rigId === r).map(p => p.shift.label).sort();
+      assert.deepEqual(mine, ["Day", "Morning", "Night"], r + " is missing a shift");
+    }
+
+    // It still fits the contract: the push route accepts at most 64.
+    assert.ok(sent.length <= 64, "a push larger than the route accepts");
+
+    assert.match(desk.$("push-note").textContent, /^Pushed 12 rigs, 3 shifts, at /);
   }));
 
 test("a push the server rejects says so, and does not pretend",

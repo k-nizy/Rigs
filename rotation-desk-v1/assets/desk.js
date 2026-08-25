@@ -36,7 +36,11 @@ const GROUPS = window.DEMO_ROSTER.groups;
 
 const cfg = {
   shift: window.DEMO_ROSTER.defaults.shift,
-  date: new Date().toISOString().slice(0, 10),
+  /* The floor's date, not UTC's. toISOString() is UTC, so on a floor at
+     UTC+2 everything between midnight and 02:00 was dated to yesterday -
+     and a schedule dated yesterday covers a window that has already
+     closed, which puts every rig on Standby. */
+  date: new Date().toLocaleDateString("en-CA"),
   blockMin: FORMAT.blockMin,
   stintBlocks: FORMAT.stintBlocks,
   mode: FORMAT.mode,
@@ -109,6 +113,28 @@ function toast(msg) {
 
 /* Every payload the desk would push right now, for when there is no
  * server to ask. Same function the push itself uses. */
+/* Every shift of the day, which is what a push sends.
+ *
+ * A payload covers one shift. Pushing only the one on screen is why a rig
+ * ran until 16:00 and then went quiet: it was still holding a Morning
+ * schedule with no turns left in it, and nothing newer existed to pick
+ * up. Three shifts of twelve rigs is thirty-six payloads, well inside the
+ * sixty-four a push already accepts.
+ *
+ * The sheet is untouched. This is the same rotation drawn three times,
+ * once per shift, not a different format. */
+function dayPayloads() {
+  const out = [];
+  RE.SHIFTS.forEach(shift => {
+    const p = RE.buildPlan(Object.assign({}, cfg, { shift: shift.id }), GROUPS);
+    GROUPS.forEach(g => g.rigs.forEach(r => {
+      const one = RE.rigPayload(p, r);
+      if (one) out.push(one);
+    }));
+  });
+  return out;
+}
+
 function localPayloads() {
   const p = plan();
   const out = [];
@@ -761,9 +787,9 @@ function renderPushPanel(p) {
  * of valid and invalid payloads, so the floor never runs half-updated. */
 async function pushFloor() {
   const btn = $("btn-push");
-  const payloads = localPayloads();
+  const payloads = dayPayloads();
   btn.disabled = true;
-  $("push-note").textContent = "Pushing " + payloads.length + " rigs...";
+  $("push-note").textContent = "Pushing " + RE.SHIFTS.length + " shifts...";
   try {
     const res = await fetch("/api/push", {
       method: "POST",
@@ -773,8 +799,10 @@ async function pushFloor() {
     const body = await res.json().catch(() => ({}));
     if (res.ok) {
       const at = new Date(body.pushedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      $("push-note").textContent = "Pushed " + body.count + " rigs at " + at;
-      toast("Pushed " + body.count + " rigs");
+      const rigs = Math.round(body.count / RE.SHIFTS.length);
+      $("push-note").textContent = "Pushed " + rigs + " rigs, " +
+        RE.SHIFTS.length + " shifts, at " + at;
+      toast("Pushed " + rigs + " rigs for the day");
       await loadFloor(false);          // Live should now show the floor, not the plan
     } else {
       $("push-note").textContent = "Rejected: " + (body.error || res.status);

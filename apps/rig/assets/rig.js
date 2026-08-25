@@ -493,6 +493,101 @@ function rotate() {
   go("handover");
 }
 
+// ------------------------------------------------------ keeping in step
+
+/* A payload covers one shift. Without this the rig read its schedule
+   once at boot and never again, so at 16:00 the Morning payload it was
+   holding ran out, `whoIsOn()` found nothing, and it dropped to Standby
+   until somebody walked round and reloaded twelve browsers. Three times
+   a day.
+
+   Two triggers, and they are different questions:
+
+     the payload has run out   ask now, and keep asking
+     everything is fine        ask occasionally, so a manager who fixes
+                               a roster mid-shift reaches the floor
+   Two rules, both of which protect work in progress:
+
+     never swap during a take. The rig already refuses to cut a
+     recording at a turn boundary; a schedule arriving mid-episode is
+     the same situation, and swapping would file the take under whoever
+     the new payload says is on.
+
+     never let a new payload put a working rig on Standby. If what
+     arrives leaves this rig with no turn covering now - the groups were
+     restructured, this rig was dropped while somebody fixed something -
+     applying it would strand an operator on a dead screen mid-shift. A
+     stale schedule that works beats a fresh one that stops the rig. */
+
+const RESYNC_IDLE_MS = 300000;   // five minutes, when nothing is wrong
+const RESYNC_HUNGRY_MS = 20000;  // when the payload has run out
+let resyncTimer = null;
+let resyncing = false;
+
+function pushId(p) {
+  /* Payloads carry no version, so identity is the shift they describe
+     plus who is in it. Enough to tell "the same schedule again" from "a
+     corrected roster", which is all this needs. */
+  if (!p || !p.shift) return "";
+  return [p.rigId, p.shift.date, p.shift.label,
+          (p.turns || []).map((t) => t.from + ":" + (t.operator && t.operator.id)).join(",")
+         ].join("|");
+}
+
+async function resync() {
+  if (resyncing || !PAYLOAD) return;
+
+  // Rule one: not while a take is in flight.
+  if (S && (S.phase === "recording" || S.phase === "review")) return;
+
+  resyncing = true;
+  try {
+    const next = await loadPayload(RIG_ID);
+    if (!next || next.rigId !== RIG_ID) return;        // never another rig's
+    if (pushId(next) === pushId(PAYLOAD)) return;      // the same schedule
+
+    // Rule two: not if it would strand a working operator.
+    const working = S && S.phase !== "standby" && S.phase !== "session_ended";
+    const covers = RE.whoIsOn(next, nowMin());
+    if (working && !covers) {
+      emitLog("schedule_held", "sessions",
+              "a new schedule arrived that does not cover this rig now — keeping the current one");
+      return;
+    }
+
+    /* applyPayload only. boot() would reset the state machine, clear the
+       drawer log and file a fresh shift check - it is what the demo's
+       rig switcher calls, and wiring it here would wipe the screen under
+       somebody mid-shift. */
+    applyPayload(next);
+    syncTurnKey();
+    lastViewKey = null;
+    const who = current();
+    emitLog("schedule_updated", "sessions",
+            who ? "Schedule updated — " + who.turn.operator.name + " on this rig now"
+                : "Schedule updated — nothing scheduled on this rig yet");
+    if (who) toast("Schedule updated — " + who.turn.operator.name);
+  } catch (e) {
+    // The floor keeps working on the schedule it has.
+  } finally {
+    resyncing = false;
+  }
+}
+
+function startResync() {
+  if (resyncTimer) return;
+  const beat = async () => {
+    await resync();
+    // Hungry while the rig has nothing to do, patient once it has.
+    const hungry = !PAYLOAD || !current();
+    resyncTimer = setTimeout(beat, hungry ? RESYNC_HUNGRY_MS : RESYNC_IDLE_MS);
+  };
+  resyncTimer = setTimeout(beat, RESYNC_HUNGRY_MS);
+}
+
+/* For the tests: ask now rather than waiting on the timer. */
+window.rigResync = resync;
+
 // ----------------------------------------------------------------- clock
 
 const SPEEDS = [1, 12, 30, 60];
@@ -1652,6 +1747,7 @@ async function start(rigId) {
   }
   startUploader();
   startVideoUploader();
+  startResync();
 }
 
 /* Demo affordance: watch any rig on the floor. A real rig is only ever
