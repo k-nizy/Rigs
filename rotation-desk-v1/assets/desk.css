@@ -271,6 +271,9 @@ header.masthead {
 }
 .src.floor { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
 .src.plan  { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+/* Pushed, but nothing it holds covers right now: the rigs are standing
+   still. Wears the warning colour because somebody has to act. */
+.src.dry   { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
 
 .banner {
   background: var(--panel-2);

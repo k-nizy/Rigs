@@ -588,3 +588,61 @@ const PUSHED = (() => {
     { shift: "morning", date: "2026-08-23", blockMin: 15, stintBlocks: 3, mode: "hold" }, groups);
   return groups[0].rigs.map(r => RE.rigPayload(p, r));
 })();
+
+
+/* --------------------------------------------- a rota that has run out
+
+   The badge read "On the floor - pushed 4:12 PM" all night. Every word of
+   that was true and none of it was useful: by 00:05 the sheet it named
+   had expired, all twelve rigs were sitting in Standby, and the one
+   screen a manager would open to find that out was quietly reassuring
+   them that the floor was running. */
+
+const EXPIRED = (() => {
+  global.window = global;
+  require(path.resolve(__dirname, "../packages/engine/rotation-engine.js"));
+  const RE = global.RotationEngine;
+  const groups = [{
+    key: "A", task: "Pushed task",
+    rigs: ["RIG-01", "RIG-02", "RIG-03"],
+    ops: ["Pushed Person 1", "Pushed Person 2", "Pushed Person 3", "Pushed Person 4"],
+  }];
+  const p = RE.buildPlan(
+    { shift: "morning", date: "2026-08-22", blockMin: 15, stintBlocks: 3, mode: "hold" }, groups);
+  return groups[0].rigs.map(r => RE.rigPayload(p, r));
+})();
+
+const servedBy = (payloads, pushedAt) => (url) => {
+  if (String(url) === "/api/state") {
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({
+      pushedAt: pushedAt, rigs: payloads.map(x => x.rigId) }) });
+  }
+  const id = decodeURIComponent(String(url).split("/")[3]);
+  return Promise.resolve({ ok: true, json: () => Promise.resolve(
+    payloads.find(x => x.rigId === id)) });
+};
+
+test("Live says plainly when nothing on the floor covers right now",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(EXPIRED, "2026-08-22T09:58:00.000Z") },
+    async desk => {
+      assert.equal(desk.$("now-src").className, "src dry",
+        "a floor holding a rota that expired yesterday was badged as running");
+      assert.match(desk.$("now-src").textContent, /Nothing scheduled for now/,
+        "the badge did not say the floor had run dry");
+    }));
+
+test("it still names when the last push happened, so it can be judged",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(EXPIRED, "2026-08-22T09:58:00.000Z") },
+    async desk => {
+      assert.match(desk.$("now-src").textContent, /last push/,
+        "a manager needs to know how stale it is, not just that it is stale");
+    }));
+
+test("a floor that is genuinely running is still badged as running",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(PUSHED, "2026-08-23T09:58:00.000Z") },
+    async desk => {
+      /* The control. Without it the test above would pass on a desk that
+         had simply stopped believing in the floor altogether. */
+      assert.equal(desk.$("now-src").className, "src floor");
+      assert.match(desk.$("now-src").textContent, /On the floor/);
+    }));

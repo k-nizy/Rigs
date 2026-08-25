@@ -455,10 +455,23 @@ function renderLive() {
   $("now-shift").textContent = s.shift.label + " · " + s.shift.start + "-" + s.shift.end
     + (s.running ? " · " + hm(s.leftOfShift) + " left" : "");
 
-  $("now-src").textContent = floor.source === "floor"
-    ? "On the floor · pushed " + new Date(floor.pushedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : "Not pushed · showing this screen's plan";
-  $("now-src").className = "src " + floor.source;
+  /* Whether anything the floor is holding actually covers this minute.
+     The badge used to read "On the floor - pushed 4:12 PM" all night,
+     which is true and useless: at 00:05 the sheet it names has expired,
+     every rig is in Standby, and the one screen a manager would check to
+     find that out was quietly reassuring them instead. A rota that has
+     run out has to look different from one that is running. */
+  const covering = floor.payloads.some(p => RE.coversAt(p, Date.now()));
+  const pushedAtText = floor.pushedAt
+    ? new Date(floor.pushedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "";
+  const state = floor.source !== "floor" ? "plan" : (covering ? "floor" : "dry");
+
+  $("now-src").textContent =
+    state === "plan" ? "Not pushed · showing this screen's plan"
+    : state === "floor" ? "On the floor · pushed " + pushedAtText
+    : "Nothing scheduled for now · last push " + pushedAtText;
+  $("now-src").className = "src " + state;
 
   const banner = $("banner");
   banner.hidden = s.running;
