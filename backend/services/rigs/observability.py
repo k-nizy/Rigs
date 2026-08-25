@@ -54,10 +54,6 @@ SCOPE_KEY = "rigs.request_id"
 _request_id: ContextVar[str] = ContextVar("request_id", default="-")
 
 
-def current_request_id() -> str:
-    return _request_id.get()
-
-
 class RequestIdFilter(logging.Filter):
     """Puts the request id on every record, so a format string can use it.
 

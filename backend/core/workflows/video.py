@@ -157,25 +157,6 @@ async def confirm(session: AsyncSession, episode_id: str, camera: str,
     }
 
 
-async def mark_missing(session: AsyncSession, episode_id: str, why: str) -> None:
-    """A discarded take, or one the recorder never started.
-
-    Recorded rather than left pending, so `pending` keeps meaning "we are
-    waiting for this" and the drain worker's backlog is real.
-
-    Every camera of the take, because a discarded take discards all three.
-    """
-    ep = await _episode(session, episode_id)
-    rows = await session.execute(
-        select(EpisodeVideo).where(EpisodeVideo.episode_id == ep.episode_id)
-    )
-    for row in rows.scalars().all():
-        if row.state in (PENDING, MISSING):
-            row.state = MISSING
-            row.key = None
-    await session.commit()
-
-
 async def expire_pending(session: AsyncSession, after_days: int,
                          limit: int = 500) -> int:
     """Stop waiting for takes that are never coming. Returns how many.

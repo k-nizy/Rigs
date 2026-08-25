@@ -24,7 +24,7 @@ from core.workflows.video import (
     ARCHIVED, MISSING, ON_PREM, PENDING,
     EXPIRED, VideoError, backlog, confirm, drain_batch, expire_archive,
     expire_pending,
-    mark_missing, release_spool,
+    release_spool,
     where_to_put,
 )
 
@@ -156,23 +156,6 @@ async def test_an_unknown_episode_is_refused(client, session, store):
     """Inventing a row would create an episode nobody recorded."""
     with pytest.raises(VideoError, match="no episode"):
         await where_to_put(session, str(uuid.uuid4()), "front")
-
-
-async def test_a_discarded_take_is_marked_missing_not_left_pending(client, session, store):
-    """So `pending` keeps meaning "we are waiting for this" and the
-    backlog is real rather than full of takes nobody will ever send."""
-    ep = await an_episode(session)
-    # The rig asked where to put all three before the operator discarded
-    # it, so there are three rows waiting on bytes that will never come.
-    for c in ("front", "wrist-l", "overhead"):
-        await where_to_put(session, str(ep.episode_id), c)
-
-    await mark_missing(session, str(ep.episode_id), "discarded")
-
-    for c in ("front", "wrist-l", "overhead"):
-        row = await cam(session, ep, c)
-        assert row.state == MISSING, c + " was left pending"
-        assert row.key is None
 
 
 # ---------------------------------------------------------------- drain
