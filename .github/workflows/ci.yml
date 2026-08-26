@@ -1,0 +1,215 @@
+# The checks this repository already relies on, run by something that
+# cannot forget.
+#
+# Until now `npm test` was the only command anybody ran, and it covers the
+# JavaScript and nothing else. The three layering contracts, the 277
+# backend tests, the migrations and the one end-to-end run all existed and
+# all had to be remembered. That is the wrong way round: the checks least
+# likely to be run by hand are the ones that catch the failures nothing
+# else can see.
+#
+# Three jobs rather than one, because they fail for different reasons and
+# a red tick should say which. They also run in parallel, so three is
+# faster than one.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+# A second push to the same branch makes the first one's answer stale.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screens:
+    name: engine, schema and both screens
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # No dependencies to install - the apps are static files and the
+      # tests are node's own runner.
+      - name: The JavaScript suite
+        run: npm test
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The two single-file dists are committed, and a floor can be
+      # deployed from them alone. A dist that no longer matches its source
+      # is a deployment shipping code nobody reviewed, and nothing else
+      # would say so.
+      - name: Rebuild the single-file dists
+        run: ./build.sh
+
+      - name: The committed dists must match a fresh build
+        run: |
+          if ! git diff --exit-code -- rotation-desk-v1/dist apps/rig/dist; then
+            echo "::error::dist is stale - run ./build.sh and commit the result"
+            exit 1
+          fi
+
+  backend:
+    name: ledger, projection, floor and video
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # The version DEPLOY.md provisions. Nothing knowingly depends on
+        # 18, but nothing has been run on less, and CI is the wrong place
+        # to find out.
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rigs_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Two databases, never one. The suite drops every table it can see,
+      # and preflight refuses to run if these ever name the same database.
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/rigs_ci
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/rigs_ci_test
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      # gateway -> services -> core, and no domain importing another.
+      # Enforced here because a violation is cheap to introduce and
+      # expensive to unpick once something depends on it.
+      - name: Arrows only point down
+        run: lint-imports
+
+      - name: Create the test database
+        run: PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -c 'CREATE DATABASE rigs_ci_test'
+
+      # Production runs migrations; the test suite builds its schema from
+      # the models. Both halves are checked here because they can drift
+      # apart silently - a green suite proves the models are consistent
+      # with themselves, not that a deployed database will match them.
+      - name: Migrations apply to an empty database
+        run: python -m alembic upgrade head
+
+      - name: The models and the migrations still agree
+        run: python -m alembic check
+
+      # DEPLOY.md says every migration has a tested downgrade. This is
+      # what makes that sentence true. Two of them build their indexes
+      # CONCURRENTLY and so cannot run inside a transaction, which is
+      # exactly the kind of thing that works until the day it is needed.
+      - name: Every migration comes back down, and goes up again
+        run: |
+          python -m alembic downgrade base
+          python -m alembic upgrade head
+
+      # The deployment gate, run against a database that was built the way
+      # a real one is. It is the API unit's ExecStartPre on the floor, so
+      # a preflight that has stopped working stops being a gate.
+      - name: Preflight
+        run: python -m tools.preflight
+
+      - name: The backend suite
+        run: pytest -q
+
+  end-to-end:
+    name: pedal press to floor board
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rigs_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/rigs_e2e
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install
+        working-directory: backend
+        run: pip install -e ".[dev]"
+
+      - name: Migrate
+        working-directory: backend
+        run: python -m alembic upgrade head
+
+      # Every other test proves one half. This drives the real
+      # apps/rig/assets/rig.js through a shift against the real service on
+      # a real database, and reads the floor board back.
+      #
+      # It is not in `npm test` because it needs both, which is precisely
+      # why it needs to be here - otherwise it runs only when somebody
+      # remembers, and the seam is the thing least able to survive being
+      # forgotten.
+      #
+      # Service and check in one step, deliberately: a background process
+      # left to survive between steps is a failure mode this does not need
+      # to own. `local_gateway` is the development harness - it runs the
+      # three workers in-process beside the service and does not deploy -
+      # but it is the only way to get the whole system up in one process.
+      - name: Rig to floor, end to end
+        working-directory: backend
+        run: |
+          nohup python -m uvicorn local_gateway:app --port 8000 --log-level warning \
+            > gateway.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/api/health > /dev/null && break
+            sleep 1
+          done
+          if ! curl -sf http://127.0.0.1:8000/api/health > /dev/null; then
+            echo "::error::the service never became healthy"
+            cat gateway.log
+            exit 1
+          fi
+          node tests/e2e_rig_to_floor.js
+
+      - name: Service log
+        if: failure()
+        working-directory: backend
+        run: cat gateway.log

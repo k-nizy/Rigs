@@ -281,9 +281,27 @@ implicit requirements to fill in.
 - Run everything (server + push): `npm run serve`  →  `http://127.0.0.1:8765/`
 - Static-only fallback (no push): `./serve.sh` (python)
 - Rebuild the two single-file dists: `./build.sh` (or `npm run build`)
-- Run the tests: `npm test`  (engine + the reference sheet + schema +
-  server end-to-end + both screens, headless)
+- Run the tests: `npm test`  (engine + the reference sheet + rotate +
+  schema + server end-to-end + both screens, headless)
 - The desk is at `/rotation-desk-v1/`, the rig at `/apps/rig/`
+
+`npm test` is the JavaScript half and nothing else. The rest has to be
+run where it lives:
+
+```
+npm test                                       the screens, engine, schema
+cd backend && pytest                           ledger, projection, floor, video
+cd backend && lint-imports                     the three layering contracts
+cd backend && node tests/e2e_rig_to_floor.js   the seam, against a live service
+```
+
+`.github/workflows/ci.yml` runs all four on every push, plus the two
+things nobody runs by hand: that the committed dists still match their
+sources, and that the migrations apply to an empty database, come back
+down, and still agree with the models. That last one matters because the
+test suite builds its schema from the models while a deployment builds
+it from the migrations — a green suite on its own cannot tell you those
+two have not drifted apart.
 
 Before changing anything in `packages/engine/`, run the tests. Before
 changing the payload shape, remember it is a contract between three
