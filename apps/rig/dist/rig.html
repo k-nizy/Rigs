@@ -633,21 +633,6 @@ body {
   var SHIFT_MINUTES = 480;   // all three shifts are eight hours
   var HOLD_STINT    = 3;     // "hold" is forced to a 3-block on-run by the 3:1 duty
 
-  /* The one rule that decides whether a schedule works.
-   *
-   * An operator's cycle is four stints - three on a rig, one off. Break
-   * and think alternate across the off-stints, so an operator needs an
-   * even number of them: eight stints per cycle. Eight stints must fit
-   * the 480-minute shift a whole number of times, so
-   *
-   *     stint x 8  divides  480     <=>     stint divides 60
-   *
-   * That is all of it. Any time-on-rig that divides an hour works; any
-   * that does not cannot, at any block size. Block length only sets the
-   * resolution of the grid - 15min x 4 and 20min x 3 are the same
-   * schedule, because both are 60. */
-  var HOUR_DIVISORS = [5, 10, 12, 15, 20, 30, 60];
-
   var OFF   = -1;          // this operator is not on a rig this block
   var BREAK = "BREAK";
   var THINK = "THINK";
@@ -665,13 +650,6 @@ body {
 
   function stintMinutes(cfg) {
     return stintBlocksFor(cfg) * cfg.blockMin;
-  }
-
-  /* Times-on-rig that divide the hour and are a whole number of blocks. */
-  function cleanStints(blockMin) {
-    return HOUR_DIVISORS.filter(function (m) {
-      return m % blockMin === 0 && m >= blockMin;
-    });
   }
 
   // --------------------------------------------------------- generation
@@ -739,15 +717,6 @@ body {
       }
     });
     return Object.keys(lens).map(Number).sort(function (a, b) { return a - b; });
-  }
-
-  /* Block lengths that give an operator an even number of off-turns, which
-   * is what "hold" needs for break and think to come out equal. */
-  function cleanBlocks(options) {
-    return (options || [5, 10, 12, 15, 20, 30, 40]).filter(function (bm) {
-      var n = SHIFT_MINUTES / bm;
-      return n === Math.round(n) && n % 8 === 0;
-    });
   }
 
   /* "rotate" - the shift is cut into equal stints first, and an operator
@@ -844,7 +813,6 @@ body {
   }
   function blockStart(plan, b)  { return (plan.shift.start + b * plan.blockMin) % 1440; }
   function blockEnd(plan, b)    { return (plan.shift.start + (b + 1) * plan.blockMin) % 1440; }
-  function isHourMark(plan, b)  { return blockStart(plan, b) % 60 === 0; }
   function shiftEnd(plan)       { return (plan.shift.start + SHIFT_MINUTES) % 1440; }
 
   // ---------------------------------------------------------- fit check
@@ -875,6 +843,20 @@ body {
 
   function auditPlan(plan) {
     var sMin        = plan.stintMin;
+
+    /* The one rule that decides whether a schedule works.
+     *
+     * An operator's cycle is four stints - three on a rig, one off. Break
+     * and think alternate across the off-stints, so an operator needs an
+     * even number of them: eight stints per cycle. Eight stints must fit
+     * the 480-minute shift a whole number of times, so
+     *
+     *     stint x 8  divides  480     <=>     stint divides 60
+     *
+     * That is all of it. Any time-on-rig that divides an hour works; any
+     * that does not cannot, at any block size. Block length only sets the
+     * resolution of the grid - 15min x 4 and 20min x 3 are the same
+     * schedule, because both are 60, which rotate.test.js asserts. */
     var dividesHour = 60 % sMin === 0;
     var stintLens   = rigStintLengths(plan);
     var stintFits   = stintLens.length === 1;
@@ -1176,23 +1158,29 @@ body {
 
   // ------------------------------------------------------------- export
 
+  /* What the two apps and the tests actually use.
+   *
+   * Nine names were removed from this list: they were exported, called by
+   * nothing outside this file, and several by nothing at all. Most were
+   * left over from a desk that once had grid-size and rotation controls -
+   * `cleanStints` and `cleanBlocks` computed the legal values for pickers
+   * that v1 deliberately does not have.
+   *
+   * An export is a promise that something else may depend on it, and a
+   * promise nobody asked for is still one this file has to keep. The ones
+   * still needed inside the engine stayed as private functions; the three
+   * nothing called at all are gone. */
   root.RotationEngine = {
     SHIFTS: SHIFTS,
     SHIFT_MINUTES: SHIFT_MINUTES,
-    HOLD_STINT: HOLD_STINT,
-    HOUR_DIVISORS: HOUR_DIVISORS,
     OFF: OFF, BREAK: BREAK, THINK: THINK,
 
     shiftById: shiftById,
-    stintBlocksFor: stintBlocksFor,
     stintMinutes: stintMinutes,
-    cleanStints: cleanStints,
 
     buildPlan: buildPlan,
     auditPlan: auditPlan,
     rigStintLengths: rigStintLengths,
-    interiorStintLengths: interiorStintLengths,
-    cleanBlocks: cleanBlocks,
     holderAt: holderAt,
 
     rigPayload: rigPayload,
@@ -1204,9 +1192,6 @@ body {
 
     hhmm: hhmm,
     blockStart: blockStart,
-    blockEnd: blockEnd,
-    isHourMark: isHourMark,
-    shiftEnd: shiftEnd,
   };
 
   if (typeof module === "object" && module.exports) module.exports = root.RotationEngine;
