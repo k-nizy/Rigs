@@ -24,6 +24,7 @@ from core.base.model import Base  # noqa: E402
 # at a table that was not there, so running one test file on its own
 # failed while the whole suite passed - because some other module had
 # imported the missing model first. The same list as alembic/env.py.
+from core.domains.accounts import model as _accounts  # noqa: E402,F401
 from core.domains.alerts import model as _alerts  # noqa: E402,F401
 from core.domains.episode_videos import model as _episode_videos  # noqa: E402,F401
 from core.domains.episodes import model as _episodes  # noqa: E402,F401

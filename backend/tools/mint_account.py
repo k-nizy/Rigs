@@ -1,0 +1,183 @@
+"""Create and manage the people who can sign in.
+
+There is no sign-up page and there should not be. A floor has two or
+three managers and sixteen operators on a roster somebody already
+maintains; a self-service registration form on the screen that pushes
+schedules to twelve rigs is a door where a wall belongs.
+
+    python -m tools.mint_account list
+    python -m tools.mint_account manager  --email r.osei@verlet.co --name "Ruth Osei"
+    python -m tools.mint_account operator --email m.chen@verlet.co --name "Mei Chen" --operator-id op-a2
+    python -m tools.mint_account passwd   --email r.osei@verlet.co
+    python -m tools.mint_account disable  --email r.osei@verlet.co
+
+This is also how the *first* manager exists at all. Every alternative to
+somebody running this once is worse: a seeded default account is a known
+password on every deployment, and a first-run setup page is an open door
+for however long it takes the first person to find it.
+
+With no password given, one is generated and printed. That is the better
+default - it is strong, it is used once, and the person changes it. It is
+printed to a terminal, which is not a safe place to leave it: hand it
+over and clear the scrollback.
+
+Disabling, not deleting. It ends every session the person has open, and
+keeps the name so a later audit row still resolves to somebody.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import secrets
+import sys
+from datetime import datetime, timezone
+from getpass import getpass
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from sqlalchemy import select                                    # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+
+from core.domains.accounts.model import Account, MANAGER, OPERATOR  # noqa: E402
+from core.domains.accounts.passwords import hash_password        # noqa: E402
+from core.domains.accounts.repository import (                   # noqa: E402
+    AccountRepository, AccountSessionRepository, normalise_email,
+)
+from core.infrastructure.config import get_settings              # noqa: E402
+
+
+def _password(given: str | None, prompt: bool) -> tuple[str, bool]:
+    """The password to set, and whether it has to be shown afterwards."""
+    if given:
+        return given, False
+    if prompt:
+        first = getpass("password: ")
+        if first != getpass("again: "):
+            raise SystemExit("passwords did not match")
+        if len(first) < 12:
+            raise SystemExit("too short - twelve characters at the very least")
+        return first, False
+    return secrets.token_urlsafe(12), True
+
+
+async def _run(args) -> int:
+    engine = create_async_engine(get_settings().database_url)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with maker() as session:
+            return await _act(args, session)
+    finally:
+        await engine.dispose()
+
+
+async def _act(args, session) -> int:
+    accounts = AccountRepository(session)
+
+    if args.cmd == "list":
+        rows = (await session.execute(
+            select(Account).order_by(Account.role, Account.email))).scalars().all()
+        if not rows:
+            print("No accounts. The service treats that as person auth being off.")
+            return 0
+        for a in rows:
+            state = "disabled" if a.disabled_at else "active"
+            print(f"{a.role:<9} {a.email:<32} {a.name:<22} "
+                  f"{a.operator_id or '-':<8} {state}")
+        return 0
+
+    existing = await accounts.by_email(args.email)
+
+    if args.cmd == "disable":
+        if not existing:
+            raise SystemExit(f"no account for {args.email}")
+        existing.disabled_at = datetime.now(timezone.utc)
+        ended = await AccountSessionRepository(session).revoke_all(existing.id)
+        await session.commit()
+        print(f"disabled {existing.email}; ended {ended} open session(s)")
+        return 0
+
+    if args.cmd == "passwd":
+        if not existing:
+            raise SystemExit(f"no account for {args.email}")
+        password, show = _password(args.password, prompt=not args.generate)
+        existing.password_hash = hash_password(password)
+        # A changed password that leaves the old cookies working has not
+        # changed anything for whoever already had one.
+        ended = await AccountSessionRepository(session).revoke_all(existing.id)
+        await session.commit()
+        print(f"password set for {existing.email}; ended {ended} open session(s)")
+        if show:
+            print(f"password: {password}")
+        return 0
+
+    # manager | operator
+    if existing:
+        raise SystemExit(f"{args.email} already exists - use passwd or disable")
+    role = MANAGER if args.cmd == "manager" else OPERATOR
+    operator_id = args.operator_id if role == OPERATOR else None
+
+    if role == OPERATOR:
+        if not operator_id:
+            raise SystemExit(
+                "an operator account needs --operator-id (the id on the sheet, "
+                "e.g. op-a2) or it has no day to show"
+            )
+        clash = await accounts.by_operator_id(operator_id)
+        if clash:
+            raise SystemExit(f"{operator_id} is already {clash.email}")
+
+    password, show = _password(args.password, prompt=not args.generate)
+    await accounts.add(Account(
+        email=normalise_email(args.email), name=args.name, role=role,
+        operator_id=operator_id, password_hash=hash_password(password),
+    ))
+    await session.commit()
+    print(f"created {role} {normalise_email(args.email)}"
+          + (f" as {operator_id}" if operator_id else ""))
+    if show:
+        print(f"password: {password}")
+        print("Hand it over and clear the scrollback. It is not stored anywhere "
+              "readable - only its hash is.")
+    return 0
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def creds(sp, email=True):
+        if email:
+            sp.add_argument("--email", required=True)
+        sp.add_argument("--password", help="leave out to be prompted")
+        sp.add_argument("--generate", action="store_true",
+                        help="generate one and print it, instead of prompting")
+
+    sub.add_parser("list", help="every account and its state")
+
+    for cmd in ("manager", "operator"):
+        sp = sub.add_parser(cmd, help=f"create a {cmd} account")
+        sp.add_argument("--name", required=True, help='display name, e.g. "Ruth Osei"')
+        if cmd == "operator":
+            sp.add_argument("--operator-id", required=True,
+                            help="the id on the sheet, e.g. op-a2")
+        creds(sp)
+
+    creds(sub.add_parser("passwd", help="set a new password and end open sessions"))
+    sub.add_parser("disable", help="end access, keep the name").add_argument(
+        "--email", required=True)
+
+    args = p.parse_args()
+    if args.cmd in ("manager", "operator", "passwd") and not args.password \
+            and not args.generate and not sys.stdin.isatty():
+        # Prompting into a pipe reads EOF and sets an empty password.
+        raise SystemExit("no terminal to prompt on - pass --password or --generate")
+    if not hasattr(args, "operator_id"):
+        args.operator_id = None
+    return asyncio.run(_run(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

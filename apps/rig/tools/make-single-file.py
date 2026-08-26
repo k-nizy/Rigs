@@ -29,7 +29,10 @@ def brand_css(repo):
     """
     import base64
     css = (repo / "packages/brand/brand.css").read_text(encoding="utf-8")
-    svg = (repo / "packages/brand/logo.svg").read_bytes()
+    # The mark is base64'd byte for byte, so a checkout that gave it CRLF
+    # builds a different dist from the same source - and the CI check that
+    # the committed dists still match is run on a machine that uses LF.
+    svg = (repo / "packages/brand/logo.svg").read_bytes().replace(b"\r\n", b"\n")
     uri = "data:image/svg+xml;base64," + base64.b64encode(svg).decode()
     css = css.replace(chr(117)+chr(114)+chr(108)+chr(40)+chr(34)+"logo.svg"+chr(34)+chr(41),
                       chr(117)+chr(114)+chr(108)+chr(40)+chr(34)+uri+chr(34)+chr(41))

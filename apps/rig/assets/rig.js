@@ -425,11 +425,15 @@ function dispatch(intent) {
     case "score_3": case "score_4": case "score_5": {
       const score = Number(intent.slice(-1));
       S.recordedSecs += S.pendingSecs || 0;
+      /* One number, filed and recorded. The recorder is sized from the
+         same seconds the ledger keeps, so bytes divided by durationSecs
+         is a rate somebody chose rather than two roundings apart. */
+      const durationSecs = Math.round(S.pendingSecs || 0);
       emit("episode_saved", "episodes",
            "episode " + S.episode + " · " + clock(S.pendingSecs || 0) + " · scored " + score + "/5",
-           { episodeId: S.episodeId, durationSecs: Math.round(S.pendingSecs || 0), score: score },
+           { episodeId: S.episodeId, durationSecs: durationSecs, score: score },
            S.episodeWho);
-      queueVideo(S.episodeId);
+      queueVideo(S.episodeId, durationSecs);
       S.pendingSecs = 0;
       afterEpisode();
       break;
@@ -1135,9 +1139,10 @@ window.rigEvents = () => envelopes.slice();
 /* The machine authenticates; the operator never does.
 
    That is the whole of the rig's auth story and it is what lets this
-   screen keep having no login. Ansible places a token on the machine
-   beside `/etc/rig/id`, the page is served with it, and every call the
-   rig makes carries it. Nobody standing at the rig types anything.
+   screen keep having no login. The service hands the token to the page
+   in `rig-config.js`, answered per caller from `RIG_ADDRESSES`, and every
+   call the rig makes carries it. Nobody standing at the rig types
+   anything.
 
    Only same-origin calls get the header. A presigned upload URL points
    at the object store, is already signed, and is not ours to add
@@ -1148,13 +1153,15 @@ const RIG_TOKEN = (typeof window !== "undefined" && window.RIG_TOKEN) || "";
 
 /* Which rig this machine is.
  *
- * Ansible writes `rig-config.js` beside this file, per machine, from the
- * same source as /etc/rig/id. Without it every rig boots as the default
- * and asks the server for RIG-03's schedule - twelve machines that all
- * believe they are the same one, filing every episode under one rig id
- * and uploading video into one prefix. There is nothing downstream that
- * could detect that, because from the server's side it is exactly what
- * one very busy rig looks like.
+ * The service answers `rig-config.js` per caller, from `RIG_ADDRESSES`.
+ * A per-machine file was tried first and was never read once: index.html
+ * loads this path relatively and the kiosk loads the page from the
+ * server, so the browser always asks the server for it. Twelve machines
+ * loaded one blank file, every one of them booted as the default, and
+ * they filed every episode under one rig id and uploaded video into one
+ * prefix. There is nothing downstream that could detect that, because
+ * from the server's side it is exactly what one very busy rig looks
+ * like.
  *
  * Not a URL parameter. The token travels with it, and tokens in URLs end
  * up in access logs, browser history and referrer headers. */
@@ -1555,11 +1562,19 @@ window.rigFlush = flush;
    copy is gone.
 
    There is no camera behind a browser tab, so `videoSource` is the seam:
-   it is handed an episode and a camera and returns a Blob, or null when
-   there is nothing to send. A page with no source queues nothing, which
-   is why running the demo does not post fabricated bytes and does not
-   pollute what /floor/video measures. Tauri and RODA-RS supply a real one
-   later, and nothing below this line changes when they do. */
+   it is handed an episode, a camera and the seconds this take recorded,
+   and returns a Blob, or null when there is nothing to send. A page with
+   no source queues nothing, which is why running the demo does not post
+   fabricated bytes and does not pollute what /floor/video measures.
+   Tauri and RODA-RS supply a real one later, and nothing below this line
+   changes when they do.
+
+   The duration is passed rather than looked up because it is the only
+   part a recorder cannot work out for itself, and because it is the
+   number the ledger keeps: a stand-in sized from it produces bytes that
+   agree with the episode row, so a rate read back off /floor/video is
+   one somebody chose. `tools/mock-roda.js` is that stand-in, and it is
+   attached by tests and soaks only - never by this page. */
 
 const VIDEO_BACKOFF_MS = 2000;
 const VIDEO_BACKOFF_MAX = 60000;
@@ -1587,10 +1602,10 @@ async function sha256Hex(buf) {
 /* Called when a take is saved. Queued per camera, because that is how the
    store keys them and how a partial upload stays partial rather than
    costing the whole episode. */
-function queueVideo(episodeId) {
+function queueVideo(episodeId, durationSecs) {
   if (!videoSource || !episodeId) return;
   CAMERAS.forEach((cam) => {
-    const blob = videoSource(episodeId, camSlug(cam));
+    const blob = videoSource(episodeId, camSlug(cam), durationSecs);
     if (!blob) return;
     const camera = camSlug(cam);
     videoQueue.push({ episodeId, camera, blob });

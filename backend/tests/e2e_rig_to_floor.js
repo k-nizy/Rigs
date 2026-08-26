@@ -28,10 +28,38 @@ const ROSTER = require(path.join(REPO, "packages/demo-roster/demo-roster.js"));
 const API = process.env.RIGS_API || "http://127.0.0.1:8000";
 const RIG = "RIG-03";
 
-/* Stand-in footage. Small on purpose: this exercises the path, it does
-   not pretend to be a measurement. /floor/video keeps the plan's
-   assumption printed beside whatever it has actually seen. */
-const TAKE = new Blob([Buffer.alloc(256 * 1024, 9)]);
+/* Stand-in footage, from the same recorder the rig's own suite uses.
+   `apps/rig/tools/mock-roda.js` sizes a take from the seconds the rig
+   recorded, which is what lets the last assertion in step 9 exist: the
+   service divides bytes by the episode's `durationSecs` and must arrive
+   back at the rate that produced them.
+
+   The rate is small on purpose. This runs on every push, and a take at
+   the plan's real 875,000 B/s per camera is a couple of hundred
+   megabytes through a live service and a real spool. 8 KB/s keeps a
+   29-second take at roughly the 256 KB this used to send, and every
+   property being checked is about the ratio rather than the magnitude.
+
+   For an actual measurement - what the plan wants and has never had -
+   run it at the real rate against a service somebody is willing to have
+   carry synthetic takes:
+
+       RIGS_VIDEO_RATE=875000 node backend/tests/e2e_rig_to_floor.js  */
+const { mockRoda, BYTES_PER_SECOND_PER_CAMERA } =
+  require(path.join(REPO, "apps/rig/tools/mock-roda.js"));
+const RATE = Number(process.env.RIGS_VIDEO_RATE || 8192);
+const roda = mockRoda({ bytesPerSecond: RATE });
+
+/* `measured` on /floor/video is an average over every take the database
+   holds, so a developer's database that already has some cannot be
+   compared against directly. Totals can: takes x avg is a sum, and two
+   sums subtract. This is what keeps the assertion exact on a database
+   that is not empty, which is the one this gets run against by hand. */
+const totalsOf = (m) => ({
+  takes: m.takes || 0,
+  bytes: (m.takes || 0) * (m.avgBytesPerTake || 0),
+  secs: (m.takes || 0) * (m.avgDurationSecs || 0),
+});
 
 const ok = (m) => console.log("  ✓ " + m);
 const step = (m) => console.log("\n" + m);
@@ -79,15 +107,21 @@ function todaysPayload() {
   const before = await api("GET", `/api/rigs/${RIG}/cursor`);
   ok("cursor before the shift: " + before.body.seq);
 
+  /* Taken before the take, so step 9 can subtract. */
+  const videoBefore = await api("GET", "/api/floor/video");
+  assert.equal(videoBefore.status, 200);
+  const wasMeasured = totalsOf(videoBefore.body.measured);
+
   step("2. an operator works a take on the real rig app");
   global.fetch = realFetch;
   const rig = await mountRig({ search: "?demo=30", fetchImpl: realFetch });
   try {
     /* A browser tab has no camera. This is the seam a Tauri shell will
-       fill with RODA-RS; here it is a fixed block of bytes, which is
-       enough to prove the rule that matters - the rig lets go of a take
-       only after the server has verified what landed. */
-    rig.setVideoSource(() => TAKE);
+       fill with RODA-RS; here it is the stand-in recorder, which proves
+       the rule that matters - the rig lets go of a take only after the
+       server has verified what landed - and now also that the size of
+       what landed agrees with how long the rig says it recorded. */
+    rig.setVideoSource(roda);
     /* mountRig settles microtasks; a real HTTP round-trip needs wall
        time. Without this the rig is still waiting for its payload. */
     await new Promise((r) => setTimeout(r, 600));
@@ -198,8 +232,48 @@ function todaysPayload() {
        `${vb.body.spool.cameras} (${vb.body.spool.bytes} bytes)`);
 
     assert.ok(vb.body.measured.takes >= 1, "nothing was measured");
-    ok(`a take measures ${Math.round(vb.body.measured.bytesPerSecond)} B/s ` +
-       `against the plan's assumed ${vb.body.measured.planAssumedBytesPerSecond}`);
+
+    /* The round trip, as one number.
+     *
+     * The rig recorded N seconds and filed that in the ledger. The
+     * recorder produced RATE bytes for each of those seconds, on each of
+     * three cameras. The bytes went out through presign, PUT and a
+     * confirm the service only grants once it has checksummed what
+     * landed, and projection turned them into rows. Divide what the
+     * service now holds by the duration it holds, and the rate that
+     * produced it has to come back.
+     *
+     * Until the recorder was sized from the duration, this number could
+     * not be asserted on at all - a fixed block of bytes over a variable
+     * take is a rate nobody chose, and it was printed rather than
+     * checked. */
+    const saved = filed.find((e) => e.event === "episode_saved");
+    const secs = saved.data.durationSecs;
+    const now = totalsOf(vb.body.measured);
+    const added = {
+      takes: now.takes - wasMeasured.takes,
+      bytes: now.bytes - wasMeasured.bytes,
+      secs: now.secs - wasMeasured.secs,
+    };
+
+    assert.equal(added.takes, 1, "this run should have added exactly one measured take");
+    assert.equal(Math.round(added.secs), secs,
+      `the rig filed ${secs}s; the service measured ${Math.round(added.secs)}s`);
+    assert.equal(Math.round(added.bytes), 3 * RATE * secs,
+      `three cameras at ${RATE} B/s for ${secs}s should be ${3 * RATE * secs} bytes, ` +
+      `not ${Math.round(added.bytes)}`);
+    assert.equal(Math.round(added.bytes / added.secs), 3 * RATE,
+      "bytes divided by durationSecs must give back the rate that produced them");
+    ok(`${secs}s x 3 cameras at ${RATE} B/s -> ${Math.round(added.bytes)} bytes, ` +
+       `read back as ${Math.round(added.bytes / added.secs)} B/s`);
+
+    /* The plan's 7 Mbps per camera now lives in two languages: this
+       recorder and core/workflows/video.py. Neither may move alone. */
+    assert.equal(vb.body.measured.planAssumedBytesPerSecond,
+                 3 * BYTES_PER_SECOND_PER_CAMERA,
+      "the plan's assumed rate has drifted between mock-roda.js and video.py");
+    ok(`the plan's assumed ${vb.body.measured.planAssumedBytesPerSecond} B/s is ` +
+       `the same number in both halves`);
 
     console.log("\nend to end: pedal press -> envelope -> ledger -> facts -> board");
     console.log("             take -> presign -> bytes -> verified -> released");

@@ -293,9 +293,9 @@ misprovisioned machine, or one that falls all the way through
 `loadPayload()`'s fallbacks, is RIG-03. If two of them do it, two
 machines file episodes as the same rig.
 
-*Recommendation:* `/etc/rig/id` is already in the Ansible phase. Until
-then, the default is worth making obviously wrong rather than plausibly
-right.
+*Recommendation:* settled. The service answers `rig-config.js` per
+caller from `RIG_ADDRESSES`, and a rig the floor cannot place refuses to
+work rather than taking the default.
 
 ### D. The floor
 
