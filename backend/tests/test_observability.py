@@ -151,8 +151,30 @@ async def test_a_refused_token_is_never_written_down(engine, caplog):
 
 
 async def test_the_database_password_is_never_in_the_health_reply(engine):
+    """The property is that no password is in the reply, not that no `@`
+    is. Those are not the same thing: `postgres@host/db` is a URL with a
+    username and no password at all, which is what a CI service container
+    on trust auth produces, and this used to call that a leak."""
+    from urllib.parse import urlsplit
+
     c = await serving()
     async with c:
         r = await c.get("/api/health")
     url = r.json()["database"]
-    assert "***" in url or "@" not in url, "a password reached a response body"
+
+    password = urlsplit(url).password
+    assert password in (None, "", "***"), (
+        f"a password reached a response body: {url}")
+
+
+async def test_a_password_that_is_set_is_masked(engine):
+    """The other half, and the one that matters on a floor: when there IS
+    a password, `safe_url` has to take it out."""
+    from core.infrastructure.config import Settings
+
+    s = Settings(database_url="postgresql+asyncpg://rigs:hunter2@10.0.0.5:5432/rigs")
+    safe = s.safe_url()
+    assert "hunter2" not in safe, f"the password survived: {safe}"
+    assert "***" in safe
+    assert "10.0.0.5:5432" in safe, "masking should not lose which database it is"
+    assert "/rigs" in safe
