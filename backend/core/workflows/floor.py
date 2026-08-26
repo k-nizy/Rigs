@@ -31,6 +31,7 @@ from core.domains.rig_status.repository import RigStatusRepository
 from core.domains.schedules.model import Schedule
 from core.rules import floor as rules
 from core.rules.efficiency import Stint, efficiency
+from core.workflows.schedules import in_force
 
 
 async def _projection_lag(session: AsyncSession) -> tuple[datetime | None, int]:
@@ -53,14 +54,6 @@ async def _last_event_at(session: AsyncSession, rig_id: str) -> datetime | None:
         select(func.max(RigEvent.at)).where(RigEvent.rig_id == rig_id)
     )
     return rows.scalar()
-
-
-async def _current_schedule(session: AsyncSession, rig_id: str) -> Schedule | None:
-    rows = await session.execute(
-        select(Schedule).where(Schedule.rig_id == rig_id)
-        .order_by(Schedule.pushed_at.desc()).limit(1)
-    )
-    return rows.scalar_one_or_none()
 
 
 async def _open_downtime(session: AsyncSession) -> list[RigDowntimeEvent]:
@@ -185,7 +178,14 @@ async def sweep(
         if adrift:
             found.append(adrift)
 
-        sched = await _current_schedule(session, rig_id)
+        # The schedule covering `now`, not the newest row. One push writes
+        # all three shifts of the day with a single `pushed_at`, so "newest"
+        # is a three-way tie the database breaks however it likes - and an
+        # idle check run against the wrong shift finds no turn in progress
+        # and says nothing at all. A turn nobody arrived for is one of the
+        # two absences this sweep exists to catch; it cannot be looked for
+        # against a sheet that is not running.
+        sched = await in_force(session, rig_id, now)
         if sched is None:
             continue
 
@@ -228,7 +228,7 @@ async def sweep(
     # ~400 sequential round trips every fifteen seconds - measured at
     # ~190ms of a 213ms sweep, which is almost all of it. The distinct
     # shifts behind those blocks number in the single digits.
-    in_force = await _schedules_for(session, blocks)
+    block_schedules = await _schedules_for(session, blocks)
 
     for block in blocks:
         # The schedule that was in force for *this block's* shift, not
@@ -237,7 +237,7 @@ async def sweep(
         # finished block against the current schedule silently measures it
         # against a boundary on another date - which read as a turn that
         # had overrun by twenty-three hours.
-        sched = in_force.get((block.rig_id, block.shift_date, block.shift_label))
+        sched = block_schedules.get((block.rig_id, block.shift_date, block.shift_label))
         if sched is None or block.turn_from is None:
             continue
         turn = next(
@@ -288,7 +288,9 @@ async def floor_state(session: AsyncSession, now: datetime | None = None) -> dic
     rigs = []
     for rig_id in rig_ids:
         status = statuses.get(rig_id)
-        sched = await _current_schedule(session, rig_id)
+        # The same rule that decides what the rig is served, so the board
+        # and the floor cannot disagree about which shift is running.
+        sched = await in_force(session, rig_id, now)
         turn = (
             rules.turn_in_progress(sched.payload, sched.shift_date, now, now.tzinfo)
             if sched else None

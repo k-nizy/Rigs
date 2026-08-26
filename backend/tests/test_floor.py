@@ -59,6 +59,49 @@ async def push_schedule(session, payload=None):
     await session.commit()
 
 
+# A shift's worth of payload, built the way the desk writes one: two
+# turns from the shift start, and the operator's name distinct per shift
+# so a board naming the wrong one is unmistakable.
+SHIFTS = {
+    "Night":   ("00:00", "08:00", ("00:00", "00:45", "01:30"), "Kai Nakamura"),
+    "Morning": ("08:00", "16:00", ("08:00", "08:45", "09:30"), "Mei Chen"),
+    "Day":     ("16:00", "00:00", ("16:00", "16:45", "17:30"), "Priya Raman"),
+}
+
+
+def sheet(label):
+    start, end, (a, b, c), second = SHIFTS[label]
+    return {
+        "rigId": RIG, "group": "A", "task": "Box transfer - bin to conveyor",
+        "shift": {"label": label, "date": DAY.isoformat(), "start": start, "end": end},
+        "turns": [
+            {"from": a, "to": b, "minutes": 45,
+             "operator": {"id": "op-x1", "name": "Aleksandr Petrov"},
+             "relievedBy": second, "theyGoTo": "Break"},
+            {"from": b, "to": c, "minutes": 45,
+             "operator": {"id": "op-x2", "name": second},
+             "relievedBy": "Tomas Rivera", "theyGoTo": "Think"},
+        ],
+    }
+
+
+async def push_the_day(session):
+    """One push, the whole day - which is what the desk actually sends.
+
+    Every row of a push carries the SAME `pushed_at`, to the microsecond.
+    That is the detail the single-shift helper above cannot express, and
+    the one that matters: "the newest schedule" is not a thing that
+    exists here, it is a three-way tie.
+    """
+    pushed_at, push_id = at(7, 31), uuid.uuid4()
+    for label in ("Morning", "Day", "Night"):
+        session.add(Schedule(
+            push_id=push_id, pushed_at=pushed_at, rig_id=RIG,
+            shift_date=DAY, shift_label=label, payload=sheet(label),
+        ))
+    await session.commit()
+
+
 # ==================================================== the rules, no database
 
 class TestSilence:
@@ -766,3 +809,57 @@ class TestTheSweepUsesTheClockItWasGiven:
         second = await sweep(session, now=at(9))
         assert first["found"] == second["found"]
         assert second["opened"] == 0, "the same situation opened a second alert"
+
+
+# ============================ one push, three shifts, one answer per instant
+
+class TestTheDayIsPushedAtOnce:
+    """The desk pushes a whole day in one click - twelve rigs times three
+    shifts, all sharing one `pushed_at`. Reading that table back with
+    "newest first" therefore does not pick a shift, it picks whichever of
+    three tied rows the database felt like returning.
+
+    Every test above pushes a single Morning sheet, so none of them could
+    see it. These push what the desk pushes.
+    """
+
+    async def test_the_board_names_the_shift_that_is_running(self, client, session):
+        """Asked at an instant in each of the three shifts, the board has
+        to give three different answers. One arbitrary pick can be right
+        at most once."""
+        await push_the_day(session)
+
+        for now, label, who in ((at(1), "Night", "Kai Nakamura"),
+                                (at(9), "Morning", "Mei Chen"),
+                                (at(17), "Day", "Priya Raman")):
+            rig = (await floor_state(session, now=now))["rigs"][0]
+            assert rig["shift"]["label"] == label, f"at {now:%H:%M} the board said {rig['shift']}"
+            assert rig["operator"]["name"] == who
+            assert rig["secondsLeft"] is not None
+
+    async def test_a_turn_nobody_arrived_for_is_still_noticed(self, client, session):
+        """The consequence worth more than the label being wrong.
+
+        `rig_idle` is one of the two absences this sweep exists to catch.
+        Judged against a sheet that is not running, `turn_in_progress`
+        finds nothing, the check is skipped, and the alert that says
+        nobody came never fires - silently, which is the only way this
+        system is allowed to fail badly.
+        """
+        await push_the_day(session)
+
+        # Swept once in each shift, for the same reason as the board test:
+        # against one arbitrary pick, two of these three must fail.
+        for now, turn in ((at(1), "00:45"), (at(9), "08:45"), (at(17), "16:45")):
+            # Heard from, so it is not silent - silence and idleness are
+            # one cause each and the sweep stops at the first.
+            await RigStatusRepository(session).beat(RIG, now, now, 0.0)
+            await session.commit()
+
+            await sweep(session, now=now)
+
+            idle = [a for a in await AlertRepository(session).open_alerts()
+                    if a.kind == rules.RIG_IDLE]
+            assert idle, f"nobody arrived for the {turn} turn and nothing said so"
+            assert turn in idle[0].key, (
+                f"at {now:%H:%M} the alert named {idle[0].key}, not the {turn} turn")

@@ -11,12 +11,23 @@ What it does **not** get you, and you should decide with both eyes open:
   `setVideoSource` is null and nothing is ever recorded or uploaded. The
   whole video path exists and is tested; it has never carried a real
   byte. This is a floor-management system until the Tauri shell lands.
-- **A rig runs one shift and stops.** The desk pushes only when somebody
-  clicks *Push to floor*, and the rig reads its schedule only at boot.
-  At each changeover somebody clicks push and the twelve kiosks are
-  reloaded. That is 3 pushes and 36 reloads a day.
+- **Somebody has to push, once a day.** A push covers a whole calendar
+  day - midnight to midnight, three shifts, twelve rigs - and the rigs
+  pick it up by themselves, so the daily cost is one click and no
+  reloads. But nothing pushes on its own. Miss a day and the rigs show
+  Standby and refuse to start a take rather than run yesterday's sheet,
+  which is deliberate: an expired sheet still cheerfully names somebody
+  at half past midnight, and a take filed under the wrong operator is
+  silent and permanent where idle time is loud and recoverable.
 
-Both are rig-side. Neither is fixed by anything below.
+  Watch for the Night shift. It runs 00:00-08:00 and therefore belongs
+  to the date it *starts* on, so the night that follows Tuesday is on
+  Wednesday's sheet. A floor only ever pushed in the morning has nothing
+  for the crew who arrive at midnight. The desk's Live badge reads
+  "Nothing scheduled for now" when that happens.
+
+The first is rig-side and is not fixed by anything below. The second is
+a habit, and the desk is built to make a missed one visible.
 
 ---
 
