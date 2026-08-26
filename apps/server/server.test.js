@@ -161,3 +161,90 @@ test("a rig still gets its own schedule and nobody else's", async () => {
       "every episode from " + rigId + " would be filed under " + p.rigId);
   }
 });
+
+/* ====================================================================
+ * What must not be served
+ *
+ * This server used to hand out the whole checkout. It only refused paths
+ * that escaped the repository, so everything inside it was fair game -
+ * including `backend/.env`, which carries the database password, and
+ * `.git/config`. `deploy/nginx.conf` says nothing under `backend/` should
+ * be served and this contradicted it, and the seven tests here only ever
+ * checked what *is* served.
+ *
+ * It binds to 127.0.0.1 by default, so it took `HOST=0.0.0.0` for it to
+ * matter. That is the obvious thing to type to show somebody the demo on
+ * the office network.
+ * ==================================================================== */
+
+const forbidden = async (p) => (await fetch(BASE + p)).status;
+
+test("the repository is not a web root", async () => {
+  for (const p of ["/backend/.env",
+                   "/backend/.env.example",
+                   "/.git/config",
+                   "/backend/core/workflows/floor.py",
+                   "/apps/server/state.json",
+                   "/package.json",
+                   "/CLAUDE.md"]) {
+    assert.equal(await forbidden(p), 404, p + " was served");
+  }
+});
+
+test("a traversal back through an allowed folder is not a way in", async () => {
+  /* The reason the check runs after the path is resolved rather than on
+     what arrived: this starts with an allowed folder and lands two
+     directories away from it. */
+  for (const p of ["/apps/../backend/.env",
+                   "/packages/../backend/.env",
+                   "/apps/rig/../../backend/.env",
+                   "/apps/%2e%2e/backend/.env"]) {
+    const status = await forbidden(p);
+    assert.ok(status === 404 || status === 403, p + " returned " + status);
+  }
+});
+
+test("nothing outside the repository is reachable either", async () => {
+  for (const p of ["/../../../Windows/win.ini", "/../../etc/passwd"]) {
+    const status = await forbidden(p);
+    assert.ok(status === 404 || status === 403, p + " returned " + status);
+  }
+});
+
+test("the three folders the apps actually need are still served", async () => {
+  for (const p of ["/",
+                   "/rotation-desk-v1/",
+                   "/apps/rig/",
+                   "/packages/engine/rotation-engine.js",
+                   "/packages/brand/brand.css",
+                   "/apps/rig/assets/rig.js",
+                   "/rotation-desk-v1/assets/desk.css"]) {
+    const r = await fetch(BASE + p);
+    assert.equal(r.status, 200, p + " should be served but returned " + r.status);
+  }
+});
+
+test("the landing page is served at the root and nowhere else", async () => {
+  /* nginx has `location = /` for the landing page and `location /` returning
+     404, so /index.html is not a URL there. Matching it here is the point:
+     a dev server that serves more than the deployment does is a dev server
+     that hides the difference. */
+  const root = await fetch(BASE + "/");
+  assert.equal(root.status, 200);
+  assert.match(await root.text(), /Teleop Stations/);
+  assert.equal(await forbidden("/index.html"), 404);
+});
+
+test("what is served matches the folders nginx names", async () => {
+  /* One list in two places. If they drift, the deployment serves
+     something the dev server does not, or the other way round, and the
+     first anybody knows is on a floor. */
+  const conf = fs.readFileSync(
+    path.join(__dirname, "../../deploy/nginx.conf"), "utf8");
+  for (const folder of ["/apps/rig/", "/packages/", "/rotation-desk-v1/"]) {
+    assert.ok(conf.includes("location " + folder),
+      "nginx.conf no longer serves " + folder + ", but this server does");
+  }
+  assert.ok(conf.includes("location / { return 404; }"),
+    "nginx.conf stopped refusing everything else");
+});

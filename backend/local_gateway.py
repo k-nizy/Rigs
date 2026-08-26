@@ -149,9 +149,16 @@ async def rig_config(request: Request):
 
 
 # Mounted after the API, so nothing static can shadow a route.
-for folder in ("apps", "packages", "rotation-desk-v1"):
+#
+# /apps/rig rather than /apps, matching nginx and apps/server/server.js:
+# the only web content under apps/ is the rig. apps/server/ is the push
+# server and its state.json - the whole floor's pushed schedules - and
+# serving those was how this tree turned into a web root by accident.
+for url, folder in (("/apps/rig", "apps/rig"),
+                    ("/packages", "packages"),
+                    ("/rotation-desk-v1", "rotation-desk-v1")):
     app.mount(
-        f"/{folder}",
+        url,
         StaticFiles(directory=REPO / folder, html=True),
-        name=folder,
+        name=folder.replace("/", "-"),
     )

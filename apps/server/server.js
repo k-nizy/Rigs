@@ -176,14 +176,43 @@ function sendRigSchedule(res, rigId) {
 
 /* --------------------------------------------------------------- static */
 
+/* The three folders nginx serves, and the landing page. Everything else
+ * under this checkout is not web content and must not be reachable.
+ *
+ * This used to serve the whole repository, because it only refused paths
+ * that escaped it. `deploy/nginx.conf` says plainly that nothing under
+ * `backend/` should be served, and this contradicted that: `/backend/.env`
+ * came back with the database password in it, and `/.git/config` with the
+ * remote. Bound to 127.0.0.1 by default, so it took `HOST=0.0.0.0` to
+ * matter - which is the obvious thing to type to show somebody the demo
+ * on the office network.
+ *
+ * Same list, same order, same reason as the location blocks in nginx.conf.
+ * If one changes the other has to.
+ */
+const SERVED = [path.join("apps", "rig"), "packages", "rotation-desk-v1"]
+  .map((d) => path.join(ROOT, d) + path.sep);
+const LANDING = path.join(ROOT, "index.html");
+
 function sendStatic(req, res, url) {
   // Map "/" to the landing page, everything else to a file under the repo.
   let rel = decodeURIComponent(url.pathname);
+  const isRoot = rel === "/";
+  if (isRoot) rel = "/index.html";
   if (rel.endsWith("/")) rel += "index.html";
-  const filePath = path.join(ROOT, rel);
 
-  // Refuse anything that escapes the repo, even after ..-resolution.
-  if (!filePath.startsWith(ROOT)) return sendJSON(res, 403, { error: "forbidden" });
+  /* Resolved first, then checked. A prefix test on the raw path is not a
+     check at all: `/apps/../backend/.env` starts with an allowed folder
+     and lands two directories away from it. */
+  const filePath = path.resolve(ROOT, "." + rel);
+
+  /* The landing page answers to "/" and to nothing else, which is what
+     nginx does - `location = /` serves it and `location /` returns 404.
+     A dev server that answers more URLs than the deployment is one that
+     hides the difference until somebody is standing on a floor. */
+  const allowed = (isRoot && filePath === LANDING)
+    || SERVED.some((dir) => filePath.startsWith(dir));
+  if (!allowed) return sendJSON(res, 404, { error: "not found" });
 
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) return sendJSON(res, 404, { error: "not found" });
