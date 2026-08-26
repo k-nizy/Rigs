@@ -88,6 +88,34 @@ class Settings(BaseSettings):
     # and the service says so loudly at startup either way.
     rig_tokens: dict[str, str] = {}
 
+    # Which address each rig calls from, so the service can tell the twelve
+    # machines apart before any of them has said who it is.
+    #
+    #   RIG_ADDRESSES='{"RIG-01": "10.0.0.11", "RIG-02": "10.0.0.12"}'
+    #
+    # The token above answers "is this caller allowed to be RIG-07". This
+    # answers the question that comes first and used to have no answer at
+    # all: which rig is this machine? The kiosk loads its page from the
+    # server, so a per-machine file placed beside the app on the rig is
+    # never read - the browser fetches the server's copy. Identity has to
+    # come from something the server can observe about the caller, and on
+    # a floor where the rigs and the service share a switch that is the
+    # address.
+    #
+    # What it is worth: a machine that is not at RIG-07's address cannot
+    # obtain RIG-07's token, so a laptop plugged into the floor switch
+    # gets nothing. What it is not worth: anything against somebody who
+    # can already take that address. It is a provisioning mechanism, not
+    # a defence against an attacker on the floor network - the token
+    # behind it is what authenticates, and this only decides who is
+    # handed one.
+    #
+    # Empty means nobody is identified, which is right for a laptop demo
+    # and wrong for a floor. Preflight compares it against RIG_TOKENS,
+    # because a rig with a token and no address can never fetch it, and a
+    # rig with an address and no token is handed one that will be refused.
+    rig_addresses: dict[str, str] = {}
+
     # The desk's write path. The plan decides per-rig auth at ingest and
     # deliberately does not decide this one, because the desk is expected
     # to sit behind the platform team's gateway, which already handles

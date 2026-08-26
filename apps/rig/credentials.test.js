@@ -225,3 +225,156 @@ test("two machines do not both believe they are the same rig", async () => {
   assert.ok(!seenBy["RIG-09"].some((u) => u.includes("RIG-05")),
     "one machine asked for another machine's schedule");
 });
+
+/* ====================================================================
+ * A rig that was never told which rig it is
+ *
+ * `apps/rig/index.html` loads rig-config.js by a relative path, and the
+ * kiosk loads the page from the server - so a config written onto the rig
+ * machine is never read. Twelve machines loaded one blank file, took the
+ * default at the top of rig.js, and every one of them believed it was the
+ * same rig. From the service's side that is indistinguishable from one
+ * very busy rig, so nothing downstream could ever notice.
+ *
+ * The service now decides, per caller. These pin the other half: what a
+ * rig does when the answer is "you are nobody". It stops. Idle time is
+ * loud, cheap and recoverable; work filed under the wrong rig is silent
+ * and permanent.
+ * ==================================================================== */
+
+/* A floor answers /api/health with rigIdentity, which says whether it
+   tells its rigs apart at all. `identity` here is that answer. */
+function floorSaying(identity, extra) {
+  return async (url) => {
+    const u = String(url);
+    if (u.includes("/api/health")) {
+      return { ok: true, status: 200,
+               json: async () => Object.assign({ ok: true, rigIdentity: identity,
+                                                 rigAuth: "off" }, extra) };
+    }
+    if (u.includes("/cursor")) return { ok: true, json: async () => ({ seq: 0 }) };
+    if (u.includes("/schedule")) return { ok: true, status: 200, json: async () => PAYLOAD };
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+}
+
+test("a machine the floor cannot place refuses to be a rig",
+  withRig({ search: "?demo", seenAs: "10.0.0.99", fetchImpl: floorSaying("on") },
+    async (rig) => {
+      rig.frames(1);
+      assert.equal(rig.screen(), "no_identity",
+        "an unidentified machine carried on as the default rig");
+    }));
+
+test("it offers nothing to press, because there is nothing safe to start",
+  withRig({ search: "?demo", seenAs: "10.0.0.99", fetchImpl: floorSaying("on") },
+    async (rig) => {
+      rig.frames(1);
+      assert.deepEqual(rig.pedals(), ["—", "—", "—"],
+        "a rig with no identity was still offered a way to start work");
+    }));
+
+test("it names the machine by the address the floor saw, for whoever is sent to it",
+  withRig({ search: "?demo", seenAs: "10.0.0.99", fetchImpl: floorSaying("on") },
+    async (rig) => {
+      rig.frames(1);
+      assert.match(rig.stage(), /10\.0\.0\.99/,
+        "the screen does not say which machine this is: " + rig.stage());
+    }));
+
+test("no take can be started from it, however long the shift runs",
+  withRig({ search: "?demo", seenAs: "10.0.0.99", fetchImpl: floorSaying("on") },
+    async (rig) => {
+      rig.frames(1);
+      rig.press(0); rig.press(1); rig.press(2);
+      rig.frames(600);                       // a demo hour, straight through a turn boundary
+      assert.equal(rig.screen(), "no_identity",
+        "the refusal was lifted by pressing pedals or by time passing");
+      assert.deepEqual(rig.logOf("episode_saved"), [], "a take was recorded anyway");
+    }));
+
+test("a turn boundary does not quietly hand it to the next operator",
+  withRig({ search: "?demo", seenAs: "10.0.0.99", fetchImpl: floorSaying("on") },
+    async (rig) => {
+      /* Long enough to matter. The rig mounts at 10:37 inside a turn that
+         ends at 10:45, and rotate() would put a working handover screen in
+         front of whoever walked up next. Measured against the unguarded
+         version, that happens somewhere past 3000 frames of demo clock -
+         so 12000, which is several turns, not one boundary scraped. A
+         refusal a passing turn boundary lifts is not a refusal. */
+      rig.frames(1);
+      const block = rig.rail().block;
+      rig.frames(12000);
+      assert.equal(rig.screen(), "no_identity",
+        "a turn boundary handed a rig with no identity to the next operator");
+      assert.equal(rig.rail().block, block,
+        "the clock ran on a rig that never started");
+    }));
+
+test("a rig the floor does place is untouched",
+  withRig({ search: "?demo", rigId: "RIG-02", seenAs: "10.0.0.12",
+            fetchImpl: floorSaying("on") },
+    async (rig) => {
+      rig.frames(1);
+      assert.notEqual(rig.screen(), "no_identity",
+        "a properly configured rig was stopped");
+      assert.equal(rig.rail().rig, "RIG-02");
+    }));
+
+test("a floor that does not identify its rigs is a demo, and still runs",
+  withRig({ search: "?demo", fetchImpl: floorSaying("off") },
+    async (rig) => {
+      /* The laptop case, and the OPEN A RIG button on the landing page.
+         Deliberately not keyed on rigAuth: the worst version of the
+         failure above is a floor whose auth is off, where twelve rigs
+         filing as one are accepted rather than refused. */
+      rig.frames(1);
+      assert.notEqual(rig.screen(), "no_identity",
+        "the demo stopped working");
+    }));
+
+test("no service to ask leaves the rig as it was",
+  withRig({ search: "?demo",
+            fetchImpl: async (url) => {
+              if (String(url).includes("/api/health")) throw new Error("no server");
+              if (String(url).includes("/cursor")) return { ok: true, json: async () => ({ seq: 0 }) };
+              throw new Error("no server");
+            } },
+    async (rig) => {
+      /* A static deploy with no service behind it. Nothing can be filed
+         either, so there is nothing to be wrong about. */
+      rig.frames(1);
+      assert.notEqual(rig.screen(), "no_identity");
+    }));
+
+test("nothing filed before the answer came back is ever sent",
+  withRig({ search: "?demo", seenAs: "10.0.0.99", fetchImpl: floorSaying("on") },
+    async (rig) => {
+      /* Found in a browser, not in a test. boot() raises a shift check
+         immediately, so by the time the health answer lands there is
+         already one event in the outbox filed under the default rig -
+         and the rail was still naming it. On a floor with auth off that
+         event is accepted, which is the whole failure arriving through
+         the one window where the rig did not yet know. */
+      rig.frames(1);
+      const sent = [];
+      global.fetch = async (url, init) => {
+        sent.push(String(url));
+        return { ok: true, status: 200, json: async () => ({ accepted: 0 }) };
+      };
+      await rig.upload();
+      assert.deepEqual(sent.filter((u) => u.includes("/events")), [],
+        "a rig with no identity uploaded events filed under the default rig");
+    }));
+
+test("the rail stops naming a rig, so the screen does not contradict itself",
+  withRig({ search: "?demo", seenAs: "10.0.0.99", fetchImpl: floorSaying("on") },
+    async (rig) => {
+      /* Of a screen saying "this machine has no identity" and a rail
+         saying RIG-03, the operator believes the one that names a rig. */
+      rig.frames(1);
+      assert.equal(rig.rail().rig, "",
+        "the rail still named a rig on a machine that has none");
+      assert.equal(rig.rail().task, "",
+        "the rail still named a task on a machine that has no rig");
+    }));

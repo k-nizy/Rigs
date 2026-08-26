@@ -179,6 +179,10 @@ const BY_PEDALS = {
   "—|Restart demo|—": "session_ended",
   "—|Check the rig|—": "standby",
   "—|Check again|—": "standby",
+  /* The only screen in the app with nothing to press at all, which is
+     what makes it recognisable here: a rig that was never told which rig
+     it is must not be offered a way to start work. */
+  "—|—|—": "no_identity",
 };
 
 /* =====================================================================
@@ -258,8 +262,11 @@ async function mountRig(opts) {
   global.RIG_JOURNAL = opts.journal || undefined;
   /* The token Ansible places on the machine. */
   global.RIG_TOKEN = opts.token || undefined;
-  /* What Ansible writes into rig-config.js on each machine. */
+  /* What the service writes into the rig-config.js it serves this
+     machine. `seenAs` is the address it was recognised by, and is only
+     ever shown on the no-identity screen. */
   global.RIG_ID = opts.rigId || undefined;
+  global.RIG_SEEN_AS = opts.seenAs || undefined;
 
   const errors = [];
   new Function(fs.readFileSync(path.join(ROOT, "assets/rig.js"), "utf8"))();

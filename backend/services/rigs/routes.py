@@ -27,6 +27,7 @@ from core.workflows.schedules import in_force as schedules_in_force
 from services.rigs.auth import (
     desk_auth, desk_read_auth, rig_auth, rig_auth_for_key, rig_rate_limit,
 )
+from services.rigs.identity import caller_address, config_js, rig_at
 from core.infrastructure.storage import Storage, get_storage
 from core.workflows.video import VideoError, backlog, confirm, where_to_put
 
@@ -186,6 +187,48 @@ async def schedule_json(
     return await schedule(rig_id, session)
 
 
+@router.get("/rigs/config.js", tags=["schedules"],
+            response_class=Response,
+            summary="Which rig this machine is, decided by where it called from")
+async def rig_config_js(
+    request: Request, s: Settings = Depends(get_settings)
+) -> Response:
+    """The `rig-config.js` the rig's page loads, rendered for the caller.
+
+    Deliberately unauthenticated, and that is not an oversight: this is
+    the route that hands a rig its token, so requiring one would be
+    circular. What stands in for auth is that the caller cannot ask for
+    anything - there is no rig id in the path, no query parameter, and no
+    header that changes the answer. The address decides, and a caller at
+    an address we do not know is told it is nobody.
+
+    Served through nginx at `/apps/rig/rig-config.js`, which is where the
+    page actually asks for it. That mapping lives in `deploy/nginx.conf`
+    rather than here so the service keeps one prefix.
+    """
+    seen = caller_address(
+        request.client.host if request.client else None,
+        request.headers.get("x-real-ip"),
+    )
+    rig_id = rig_at(seen, s.rig_addresses)
+
+    if rig_id is None and s.rig_addresses:
+        # Worth a line in the log: on a floor this is a rig that has moved,
+        # been re-imaged onto a new address, or a machine that should not
+        # be asking. All three want somebody to look.
+        log.warning("rig config requested from an address no rig is configured at: %s", seen)
+
+    body = config_js(rig_id, s.rig_tokens.get(rig_id or ""), seen)
+    return Response(
+        content=body,
+        media_type="text/javascript; charset=utf-8",
+        # The one file that must never be cached. A stale copy is a rig
+        # filing every episode under another rig's name, and nginx says
+        # the same thing for the same reason.
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
+
+
 # ------------------------------------------------------------- the video
 
 
@@ -330,6 +373,16 @@ async def health(
         "ok": True,
         "database": s.safe_url(),
         "rigAuth": "on" if s.auth_is_on else "off",
+        # Whether this service tells rigs apart at all. The rig reads it:
+        # a floor that identifies its rigs and could not identify *this*
+        # machine is a misprovisioned rig, and it stops rather than
+        # falling back to the default and filing every take under it.
+        #
+        # Separate from rigAuth on purpose. The worst version of that
+        # failure is a floor running with auth off, where twelve rigs
+        # reporting as one is accepted rather than refused - so the rig
+        # cannot use rigAuth to decide whether it is on a floor.
+        "rigIdentity": "on" if s.rig_addresses else "off",
         "deskAuth": "on" if s.desk_token else "off",
         # Reading the floor and writing to it are separate questions, so
         # a deploy check can tell which of them is actually closed.

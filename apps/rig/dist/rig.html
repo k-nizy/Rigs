@@ -1564,6 +1564,7 @@ function boot(screen) {
    jumping straight to the screen you want to argue about, not waiting
    forty-five minutes for a handover to come round. */
 const SCREENS = [
+  ["no-identity","No identity"],
   ["standby",    "Standby"],
   ["checklist",  "Shift check"],
   ["fault-class","Report a fault"],
@@ -1714,6 +1715,12 @@ function pedals() {
        the shift: check the rig at 07:40 and nobody burns 60 seconds at
        08:00. It also keeps the rule that every screen offers a way
        forward. */
+    /* The one screen with no way forward, and the only place in this app
+       that breaks the rule that every screen offers one. There is nothing
+       an operator can do about it and nothing they should be invited to
+       try: any work started here would be filed under another rig. */
+    case "no_identity":
+      return [null, null, null];
     case "standby":
       return [null, act(S.checkedAt == null ? "Check the rig" : "Check again", "start_check"), null];
     case "checklist":
@@ -2069,7 +2076,13 @@ function tick(now) {
      after a backgrounded tab would otherwise leap half an hour. */
   const dt = speed === 1 ? real : Math.min(0.25, real) * speed;
 
-  if (S.phase !== "session_ended") {
+  /* Two phases the clock does not run in. `session_ended` is over;
+     `no_identity` never began, and must stay that way - the turn-boundary
+     branch below calls rotate(), which would quietly move a rig with no
+     identity on to the next operator and put a working screen in front of
+     somebody. A refusal that a passing turn boundary lifts is not a
+     refusal. */
+  if (S.phase !== "session_ended" && S.phase !== "no_identity") {
     S.t += dt;
     if (S.phase === "fault_fixing") S.faultSecs += dt;
     if (S.phase === "rig_down")     S.downSecs += dt;
@@ -2228,6 +2241,21 @@ function view(behind) {
     /* A sign, read from across the room. Everything an operator walking
        up needs to know that the rig is theirs and ready, and nothing to
        do about it. */
+    /* Written for whoever gets sent to fix it, not for the operator: it
+       names the machine by the address the service saw, because that is
+       the only thing anybody knows about it yet. */
+    case "no_identity": {
+      return `
+        <p class="kicker">This rig has no identity</p>
+        <h1 class="headline">Not set up yet</h1>
+        <p class="lede">The floor does not recognise this machine${
+          SEEN_AS ? ", which called from " + SEEN_AS : ""}.</p>
+        <p class="sub">Nothing can be recorded here: a take filed now would
+        be credited to another rig, and nothing downstream could tell.
+        Add this machine to <code>RIG_ADDRESSES</code> on the server and
+        reload.</p>`;
+    }
+
     case "standby": {
       const p = PAYLOAD;
       const first = p && p.turns.length ? p.turns[0] : null;
@@ -2550,6 +2578,69 @@ const RIG_TOKEN = (typeof window !== "undefined" && window.RIG_TOKEN) || "";
  * Not a URL parameter. The token travels with it, and tokens in URLs end
  * up in access logs, browser history and referrer headers. */
 const CONFIGURED_RIG = (typeof window !== "undefined" && window.RIG_ID) || null;
+
+/* The address the service saw this machine call from, when it is the one
+   serving `rig-config.js`. Only ever shown on the no-identity screen, so
+   whoever is sent to fix it knows which machine they are looking for. */
+const SEEN_AS = (typeof window !== "undefined" && window.RIG_SEEN_AS) || null;
+
+/* A rig that was not told which rig it is must not guess.
+ *
+ * Left alone it takes the default at the top of this file, asks for that
+ * rig's schedule, and files every episode under it. Twelve machines doing
+ * that is indistinguishable, from the service's side, from one very busy
+ * rig - so nothing downstream can notice, and the takes are wrong for
+ * ever. Idle time is loud, cheap and recoverable; misattributed work is
+ * silent and permanent. Same trade as Standby for an expired sheet.
+ *
+ * The floor is asked rather than assumed. `rigIdentity` says whether this
+ * service tells rigs apart at all: where it does, not being named is a
+ * fault, and where it does not - a laptop, the demo on the landing page -
+ * nothing changes. Deliberately not keyed on `rigAuth`, because the worst
+ * version of this failure is a floor whose auth is off, where twelve rigs
+ * filing as one are accepted rather than refused.
+ *
+ * A service that cannot be reached at all leaves the rig as it was. That
+ * is the static-deploy and no-network case, and it costs nothing: with no
+ * service there is nothing to file to either. */
+async function confirmIdentity() {
+  if (CONFIGURED_RIG) return;
+  let health = null;
+  try {
+    const r = await fetch("/api/health");
+    health = r.ok ? await r.json() : null;
+  } catch (e) {
+    return;                       // no service to ask; nothing to be wrong about
+  }
+  if (!health || health.rigIdentity !== "on") return;
+
+  /* Everything filed before this answer came back was filed under the
+     default rig. It is one shift check raised at boot, and it names the
+     wrong machine - so it is dropped rather than uploaded. On a floor
+     whose auth is off it would otherwise be accepted, which is the exact
+     failure this screen exists to prevent, arriving from the one window
+     where the rig did not yet know.
+     Forgotten from the journal too: it survives a reload, so clearing
+     only the outbox would replay it on the next boot. */
+  const stranded = outbox.splice(0, outbox.length);
+  if (stranded.length) {
+    onJournal(() => journal.forgetEvents(stranded.map((e) => e.eventId)),
+              "events filed before this machine knew it was not a rig");
+  }
+
+  /* The rail is the other half of the sentence. Left alone it goes on
+     naming the default rig and its task beside a screen saying this
+     machine has no identity - and of the two, the operator believes the
+     one that names a rig. */
+  PAYLOAD = null;
+  RIG_ID = "";
+  document.getElementById("rail-rig").textContent = "";
+  document.getElementById("rail-task").textContent = "";
+  document.title = "No identity";
+
+  go("no_identity");
+  render();
+}
 
 function ours(url) {
   const u = String(url);
@@ -3230,6 +3321,10 @@ window.setLiveClock = function (on) {
   toast(on ? "Following the wall clock" : "Demo clock");
 };
 
-start(CONFIGURED_RIG);
+/* Chained, not called beside it. `start()` is async - on a real rig the
+   payload arrives over the network - and it is what builds the state the
+   screen is drawn from. Asked in parallel, the health answer routinely
+   won the race and replaced a screen that did not exist yet. */
+start(CONFIGURED_RIG).then(confirmIdentity);
 requestAnimationFrame(tick);
 </script>

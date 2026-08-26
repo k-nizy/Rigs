@@ -78,11 +78,13 @@ carry the same string.
 
 ```sh
 cd /srv/rigs/backend
-.venv/bin/python -m tools.mint_tokens --desk --out /tmp/rig-secrets
+.venv/bin/python -m tools.mint_tokens --desk --addresses
 ```
 
-It prints the `RIG_TOKENS` line for the server and writes one
-`rig-config.js` per rig. Both come from one run so they cannot drift.
+It prints the `RIG_TOKENS` line for the server and a `RIG_ADDRESSES`
+skeleton with the same twelve rigs in it, for you to fill in with the
+address each machine calls from. Nothing is written to the rig: the
+service hands each machine its own identity, and step 8 says why.
 
 ## 4. Configuration
 
@@ -93,6 +95,7 @@ password and twelve tokens.
 DATABASE_URL=postgresql+asyncpg://rigs:something-long@127.0.0.1:5432/rigs
 
 RIG_TOKENS={"RIG-01":"...","RIG-02":"..."}      # from step 3
+RIG_ADDRESSES={"RIG-01":"10.0.0.11","RIG-02":"10.0.0.12"}
 DESK_TOKEN=...                                   # from step 3
 RIG_RATE_LIMIT_PER_MIN=120
 
@@ -100,6 +103,18 @@ STORAGE_LOCAL_ROOT=/srv/rigs/spool
 VIDEO_KEEP_DAYS=90
 VIDEO_PENDING_AFTER_DAYS=7
 ```
+
+`RIG_ADDRESSES` is which machine is which. It has to name the same
+twelve rigs as `RIG_TOKENS`: a rig with a token and no address can never
+be told who it is, and one with an address and no token is handed one
+every call refuses. Preflight compares them, because both failures show
+up somewhere else entirely.
+
+That means the twelve rigs need fixed addresses - DHCP reservations are
+enough. What it buys is that a machine which is not at RIG-07's address
+cannot obtain RIG-07's token. What it does not buy is anything against
+somebody who can already take that address; it decides who is handed a
+credential, and the credential is what authenticates.
 
 `backend/.env.example` documents every setting and why it has the value
 it has. For MinIO as the spool, set `STORAGE_ENDPOINT` and its keys -
@@ -162,13 +177,7 @@ never receives a floor credential.
 
 ## 8. Each rig machine
 
-Copy that rig's config - **only its own**:
-
-```sh
-scp /tmp/rig-secrets/RIG-07/rig-config.js rig07:/srv/rigs/apps/rig/rig-config.js
-```
-
-Then a kiosk browser pointed at the server:
+Nothing is copied to the rig. A kiosk browser, pointed at the server:
 
 ```sh
 chromium --kiosk --noerrdialogs --disable-infobars \
@@ -176,13 +185,36 @@ chromium --kiosk --noerrdialogs --disable-infobars \
          http://<server>/apps/rig/
 ```
 
-Without `rig-config.js` a rig has no identity and falls back to the
-default, so **every machine asks for the same rig's schedule and files
-every episode under that one id**. Nothing downstream can detect it -
-from the server's side twelve rigs reporting as one is indistinguishable
-from one very busy rig. Check each machine after provisioning.
+The machine is identified by the address it calls from, which is what
+step 4 put in `RIG_ADDRESSES`. Give it a fixed one first - a DHCP
+reservation is enough.
 
-Delete `/tmp/rig-secrets` when Ansible has them.
+**This used to say to `scp` a per-rig `rig-config.js` onto each machine,
+and that never worked.** The page loads `rig-config.js` with a relative
+path and the kiosk loads the page *from the server*, so the browser asks
+the server for its copy and the file on the rig is never read. Following
+the old instructions gave twelve machines one blank config, every one of
+them fell back to the same hard-coded default, and every episode on the
+floor would have been filed under one rig id. Nothing downstream could
+have caught it: from the service's side, twelve rigs reporting as one is
+exactly what one very busy rig looks like.
+
+So the server decides. `/apps/rig/rig-config.js` is proxied to the
+service, which answers per caller from `RIG_ADDRESSES` and hands back
+that rig's id and its own token - never another's.
+
+A machine the floor cannot place is told it is nobody, and the rig then
+**refuses to work**: it shows "This rig has no identity", names the
+address it called from, and offers no pedal to press. That is the same
+trade as Standby for an expired sheet. Idle time is loud, cheap and
+recoverable; work filed under the wrong rig is silent and permanent, and
+there is no correction mechanism in the ledger.
+
+Check each machine after provisioning by reading the id in the top-left.
+That is now a real check rather than a formality, because a wrong answer
+is visible on the screen instead of invisible everywhere.
+
+Delete `/tmp/rig-secrets` once the tokens are in `/etc/rigs/rigs.env`.
 
 ## 9. Prove it works
 

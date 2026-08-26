@@ -1,26 +1,32 @@
-"""Generate the per-rig credentials, and the files that carry them.
+"""Generate the per-rig credentials, and the two lines that carry them.
 
-Twelve rigs, twelve tokens, and two places each one has to end up:
+Twelve rigs, twelve tokens, and one place they end up: `RIG_TOKENS` in
+the server's environment. The rig is handed its own by the service, which
+decides from the address the machine called from.
 
-    the server   RIG_TOKENS in its environment, as JSON
-    the rig      rig-config.js on that machine, with its id and its token
+    python -m tools.mint_tokens                  # the tokens
+    python -m tools.mint_tokens --addresses      # and an address map to fill in
 
-Both are produced here so they cannot drift. A rig whose token is not in
-the server's list is refused, and a rig with the wrong id files every
-episode under somebody else's name - so the two files are generated from
-one run rather than assembled by hand twice.
-
-    python -m tools.mint_tokens                    # print, write nothing
-    python -m tools.mint_tokens --out ./secrets    # write the config files
+This used to write a `rig-config.js` per rig for Ansible to place on the
+machines, and those files were never read by anything. The rig's page
+loads `rig-config.js` relatively and the kiosk loads the page from the
+server, so the browser asks the server for its copy - twelve machines got
+one blank file and all became the same rig. Writing them is worse than
+useless now: it is a convincing-looking step that does nothing, so it is
+gone rather than deprecated.
 
 One token per rig, never shared. A token names exactly one rig and is
 refused for any other, which is the property that stops one compromised
 machine attributing work across the floor - and it is worth nothing if
 all twelve machines carry the same string.
 
-These are secrets. The output goes to a terminal and, if you ask, to
-files. Neither is a safe place to leave them: put them where secrets
-live, hand the config files to Ansible, and delete what is left.
+`RIG_ADDRESSES` has to name the same rigs as `RIG_TOKENS`; preflight
+compares them. The addresses are not this tool's to know - whoever owns
+the floor network does - so `--addresses` prints the skeleton with the
+right rigs in it rather than inventing values.
+
+These are secrets. The output goes to a terminal, which is not a safe
+place to leave them: put them where secrets live and clear the scrollback.
 """
 
 from __future__ import annotations
@@ -36,18 +42,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # The floor, as CLAUDE.md defines it: twelve rigs, four groups of three.
 DEFAULT_RIGS = [f"RIG-{i:02d}" for i in range(1, 13)]
 
-CONFIG = '''/* Written by tools/mint_tokens.py. One per machine.
- *
- * This file is the only thing that differs between the twelve rigs, and
- * it is what stops all of them believing they are the same one.
- *
- * It carries a secret. It should be readable by the browser the kiosk
- * runs as and by nobody else.
- */
-window.RIG_ID    = "{rig}";
-window.RIG_TOKEN = "{token}";
-'''
-
 
 def mint(rigs: list[str]) -> dict[str, str]:
     # token_urlsafe(32) is 256 bits. There is no reason to be frugal here:
@@ -59,8 +53,8 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--rigs", nargs="*", default=DEFAULT_RIGS,
                    help="rig ids; defaults to RIG-01..RIG-12")
-    p.add_argument("--out", type=Path, default=None,
-                   help="directory to write per-rig rig-config.js into")
+    p.add_argument("--addresses", action="store_true",
+                   help="also print a RIG_ADDRESSES skeleton to fill in")
     p.add_argument("--desk", action="store_true",
                    help="also mint a DESK_TOKEN for the schedule push")
     args = p.parse_args()
@@ -75,26 +69,22 @@ def main() -> int:
         print("DESK_TOKEN=" + secrets.token_urlsafe(32))
     print()
 
-    if args.out:
-        args.out.mkdir(parents=True, exist_ok=True)
-        for rig, token in tokens.items():
-            path = args.out / rig / "rig-config.js"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(CONFIG.format(rig=rig, token=token), encoding="utf-8")
-        print(f"# wrote {len(tokens)} config files under {args.out}/")
-        print("# Each goes to apps/rig/rig-config.js on that machine, and")
-        print("# nowhere else. Delete this directory once Ansible has them.")
-    else:
-        print("# ---- for each rig -----------------------------------------")
-        print("# Re-run with --out DIR to write these as files.")
+    if args.addresses:
+        print("# ---- which machine is which -------------------------------")
+        print("# Fill in the address each rig calls from, then set this")
+        print("# beside RIG_TOKENS. The service hands a rig its identity by")
+        print("# matching the caller against this map, so a rig missing from")
+        print("# it is never told who it is and refuses to start.")
+        print("#")
+        print("# The same rigs as above, and preflight checks that it is.")
         print()
-        for rig, token in tokens.items():
-            print(f'#   {rig}: window.RIG_ID = "{rig}"; '
-                  f'window.RIG_TOKEN = "{token[:6]}..."')
+        skeleton = {rig: "CHANGE-ME" for rig in tokens}
+        print("RIG_ADDRESSES=" + json.dumps(skeleton, separators=(",", ":")))
+        print()
 
-    print()
     print("# Verify with:  curl -s http://HOST/api/health")
-    print('# It should answer  "rigAuth":"on"  once the server has these.')
+    print('# It should answer  "rigAuth":"on"  and  "rigIdentity":"on"')
+    print("# once the server has both lines.")
     return 0
 
 

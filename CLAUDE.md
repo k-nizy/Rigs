@@ -164,8 +164,21 @@ checklist → handover → recording → review → resetting → (loop)
   `rig_shift_checks`, `rig_downtime_events`, `rig_productivity_blocks`,
   `sessions`). These are filed as real envelopes, journalled to IndexedDB
   before the network is touched, and uploaded to `backend/`.
-- The rig has no login and never will: a token placed on the machine
-  authenticates it, and the operator authenticates nothing.
+- The rig has no login and never will: a token authenticates the machine,
+  and the operator authenticates nothing.
+- **The machine does not choose which rig it is; the service tells it.**
+  `index.html` loads `rig-config.js` by a relative path and the kiosk
+  loads the page from the server, so a per-machine file placed on the rig
+  is never read - the browser asks the server for its copy. That is how
+  twelve machines came to load one blank file and all became the same
+  rig, and it is invisible from every angle: from the service's side,
+  twelve rigs reporting as one is exactly what one very busy rig looks
+  like. So the service answers that path per caller, from `RIG_ADDRESSES`.
+- A rig the floor cannot place **refuses to work**. It says it has no
+  identity, names the address it called from, offers no pedal, and throws
+  away anything it filed before it found out. Same trade as Standby for
+  an expired sheet: idle time is loud, cheap and recoverable, and work
+  filed under the wrong rig is silent, permanent, and uncorrectable.
 
 ## The return arrow (built)
 

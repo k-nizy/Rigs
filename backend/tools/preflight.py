@@ -208,6 +208,43 @@ def check_posture(s) -> None:
         record(WARN, "rig auth",
                "RIG_TOKENS is empty - any caller may file events for any rig")
 
+    # Identity and the token that goes with it are set in two places and
+    # must name the same twelve rigs. A rig with a token and no address
+    # can never fetch it, so it never starts; a rig with an address and no
+    # token is handed one the service will refuse on every call. Both fail
+    # somewhere else entirely - a rig stuck on its own screen, or a floor
+    # whose events all 401 - so they are compared here, where the answer
+    # is a line of output rather than an afternoon.
+    if s.rig_addresses:
+        no_token = sorted(set(s.rig_addresses) - set(s.rig_tokens))
+        no_address = sorted(set(s.rig_tokens) - set(s.rig_addresses))
+        dupes = sorted(
+            a for a in set(s.rig_addresses.values())
+            if list(s.rig_addresses.values()).count(a) > 1
+        )
+        if no_token or no_address or dupes:
+            parts = []
+            if no_address:
+                parts.append("no address, so they can never be identified: "
+                             + ", ".join(no_address))
+            if no_token:
+                parts.append("no token, so every call they make is refused: "
+                             + ", ".join(no_token))
+            if dupes:
+                parts.append("addresses used by more than one rig, which "
+                             "identifies neither: " + ", ".join(dupes))
+            record(FAIL, "rig identity", "; ".join(parts))
+        else:
+            record(OK, "rig identity",
+                   f"{len(s.rig_addresses)} rigs, each with an address and a token")
+    elif s.rig_tokens:
+        record(FAIL, "rig identity",
+               "RIG_TOKENS is set but RIG_ADDRESSES is empty - no rig can be told "
+               "which rig it is, so every one of them refuses to start")
+    else:
+        record(WARN, "rig identity",
+               "RIG_ADDRESSES is empty - rigs are not told apart, which is a demo")
+
     if s.desk_token:
         record(OK, "desk auth", "push requires a token")
     else:

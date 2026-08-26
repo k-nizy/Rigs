@@ -19,7 +19,7 @@ import contextlib
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,6 +29,7 @@ from local_dev_routes import dev
 from services.rigs.app import DESCRIPTION, TAGS, create_app
 from services.rigs.observability import configure as configure_logging
 from services.rigs.observability import install as install_observability
+from services.rigs.routes import rig_config_js
 
 from workers.drain_to_archive import run as drain_run
 from workers.project_events import run as project_run
@@ -128,6 +129,23 @@ async def root() -> FileResponse:
     stranger opened the site.
     """
     return FileResponse(REPO / "index.html")
+
+
+@app.get("/apps/rig/rig-config.js")
+async def rig_config(request: Request):
+    """Which rig this machine is, at the path the rig's page asks for.
+
+    The page loads `rig-config.js` with a relative path, so this is where
+    the browser looks. On a floor nginx proxies this one path to the
+    service; here the same route has to be declared before the static
+    mount below, or the checked-in placeholder file wins and every rig is
+    the default again - which is the whole bug.
+
+    The service owns the decision. This only puts it at the URL the page
+    uses, which is a deployment concern and belongs in the harness that
+    exists to paper over gateway differences.
+    """
+    return await rig_config_js(request, get_settings())
 
 
 # Mounted after the API, so nothing static can shadow a route.

@@ -371,8 +371,8 @@ test("the handover screen names the operator taking the rig, every time",
 
 /* ------------------------------------------------------- every screen */
 
-const SCREENS = ["standby", "checklist", "fault-class", "fault-fixing", "handover",
-  "recording", "review", "resetting", "issue-menu", "rig-down"];
+const SCREENS = ["no-identity", "standby", "checklist", "fault-class", "fault-fixing",
+  "handover", "recording", "review", "resetting", "issue-menu", "rig-down"];
 
 /* Standby is excluded on purpose: it is the one screen that *should* be
    left the moment the schedule says somebody is due, which is true at the
