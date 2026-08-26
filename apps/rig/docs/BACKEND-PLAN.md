@@ -134,7 +134,7 @@ and hardware day is a swap rather than an integration.
 ### 2. Tauri — one binary per rig
 
 The rig page is deliberately a browser page and stays one. Tauri hosts it
-in a webview and gives it exactly the four things a browser cannot do:
+in a webview and gives it exactly the three things a browser cannot do:
 
 - **spawn and supervise RODA-RS** — restart it if it dies, and surface
   that as a real `rig_down` rather than a frozen screen
@@ -142,7 +142,6 @@ in a webview and gives it exactly the four things a browser cannot do:
 - **own the pedals as raw HID** — today they are the keys `1`/`2`/`3`;
   on a rig they are a pedal board, and reading them below the browser
   means no focus loss, no stray keystroke, no browser chrome to escape to
-- **know which rig it is** — see below
 
 The webview loads the same `assets/rig.js` that runs in a browser today.
 Where that file currently calls `emit()` into an array, it calls a Tauri
@@ -151,11 +150,30 @@ plain browser, the demo, the single-file dist) it falls back to the array.
 Same pattern the schedule fetch already uses: server, then file, then
 local. The demo must keep working; it is how the app gets reviewed.
 
-**Rig identity comes from the machine, not from a person.** Ansible writes
-`/etc/rig/id` when it provisions the host; Tauri reads it and hands it to
-the page. Nobody ever types "RIG-07". This is the same decision the app
-already made when it deleted its login screen — if the system knows, do
-not ask.
+**Rig identity comes from the service, not from the machine.**
+
+> **Superseded.** This paragraph read: "Ansible writes `/etc/rig/id` when
+> it provisions the host; Tauri reads it and hands it to the page."
+>
+> That was built, and it failed silently. `index.html` loads
+> `rig-config.js` by a relative path and the kiosk loads the page from
+> the server, so the browser asks the *server* for that file — the
+> per-machine copy sitting on the rig is never read. Twelve machines
+> loaded one blank file and every one of them became the same rig, and
+> it is invisible from every angle: from the service's side, twelve rigs
+> reporting as one is exactly what one very busy rig looks like.
+>
+> So the service answers that path per caller, from `RIG_ADDRESSES`, and
+> a rig the floor cannot place refuses to work rather than guessing.
+>
+> The instinct is unchanged — nobody ever types "RIG-07", which is the
+> same decision the app made when it deleted its login screen. What
+> changed is *who knows*: the floor does, not the machine.
+>
+> This takes a job off the list above rather than adding one, and it is
+> the one place where Tauri must **not** help. A shell that hands the
+> page an identity of its own would rebuild exactly the failure above,
+> one layer lower and harder to see.
 
 ### 3. The service — Python, in the platform team's tree
 
@@ -203,7 +221,7 @@ Two playbooks and one inventory:
 ops/ansible/
   inventory.ini          RIG-01..RIG-12 → hostnames, and the ingest box
   rig.yml                cameras/GPU drivers, RODA-RS, the Tauri app,
-                         /etc/rig/id, pedal udev rules, the SSD mount,
+                         pedal udev rules, the SSD mount,
                          NTP, log rotation, autologin + kiosk,
                          systemd: rig-app, roda-rs, rig-uploader
   server.yml             node, apps/server, systemd, reverse proxy,
@@ -395,7 +413,7 @@ absorbing.
 ### Phase 3 — the floor *(needs twelve machines)*
 
 - `ops/ansible/` and the two playbooks
-- `/etc/rig/id` provisioning, pedal HID rules, kiosk autostart, NTP
+- fixed addresses for the twelve rigs, pedal HID rules, kiosk autostart, NTP
 - cloud archive and lifecycle policy
 - one rig first, then eleven
 

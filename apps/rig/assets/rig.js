@@ -1135,9 +1135,10 @@ window.rigEvents = () => envelopes.slice();
 /* The machine authenticates; the operator never does.
 
    That is the whole of the rig's auth story and it is what lets this
-   screen keep having no login. Ansible places a token on the machine
-   beside `/etc/rig/id`, the page is served with it, and every call the
-   rig makes carries it. Nobody standing at the rig types anything.
+   screen keep having no login. The service hands the token to the page
+   in `rig-config.js`, answered per caller from `RIG_ADDRESSES`, and every
+   call the rig makes carries it. Nobody standing at the rig types
+   anything.
 
    Only same-origin calls get the header. A presigned upload URL points
    at the object store, is already signed, and is not ours to add
@@ -1148,13 +1149,15 @@ const RIG_TOKEN = (typeof window !== "undefined" && window.RIG_TOKEN) || "";
 
 /* Which rig this machine is.
  *
- * Ansible writes `rig-config.js` beside this file, per machine, from the
- * same source as /etc/rig/id. Without it every rig boots as the default
- * and asks the server for RIG-03's schedule - twelve machines that all
- * believe they are the same one, filing every episode under one rig id
- * and uploading video into one prefix. There is nothing downstream that
- * could detect that, because from the server's side it is exactly what
- * one very busy rig looks like.
+ * The service answers `rig-config.js` per caller, from `RIG_ADDRESSES`.
+ * A per-machine file was tried first and was never read once: index.html
+ * loads this path relatively and the kiosk loads the page from the
+ * server, so the browser always asks the server for it. Twelve machines
+ * loaded one blank file, every one of them booted as the default, and
+ * they filed every episode under one rig id and uploaded video into one
+ * prefix. There is nothing downstream that could detect that, because
+ * from the server's side it is exactly what one very busy rig looks
+ * like.
  *
  * Not a URL parameter. The token travels with it, and tokens in URLs end
  * up in access logs, browser history and referrer headers. */

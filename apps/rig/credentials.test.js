@@ -3,9 +3,9 @@
  *
  * The rig has no login by design, and that is not an omission - it is the
  * central idea of the screen. So the credential belongs to the machine:
- * Ansible places a token beside /etc/rig/id, the page is served with it,
- * and every call the rig makes carries it. Nobody standing at the rig
- * types anything, ever.
+ * the service hands the page a token in rig-config.js, answered per
+ * caller from RIG_ADDRESSES, and every call the rig makes carries it.
+ * Nobody standing at the rig types anything, ever.
  *
  * Two things are worth pinning:
  *
