@@ -425,11 +425,15 @@ function dispatch(intent) {
     case "score_3": case "score_4": case "score_5": {
       const score = Number(intent.slice(-1));
       S.recordedSecs += S.pendingSecs || 0;
+      /* One number, filed and recorded. The recorder is sized from the
+         same seconds the ledger keeps, so bytes divided by durationSecs
+         is a rate somebody chose rather than two roundings apart. */
+      const durationSecs = Math.round(S.pendingSecs || 0);
       emit("episode_saved", "episodes",
            "episode " + S.episode + " · " + clock(S.pendingSecs || 0) + " · scored " + score + "/5",
-           { episodeId: S.episodeId, durationSecs: Math.round(S.pendingSecs || 0), score: score },
+           { episodeId: S.episodeId, durationSecs: durationSecs, score: score },
            S.episodeWho);
-      queueVideo(S.episodeId);
+      queueVideo(S.episodeId, durationSecs);
       S.pendingSecs = 0;
       afterEpisode();
       break;
@@ -1558,11 +1562,19 @@ window.rigFlush = flush;
    copy is gone.
 
    There is no camera behind a browser tab, so `videoSource` is the seam:
-   it is handed an episode and a camera and returns a Blob, or null when
-   there is nothing to send. A page with no source queues nothing, which
-   is why running the demo does not post fabricated bytes and does not
-   pollute what /floor/video measures. Tauri and RODA-RS supply a real one
-   later, and nothing below this line changes when they do. */
+   it is handed an episode, a camera and the seconds this take recorded,
+   and returns a Blob, or null when there is nothing to send. A page with
+   no source queues nothing, which is why running the demo does not post
+   fabricated bytes and does not pollute what /floor/video measures.
+   Tauri and RODA-RS supply a real one later, and nothing below this line
+   changes when they do.
+
+   The duration is passed rather than looked up because it is the only
+   part a recorder cannot work out for itself, and because it is the
+   number the ledger keeps: a stand-in sized from it produces bytes that
+   agree with the episode row, so a rate read back off /floor/video is
+   one somebody chose. `tools/mock-roda.js` is that stand-in, and it is
+   attached by tests and soaks only - never by this page. */
 
 const VIDEO_BACKOFF_MS = 2000;
 const VIDEO_BACKOFF_MAX = 60000;
@@ -1590,10 +1602,10 @@ async function sha256Hex(buf) {
 /* Called when a take is saved. Queued per camera, because that is how the
    store keys them and how a partial upload stays partial rather than
    costing the whole episode. */
-function queueVideo(episodeId) {
+function queueVideo(episodeId, durationSecs) {
   if (!videoSource || !episodeId) return;
   CAMERAS.forEach((cam) => {
-    const blob = videoSource(episodeId, camSlug(cam));
+    const blob = videoSource(episodeId, camSlug(cam), durationSecs);
     if (!blob) return;
     const camera = camSlug(cam);
     videoQueue.push({ episodeId, camera, blob });
