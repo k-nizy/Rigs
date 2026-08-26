@@ -76,6 +76,14 @@ The engine still implements `rotate` and other block sizes and they are
 still tested — the desk never asks for them. If the format has to
 change, that is `rotation-desk-v2`, not a setting.
 
+`packages/engine/rotate.test.js` is where "still tested" is made true.
+It asks rotate the same questions the reference sheet asks of hold: the
+6h + 60 + 60 budget, every rig manned by exactly one person in every
+block, one turn length with no stubs, an operator who actually moves and
+sees all three rigs, and a payload that reads back the same answer. It
+also pins the claim above about block size — 15×4 and 20×3 come out as
+the same schedule, asserted rather than assumed.
+
 `packages/engine/reference-sheet.test.js` is the guardrail: the sheet
 transcribed by hand as data (which operator is on which rig in all 32
 blocks, who is off and whether it is written Break or Think), asserted
