@@ -668,25 +668,63 @@ function pushedIn(tz) {
   });
 }
 
-const SAME_ZONE = "Etc/GMT-2";   // UTC+2, the zone the test machine runs in
-const HOUR_EAST = "Etc/GMT-3";   // UTC+3, one hour further on
+/* These two zones used to be written down as Etc/GMT-2 and Etc/GMT-3,
+   with a comment saying UTC+2 was "the zone the test machine runs in".
+   That was true of one machine. CI runs in UTC and failed both of them
+   the first time it ran, which is the whole argument for having CI: a
+   test about reading the right clock could only pass on the clock it was
+   written on.
+
+   So the zones are derived from wherever this is running. The harness
+   builds its fixed instant with `new Date(y, m, d, H, M)`, which is local
+   wall time, so "the same building" is this machine's own zone and "one
+   hour east" is the next whole hour beyond it - a real difference in any
+   zone, including the half-hour ones, and never zero. */
+const CLOCK_AT = "10:37:22";
+const FIXED_AT = new Date(2026, 7, 23, 10, 37, 22);
+const LOCAL_MIN = -FIXED_AT.getTimezoneOffset();          // minutes east of UTC
+
+/* Etc/GMT-N is UTC+N and Etc/GMT+N is UTC-N - the sign is inverted, and
+   getting that wrong builds names like "Etc/GMT--4" on any machine west
+   of UTC. The range stops at Etc/GMT-14, so a floor at UTC+14 has no
+   whole hour east of it and takes the one west instead; all that matters
+   is that the two zones differ. */
+const etcGMT = (h) => (h === 0 ? "Etc/GMT" : h > 0 ? "Etc/GMT-" + h : "Etc/GMT+" + -h);
+const OTHER_HOURS = Math.floor(LOCAL_MIN / 60) + 1 <= 14
+  ? Math.floor(LOCAL_MIN / 60) + 1
+  : Math.ceil(LOCAL_MIN / 60) - 1;
+
+const SAME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const OTHER_ZONE = etcGMT(OTHER_HOURS);
+const OTHER_SHIFT = OTHER_HOURS * 60 - LOCAL_MIN;         // never 0
+
+/* "10:37" plus n minutes, which is all the assertions below need. */
+function clockPlus(minutes) {
+  const local = new Date(FIXED_AT);
+  local.setMinutes(local.getMinutes() + minutes);
+  return String(local.getHours()).padStart(2, "0") + ":"
+       + String(local.getMinutes()).padStart(2, "0");
+}
 
 test("the clock on the desk is the floor's, not the browser's",
-  withDesk({ at: "10:37:22", fetchImpl: servedBy(pushedIn(HOUR_EAST), "2026-08-23T09:58:00.000Z") },
+  withDesk({ at: CLOCK_AT, fetchImpl: servedBy(pushedIn(OTHER_ZONE), "2026-08-23T09:58:00.000Z") },
     async desk => {
-      assert.equal(desk.$("now-time").textContent, "11:37",
-        "the desk showed its own clock; on that floor it is 11:37");
+      const onThatFloor = clockPlus(OTHER_SHIFT);
+      assert.notEqual(onThatFloor, clockPlus(0),
+        "the two zones must differ or this test proves nothing");
+      assert.equal(desk.$("now-time").textContent, onThatFloor,
+        "the desk showed its own clock; on that floor it is " + onThatFloor);
     }));
 
 test("a desk in the same building as the floor is unchanged",
-  withDesk({ at: "10:37:22", fetchImpl: servedBy(pushedIn(SAME_ZONE), "2026-08-23T09:58:00.000Z") },
+  withDesk({ at: CLOCK_AT, fetchImpl: servedBy(pushedIn(SAME_ZONE), "2026-08-23T09:58:00.000Z") },
     async desk => {
       /* The normal case, and the reason this was never noticed. */
-      assert.equal(desk.$("now-time").textContent, "10:37");
+      assert.equal(desk.$("now-time").textContent, clockPlus(0));
     }));
 
 test("the board shows who is on now, by the floor's clock",
-  withDesk({ at: "10:37:22", fetchImpl: servedBy(pushedIn(HOUR_EAST), "2026-08-23T09:58:00.000Z") },
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(pushedIn(OTHER_ZONE), "2026-08-23T09:58:00.000Z") },
     async desk => {
       /* The clock is only the visible half. What matters is that the
          twelve cards name the operators who are actually at the rigs. */
