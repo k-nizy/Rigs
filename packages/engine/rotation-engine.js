@@ -525,6 +525,30 @@
     return typeof at === "number" ? at : Date.parse(at);
   };
 
+  /* The wall-clock minute on the FLOOR, from a payload and an instant.
+
+     Every "HH:MM" in a payload is wall-clock time where the rigs are, and
+     the desk writes the zone in beside them. Reading them against the
+     machine's own clock is how this system spent a day believing no turn
+     was in progress on any of twelve rigs - the backend was fixed for
+     exactly that, and the rig was left reading `new Date().getHours()`.
+
+     On a properly provisioned floor the two agree and this changes
+     nothing. It matters when they do not: a rig imaged in UTC standing on
+     a floor at UTC+2 is two hours out, and what it gets wrong is which
+     operator is sitting at it. */
+  function minutesOnFloor(payload, at) {
+    var ms = asMs(at);
+    var tz = payload && payload.shift && payload.shift.tz;
+    if (!tz) {
+      // No zone in the payload - older pushes, and the local demo.
+      var here = new Date(ms);
+      return here.getHours() * 60 + here.getMinutes() + here.getSeconds() / 60;
+    }
+    var there = new Date(ms + zoneOffset(ms, tz));
+    return there.getUTCHours() * 60 + there.getUTCMinutes() + there.getUTCSeconds() / 60;
+  }
+
   function coversAt(payload, at) {
     var w = shiftWindow(payload);
     if (!w) return false;
@@ -570,6 +594,7 @@
     whoIsOn: whoIsOn,
     shiftWindow: shiftWindow,
     coversAt: coversAt,
+    minutesOnFloor: minutesOnFloor,
     inForce: inForce,
 
     hhmm: hhmm,

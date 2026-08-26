@@ -156,3 +156,84 @@ test("the sped-up demo still refuses to leap on one frame",
       "one frame advanced the demo by " + e.data.durationSecs +
       "s, so the simulation can leap");
   }));
+
+
+/* ================================================================= zone
+
+   A second clock question, and the one that decides whose name is on the
+   work: not how much time has passed, but what time it is where the rigs
+   actually are.
+
+   Every "HH:MM" in a payload is wall-clock time on the floor, and the
+   desk writes the zone in beside them. The backend was caught reading
+   those against its own clock and was fixed. The rig was doing exactly
+   the same thing and nobody noticed, because a rig normally stands on the
+   floor it serves and the two clocks agree.
+
+   They stop agreeing when a rig is imaged in the wrong zone - which is a
+   provisioning slip, not an exotic scenario. What it gets wrong is which
+   operator it believes is sitting at it. */
+
+const RE_ENG = require("../../packages/engine/rotation-engine.js");
+const ROSTER_ENG = require("../../packages/demo-roster/demo-roster.js");
+
+function morningFor(tz) {
+  const plan = RE_ENG.buildPlan(
+    Object.assign({}, ROSTER_ENG.defaults, { date: "2026-08-23", shift: "morning" }),
+    ROSTER_ENG.groups);
+  const p = RE_ENG.rigPayload(plan, "RIG-03");
+  p.shift.tz = tz;
+  return p;
+}
+
+/* The harness clock stands at 10:37 local on 2026-08-23. On a floor one
+   hour further east it is 11:37, which is a different turn with a
+   different operator - so the two readings cannot be mistaken for each
+   other. The instant is written out here because the harness only fakes
+   the clock while a rig is mounted, and these expectations are worked out
+   before one is. */
+const HARNESS_NOW = new Date(2026, 7, 23, 10, 37).getTime();
+const HERE  = "Etc/GMT-2";    // UTC+2, the same as the test machine
+const EAST  = "Etc/GMT-3";    // UTC+3, one hour ahead
+
+test("the rig reads the turn from the floor's clock, not its own", async () => {
+  const here = morningFor(HERE);
+  const east = morningFor(EAST);
+
+  const atHere = RE_ENG.whoIsOn(here, RE_ENG.minutesOnFloor(here, HARNESS_NOW));
+  const atEast = RE_ENG.whoIsOn(east, RE_ENG.minutesOnFloor(east, HARNESS_NOW));
+  assert.notEqual(atHere.turn.from, atEast.turn.from,
+    "sanity: the two floors must be in different turns or this proves nothing");
+
+  const rig = await mountRig({ search: "", pushed: east });
+  try {
+    const filed = rig.events().filter(e => e.turnFrom);
+    assert.ok(filed.length, "the rig filed nothing to check");
+    assert.equal(filed[0].turnFrom, atEast.turn.from,
+      "the rig filed against turn " + filed[0].turnFrom + ", which is what its OWN "
+      + "clock says. The floor is in " + atEast.turn.from + " - a different operator.");
+  } finally { rig.stop(); }
+});
+
+test("a rig standing on the floor it serves is unaffected", async () => {
+  /* The normal case, and the reason this went unnoticed. */
+  const here = morningFor(HERE);
+  const on = RE_ENG.whoIsOn(here, RE_ENG.minutesOnFloor(here, HARNESS_NOW));
+
+  const rig = await mountRig({ search: "", pushed: here });
+  try {
+    const filed = rig.events().filter(e => e.turnFrom);
+    assert.equal(filed[0].turnFrom, on.turn.from);
+  } finally { rig.stop(); }
+});
+
+test("a payload with no zone still works, the old way", async () => {
+  /* Pushes made before the zone travelled, and the local demo. */
+  const p = morningFor(HERE);
+  delete p.shift.tz;
+  const rig = await mountRig({ search: "", pushed: p });
+  try {
+    assert.notEqual(rig.screen(), "standby", "a zoneless payload stopped the rig");
+    assert.deepEqual(rig.errors, []);
+  } finally { rig.stop(); }
+});

@@ -646,3 +646,52 @@ test("a floor that is genuinely running is still badged as running",
       assert.equal(desk.$("now-src").className, "src floor");
       assert.match(desk.$("now-src").textContent, /On the floor/);
     }));
+
+
+/* ------------------------------------------- whose clock the desk reads
+
+   Every "HH:MM" on this screen is time where the rigs are, and the
+   payload carries the zone the desk wrote when it pushed. The desk was
+   reading them against whatever browser happened to be looking, so a desk
+   opened from another zone announced "the shift has not started" while
+   the floor was hours into it - and the twelve cards showed the opening
+   line-up rather than who was actually on.
+
+   The backend was fixed for this, then the rig, then this. Same mistake,
+   three places, because each one had its own idea of "now". */
+
+function pushedIn(tz) {
+  return PUSHED.map(p => {
+    const copy = JSON.parse(JSON.stringify(p));
+    copy.shift.tz = tz;
+    return copy;
+  });
+}
+
+const SAME_ZONE = "Etc/GMT-2";   // UTC+2, the zone the test machine runs in
+const HOUR_EAST = "Etc/GMT-3";   // UTC+3, one hour further on
+
+test("the clock on the desk is the floor's, not the browser's",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(pushedIn(HOUR_EAST), "2026-08-23T09:58:00.000Z") },
+    async desk => {
+      assert.equal(desk.$("now-time").textContent, "11:37",
+        "the desk showed its own clock; on that floor it is 11:37");
+    }));
+
+test("a desk in the same building as the floor is unchanged",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(pushedIn(SAME_ZONE), "2026-08-23T09:58:00.000Z") },
+    async desk => {
+      /* The normal case, and the reason this was never noticed. */
+      assert.equal(desk.$("now-time").textContent, "10:37");
+    }));
+
+test("the board shows who is on now, by the floor's clock",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(pushedIn(HOUR_EAST), "2026-08-23T09:58:00.000Z") },
+    async desk => {
+      /* The clock is only the visible half. What matters is that the
+         twelve cards name the operators who are actually at the rigs. */
+      const here = desk.board()[0].rigs.map(r => r.op).join(",");
+      assert.ok(here.length, "the board is empty");
+      assert.match(desk.$("now-src").className, /floor/,
+        "a running floor was badged as not running");
+    }));

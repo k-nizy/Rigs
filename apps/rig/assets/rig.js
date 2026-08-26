@@ -188,10 +188,18 @@ function shiftStartMin() {
   return Number(p[0]) * 60 + Number(p[1]);
 }
 function nowMin() {
-  if (live) {
-    const d = new Date();
-    return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
-  }
+  /* The floor's wall clock, not this machine's.
+   *
+   * Every "HH:MM" in the payload is time where the rigs are, and the desk
+   * writes the zone in beside them. This used to read the machine's own
+   * clock and ignore that zone entirely - the same mistake the backend
+   * made and had fixed, left standing here.
+   *
+   * On a correctly provisioned rig the two are the same and nothing
+   * changes. It matters when they are not: a rig imaged in UTC on a floor
+   * at UTC+2 is two hours out, and what it gets wrong is which operator
+   * it thinks is sitting at it. Which is the one thing it must not. */
+  if (live) return RE.minutesOnFloor(PAYLOAD, Date.now());
   return shiftStartMin() + S.t / 60;
 }
 

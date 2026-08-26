@@ -246,9 +246,17 @@ function liveState() {
   const first    = floor.payloads[0];
   const startMin = toMin(first.shift.start);
 
-  const d        = new Date();
-  const nowMin   = d.getHours() * 60 + d.getMinutes();
-  const secInMin = d.getSeconds();
+  /* The floor's wall clock, not this browser's.
+   *
+   * Every "HH:MM" on this screen is time where the rigs are, and the
+   * payload carries the zone the desk wrote when it pushed. Reading them
+   * against whatever machine happens to be viewing meant a desk opened
+   * from another zone said "the shift has not started" while the floor
+   * was three hours into it. On a desk sitting in the same building the
+   * two are identical and nothing changes. */
+  const nowFloat = RE.minutesOnFloor(first, Date.now());
+  const nowMin   = Math.floor(nowFloat);
+  const secInMin = Math.floor((nowFloat - nowMin) * 60);
 
   /* Everything is measured from the top of the shift, so the night
    * shift's midnight crossing needs no special case anywhere below. */
@@ -300,7 +308,7 @@ function liveState() {
   }
 
   return {
-    clock: pad2(d.getHours()) + ":" + pad2(d.getMinutes()),
+    clock: pad2(Math.floor(nowMin / 60) % 24) + ":" + pad2(nowMin % 60),
     shift: first.shift,
     running: running,
     leftOfShift: RE.SHIFT_MINUTES - nowRel,
