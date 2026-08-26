@@ -36,7 +36,11 @@ const GROUPS = window.DEMO_ROSTER.groups;
 
 const cfg = {
   shift: window.DEMO_ROSTER.defaults.shift,
-  date: new Date().toISOString().slice(0, 10),
+  /* The floor's date, not UTC's. toISOString() is UTC, so on a floor at
+     UTC+2 everything between midnight and 02:00 was dated to yesterday -
+     and a schedule dated yesterday covers a window that has already
+     closed, which puts every rig on Standby. */
+  date: new Date().toLocaleDateString("en-CA"),
   blockMin: FORMAT.blockMin,
   stintBlocks: FORMAT.stintBlocks,
   mode: FORMAT.mode,
@@ -109,6 +113,28 @@ function toast(msg) {
 
 /* Every payload the desk would push right now, for when there is no
  * server to ask. Same function the push itself uses. */
+/* Every shift of the day, which is what a push sends.
+ *
+ * A payload covers one shift. Pushing only the one on screen is why a rig
+ * ran until 16:00 and then went quiet: it was still holding a Morning
+ * schedule with no turns left in it, and nothing newer existed to pick
+ * up. Three shifts of twelve rigs is thirty-six payloads, well inside the
+ * sixty-four a push already accepts.
+ *
+ * The sheet is untouched. This is the same rotation drawn three times,
+ * once per shift, not a different format. */
+function dayPayloads() {
+  const out = [];
+  RE.SHIFTS.forEach(shift => {
+    const p = RE.buildPlan(Object.assign({}, cfg, { shift: shift.id }), GROUPS);
+    GROUPS.forEach(g => g.rigs.forEach(r => {
+      const one = RE.rigPayload(p, r);
+      if (one) out.push(one);
+    }));
+  });
+  return out;
+}
+
 function localPayloads() {
   const p = plan();
   const out = [];
@@ -220,9 +246,17 @@ function liveState() {
   const first    = floor.payloads[0];
   const startMin = toMin(first.shift.start);
 
-  const d        = new Date();
-  const nowMin   = d.getHours() * 60 + d.getMinutes();
-  const secInMin = d.getSeconds();
+  /* The floor's wall clock, not this browser's.
+   *
+   * Every "HH:MM" on this screen is time where the rigs are, and the
+   * payload carries the zone the desk wrote when it pushed. Reading them
+   * against whatever machine happens to be viewing meant a desk opened
+   * from another zone said "the shift has not started" while the floor
+   * was three hours into it. On a desk sitting in the same building the
+   * two are identical and nothing changes. */
+  const nowFloat = RE.minutesOnFloor(first, Date.now());
+  const nowMin   = Math.floor(nowFloat);
+  const secInMin = Math.floor((nowFloat - nowMin) * 60);
 
   /* Everything is measured from the top of the shift, so the night
    * shift's midnight crossing needs no special case anywhere below. */
@@ -274,7 +308,7 @@ function liveState() {
   }
 
   return {
-    clock: pad2(d.getHours()) + ":" + pad2(d.getMinutes()),
+    clock: pad2(Math.floor(nowMin / 60) % 24) + ":" + pad2(nowMin % 60),
     shift: first.shift,
     running: running,
     leftOfShift: RE.SHIFT_MINUTES - nowRel,
@@ -429,10 +463,23 @@ function renderLive() {
   $("now-shift").textContent = s.shift.label + " · " + s.shift.start + "-" + s.shift.end
     + (s.running ? " · " + hm(s.leftOfShift) + " left" : "");
 
-  $("now-src").textContent = floor.source === "floor"
-    ? "On the floor · pushed " + new Date(floor.pushedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : "Not pushed · showing this screen's plan";
-  $("now-src").className = "src " + floor.source;
+  /* Whether anything the floor is holding actually covers this minute.
+     The badge used to read "On the floor - pushed 4:12 PM" all night,
+     which is true and useless: at 00:05 the sheet it names has expired,
+     every rig is in Standby, and the one screen a manager would check to
+     find that out was quietly reassuring them instead. A rota that has
+     run out has to look different from one that is running. */
+  const covering = floor.payloads.some(p => RE.coversAt(p, Date.now()));
+  const pushedAtText = floor.pushedAt
+    ? new Date(floor.pushedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "";
+  const state = floor.source !== "floor" ? "plan" : (covering ? "floor" : "dry");
+
+  $("now-src").textContent =
+    state === "plan" ? "Not pushed · showing this screen's plan"
+    : state === "floor" ? "On the floor · pushed " + pushedAtText
+    : "Nothing scheduled for now · last push " + pushedAtText;
+  $("now-src").className = "src " + state;
 
   const banner = $("banner");
   banner.hidden = s.running;
@@ -761,9 +808,9 @@ function renderPushPanel(p) {
  * of valid and invalid payloads, so the floor never runs half-updated. */
 async function pushFloor() {
   const btn = $("btn-push");
-  const payloads = localPayloads();
+  const payloads = dayPayloads();
   btn.disabled = true;
-  $("push-note").textContent = "Pushing " + payloads.length + " rigs...";
+  $("push-note").textContent = "Pushing " + RE.SHIFTS.length + " shifts...";
   try {
     const res = await fetch("/api/push", {
       method: "POST",
@@ -773,8 +820,10 @@ async function pushFloor() {
     const body = await res.json().catch(() => ({}));
     if (res.ok) {
       const at = new Date(body.pushedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      $("push-note").textContent = "Pushed " + body.count + " rigs at " + at;
-      toast("Pushed " + body.count + " rigs");
+      const rigs = Math.round(body.count / RE.SHIFTS.length);
+      $("push-note").textContent = "Pushed " + rigs + " rigs, " +
+        RE.SHIFTS.length + " shifts, at " + at;
+      toast("Pushed " + rigs + " rigs for the day");
       await loadFloor(false);          // Live should now show the floor, not the plan
     } else {
       $("push-note").textContent = "Rejected: " + (body.error || res.status);

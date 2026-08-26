@@ -157,10 +157,23 @@ the page. Nobody ever types "RIG-07". This is the same decision the app
 already made when it deleted its login screen — if the system knows, do
 not ask.
 
-### 3. `apps/server` — grown, not replaced
+### 3. The service — Python, in the platform team's tree
 
-Node, as chosen. It stays zero-dependency plain-node and keeps its current
-job; it gains a second one. Three new routes:
+> **Superseded.** This section was written as "grow `apps/server` in
+> Node", and that is what the decision below said. It changed when the
+> platform team's codebase structure arrived: the return arrow is now
+> `backend/`, a FastAPI service laid out in their convention
+> (`gateway → services → core`, arrows enforced in CI by import-linter)
+> so that `core/` and `services/rigs/` lift into their tree unmodified.
+>
+> `apps/server` still exists and still serves the desk's push for a
+> plain static deploy. It is no longer where ingest is going.
+>
+> Everything below this line — the routes, the cursor, idempotency,
+> all-or-nothing batches — was implemented exactly as written. Only the
+> language and the address changed.
+
+The routes, as built:
 
 ```
 POST /api/rigs/:rigId/events               { events: [...] }   → { accepted, seq }
@@ -236,8 +249,21 @@ operator, on the session-ended screen:
 
 > Downtime and episodes are queued for upload.
 
-Today that sentence is aspirational. The journal is what makes it a
-statement of fact.
+That sentence was aspirational when this was written. It is now true in
+the browser: the rig journals to IndexedDB before it touches the network,
+reads back on boot whatever the last one did not finish sending, and
+forgets a row only when the server says it holds it. Video goes with it -
+bytes are the one thing here with no second copy anywhere until a take is
+confirmed.
+
+One honest gap remains, and it is the reason the disk journal above is
+still the target. A browser cannot write synchronously, so "flushed
+before the UI advances" becomes "handed to the store before the network
+is touched". A hard power cut in the few milliseconds before that
+transaction commits can still lose the last event. Every failure short of
+that - a reload, a crash, a closed lid, a discarded background tab - is
+covered. Closing the last window needs a synchronous write, which needs
+Tauri.
 
 ### Timestamps
 
@@ -377,10 +403,26 @@ absorbing.
 
 ## Decisions this plan takes, and why
 
-**Node for the backend, growing `apps/server`.** Chosen. It keeps one
-language across desk, server, schema and tests, and the existing server
-already does the hard parts — validation at the door, atomic state, an
-end-to-end test. Ingest is the same shape as push pointed the other way.
+**~~Node for the backend, growing `apps/server`.~~ Superseded: Python,
+in the platform team's tree.** The original argument was one language
+across desk, server, schema and tests, and it was a good one. What
+outweighed it was where this code has to end up: the platform team runs
+FastAPI, SQLAlchemy and Alembic in a layered tree they enforce in CI, and
+a Node service would have had to be rewritten at the handover by people
+who did not write it.
+
+So `backend/` is Python and is laid out in their convention from the
+first commit. The cost is a second language and a duplicated event
+envelope — `packages/schema/event.js` and
+`core/domains/rig_events/schema.py`. That cost is paid down deliberately:
+`packages/schema/fixtures/` is loaded by both suites, so the two halves
+cannot drift without CI saying which one broke.
+
+The one thing that did **not** move is the rotation. It is computed in
+exactly one shared JavaScript file, and the service stores the pushed
+payload opaque and reads it back rather than re-deriving it. A Python
+re-implementation would be a third answer and the first one that could
+silently disagree.
 
 **Tauri as the wrapper rather than a rewrite of the rig app.** The rig UI
 is finished and good, and it was designed under a real constraint — read
@@ -402,13 +444,37 @@ happens to be what makes Phases 0 and 1 startable today.
 
 - **The RODA-RS API itself.** The adapter is a TODO by design. It is the
   one file in this plan written to be replaced.
-- **Auth.** There is still none, anywhere — which is a decision the repo
-  has been making implicitly and should now make on purpose. Recommended:
-  a per-rig token placed by Ansible, checked on ingest. The rig still has
-  no operator login; the *machine* authenticates, the person never does.
-  That preserves the app's central idea.
-- **Retention.** How long episodes live in cloud, and whether discarded
-  takes are kept at all. Cost scales directly with the answer.
+- ~~**Auth.**~~ **Settled and built.** A per-rig token placed by Ansible
+  and checked on every rig-facing route: the *machine* authenticates, the
+  person never does, and the rig keeps its central idea of a screen with
+  no login. A token names one rig and is refused for any other, so one
+  compromised machine cannot attribute work across the floor. Unset, the
+  service is open and says so at startup and in `/api/health`, which is
+  what a deploy check reads.
+
+  Desk auth is deliberately **not** settled here. The desk is expected to
+  sit behind the platform team's gateway, which already owns who is
+  allowed in. `DESK_TOKEN` exists so a deployment without that in front
+  of it can still close the hole, and it is off by default.
+- ~~**Retention.**~~ **Settled: 90 days.** `VIDEO_KEEP_DAYS=90`, and the
+  default lives in `config.py` rather than only in an environment file,
+  because `.env` does not travel into the platform team's tree and a
+  policy that only exists there silently becomes "keep everything" at the
+  handover.
+
+  At this plan's own sizing - ~2.7 TB a day across twelve rigs - ninety
+  days is a steady state of roughly **245 TB**. It climbs for ninety days
+  and is flat after that, and that is the number the cold tier has to be
+  provisioned for.
+
+  Two parts of it never needed deciding. Discarded takes are never
+  uploaded at all, so they cost nothing. And the on-prem spool is not a
+  retention question: it releases its copy as soon as the archive can
+  account for it, because a spool that never frees is not a spool.
+
+  What is deleted is video and only video. The episode row, the score,
+  the attribution and the four seconds columns survive for ever - they
+  are the point of the system and they cost nothing.
 - **Review and QA of scores.** The operator scores their own take 3/4/5.
   Nothing yet says whether anyone checks.
 - **Crew changeover at the shift boundary.** Already open in `CLAUDE.md`,

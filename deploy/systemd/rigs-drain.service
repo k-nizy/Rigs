@@ -1,0 +1,22 @@
+[Unit]
+Description=Rigs worker - spool to cold tier, and retention
+After=network-online.target postgresql.service rigs-api.service
+PartOf=rigs.target
+
+[Service]
+Type=exec
+User=rigs
+Group=rigs
+WorkingDirectory=/srv/rigs/backend
+EnvironmentFile=/etc/rigs/rigs.env
+ExecStart=/srv/rigs/backend/.venv/bin/python -m workers.drain_to_archive
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/rigs/spool
+
+[Install]
+WantedBy=rigs.target

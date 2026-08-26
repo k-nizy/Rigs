@@ -371,8 +371,8 @@ test("the handover screen names the operator taking the rig, every time",
 
 /* ------------------------------------------------------- every screen */
 
-const SCREENS = ["standby", "checklist", "fault-class", "fault-fixing", "handover",
-  "recording", "review", "resetting", "issue-menu", "rig-down"];
+const SCREENS = ["no-identity", "standby", "checklist", "fault-class", "fault-fixing",
+  "handover", "recording", "review", "resetting", "issue-menu", "rig-down"];
 
 /* Standby is excluded on purpose: it is the one screen that *should* be
    left the moment the schedule says somebody is due, which is true at the
@@ -558,3 +558,397 @@ test("the camera grid cannot be shrunk below the panes it holds",
     assert.match(rule[0], /flex:\s*0\s+0\s+auto/,
       "a shrinkable .cams lets the panes overflow onto the metrics row");
   });
+
+/* ================================================================ events
+ *
+ * What the rig sends back, as opposed to the sentence it shows the
+ * operator. The drawer log is for the person standing at the rig and is
+ * unchanged; these assert the parallel machine-readable half against
+ * packages/schema, which is the same validator the ingest service will
+ * generate its models from.
+ */
+
+const EventSchema = require(path.resolve(__dirname, "../../packages/schema/event.js"));
+
+const invalid = (evs) => evs
+  .map((e) => ({ e, r: EventSchema.validate(e) }))
+  .filter((x) => !x.r.ok)
+  .map((x) => x.e.event + ": " + x.r.errors.join("; "));
+
+test("every event the rig emits validates against the shared contract",
+  withRig({ search: "?demo" }, async (rig) => {
+    // walk the whole loop, so this covers most of the buckets at once
+    rig.frames(1);
+    rig.press(2); rig.frames(1);            // check passed -> handover
+    rig.press(2); rig.frames(2);            // start recording
+    rig.press(3); rig.frames(1);            // save
+    rig.press(2); rig.frames(1);            // score 4 -> resetting
+    rig.press(2); rig.frames(1);            // next episode
+    rig.press(1); rig.frames(1);            // discard
+    rig.press(3); rig.frames(1);            // hardware issue
+    rig.press(1); rig.frames(2);            // gripper broken -> rig down
+    rig.press(2); rig.frames(1);            // problem solved
+
+    const evs = rig.events();
+    assert.ok(evs.length >= 6, "expected a spread of events, got " + evs.length);
+    assert.deepEqual(invalid(evs), [], "the rig emitted events the backend would reject");
+  }));
+
+test("stint_ended carries the four seconds columns, not a percentage",
+  withRig({ search: "?demo" }, async (rig) => {
+    toRecording(rig);
+    rig.frames(4);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);
+    rig.demoKey("h");
+    rig.frames(3);
+
+    const stint = rig.eventsOf("stint_ended");
+    assert.equal(stint.length, 1);
+    const d = stint[0].data;
+    for (const k of ["episodes", "recordedSecs", "assignedSecs", "faultSecs", "downSecs"]) {
+      assert.equal(typeof d[k], "number", k + " must be a number, not a formatted string");
+      assert.ok(d[k] >= 0, k + " must not be negative");
+    }
+    assert.equal(d.efficiency, undefined,
+      "a stored percentage cannot be corrected without re-running the floor");
+    assert.deepEqual(invalid(stint), []);
+  }));
+
+test("an episode keeps one id from the pedal press that started it",
+  withRig({ search: "?demo" }, async (rig) => {
+    toRecording(rig);
+    rig.frames(2);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);            // scored -> saved
+
+    const saved = rig.eventsOf("episode_saved");
+    assert.equal(saved.length, 1);
+    assert.match(saved[0].data.episodeId, /^[0-9a-f-]{36}$/i,
+      "the id names the video directory too, so it has to be real");
+    assert.equal(typeof saved[0].data.durationSecs, "number");
+    assert.ok([3, 4, 5].includes(saved[0].data.score));
+  }));
+
+test("every envelope carries the schedule it happened under",
+  withRig({ search: "?demo" }, async (rig) => {
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    const e = rig.events()[0];
+    const p = payloadFor("RIG-03");
+    assert.equal(e.rigId, "RIG-03");
+    assert.equal(e.shiftDate, p.shift.date, "shiftDate comes from the payload, not the rig's own clock");
+    assert.equal(e.shiftLabel, p.shift.label);
+    assert.equal(e.operatorId, FIRST.operator.id, "the rig never asks who anyone is - the payload says");
+    assert.equal(e.turnFrom, FIRST.from);
+  }));
+
+test("ids are unique and seq is monotonic, so a batch can be resent blindly",
+  withRig({ search: "?demo" }, async (rig) => {
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    rig.press(2); rig.frames(1);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);
+
+    const evs = rig.events();
+    const ids = evs.map((e) => e.eventId);
+    assert.equal(new Set(ids).size, ids.length, "two events share an id - ingest would drop one");
+    const seqs = evs.map((e) => e.seq);
+    assert.deepEqual(seqs, seqs.slice().sort((a, b) => a - b), "seq is the cursor; it has to only go up");
+  }));
+
+test("downtime records whether it was charged to the rig or the operator before",
+  withRig({ search: "?demo" }, async (rig) => {
+    toHandover(rig);
+    rig.press(3); rig.frames(1);
+    rig.press(1); rig.frames(2);            // found at handover
+
+    const down = rig.eventsOf("rig_down");
+    assert.equal(down.length, 1);
+    assert.equal(down[0].data.chargedTo, "previous_operator");
+    assert.equal(down[0].data.needsManager, false);
+    assert.equal(down[0].data.issue, "Gripper broken");
+    assert.deepEqual(invalid(down), []);
+  }));
+
+test("a rig on standby still reports, with no turn and no operator",
+  withRig(DEAD_HOURS, async (rig) => {
+    rig.frames(1);
+    const e = rig.events()[0];
+    assert.equal(e.turnFrom, null, "nothing is scheduled, so there is no turn");
+    assert.equal(e.operatorId, null);
+    assert.deepEqual(invalid([e]), [], "standby events still have to validate");
+  }));
+
+/* ============================================================== uploading
+ *
+ * The seam between the rig and the backend. The whole design is one idea:
+ * the rig keeps events until the server says it has them, and never stops
+ * trying. Ingest dedupes on (rigId, eventId), so re-sending is free and
+ * asking "did that land?" is unnecessary.
+ */
+
+/* A server that accepts everything, and records what it was sent. */
+function acceptingServer(state) {
+  return async (url, opts) => {
+    if (url.includes("/cursor")) {
+      return { ok: true, json: async () => ({ rigId: "RIG-03", seq: state.cursor ?? -1 }) };
+    }
+    if (url.includes("/events")) {
+      const body = JSON.parse(opts.body);
+      state.received.push(...body.events);
+      state.batches = (state.batches || 0) + 1;
+      return { ok: true, json: async () => ({ accepted: body.events.length }) };
+    }
+    return { ok: false, status: 404 };
+  };
+}
+
+test("filed events reach the server",
+  withRig({ search: "?demo" }, async (rig) => {
+    const state = { received: [], cursor: -1 };
+    global.fetch = acceptingServer(state);
+
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    await rig.upload();
+
+    assert.ok(state.received.length >= 2, "nothing was uploaded");
+    assert.equal(rig.outbox().queued, 0, "the outbox should be empty once acknowledged");
+    assert.deepEqual(
+      state.received.map((e) => e.event).slice(0, 2),
+      ["shift_check", "shift_check"]);
+  }));
+
+test("events are held, not lost, while the server is unreachable",
+  withRig({ search: "?demo" }, async (rig) => {
+    global.fetch = async () => { throw new Error("no network"); };
+
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    await rig.upload();
+
+    const box = rig.outbox();
+    assert.ok(box.queued >= 2, "a rig with no network must keep its events");
+    assert.equal(box.state, "offline");
+    assert.ok(box.failures >= 1);
+  }));
+
+test("the queue drains when the network comes back",
+  withRig({ search: "?demo" }, async (rig) => {
+    global.fetch = async () => { throw new Error("no network"); };
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    await rig.upload();
+    const held = rig.outbox().queued;
+    assert.ok(held >= 2);
+
+    const state = { received: [], cursor: -1 };
+    global.fetch = acceptingServer(state);
+    await rig.upload();
+
+    assert.equal(rig.outbox().queued, 0, "the backlog should clear in one flush");
+    assert.equal(state.received.length, held, "every held event should arrive");
+  }));
+
+test("a rig carries on from the sequence the server already holds",
+  withRig({ search: "?demo", fetchImpl: async (url) => {
+    if (url.includes("/cursor")) return { ok: true, json: async () => ({ rigId: "RIG-03", seq: 416 }) };
+    if (url.includes("/api/rigs/")) return { ok: false, status: 404 };
+    return { ok: false, status: 404 };
+  } }, async (rig) => {
+    /* A restarted rig counting from zero again would send seq backwards,
+       and seq is the cursor the server reads. */
+    rig.frames(1);
+    const first = rig.events()[0];
+    assert.ok(first.seq > 416,
+      `seq restarted at ${first.seq}; the server already holds 416`);
+  }));
+
+test("a batch the server refuses is set aside, not retried forever",
+  withRig({ search: "?demo" }, async (rig) => {
+    global.fetch = async (url) => {
+      if (url.includes("/cursor")) return { ok: true, json: async () => ({ seq: -1 }) };
+      return { ok: false, status: 422 };
+    };
+
+    rig.frames(1);
+    rig.press(2); rig.frames(1);
+    await rig.upload();
+
+    const box = rig.outbox();
+    assert.equal(box.queued, 0, "a poison batch must not block the outbox forever");
+    assert.ok(box.rejected >= 2, "the events are set aside, not dropped");
+    assert.equal(box.state, "rejected");
+    assert.ok(rig.log().some((l) => l.includes("refused")),
+      "a rig filing events its own schema rejects should say so out loud");
+  }));
+
+test("a rig that cannot reach the server says so on the wall",
+  withRig({}, async (rig) => {
+    global.fetch = async () => { throw new Error("no network"); };
+    rig.frames(1);
+    await rig.upload();
+    assert.match(rig.$("rail-mode").textContent, /queued/,
+      "an operator should be able to see that nobody has their events");
+  }));
+
+test("uploading does not interrupt the operator",
+  withRig({ search: "?demo" }, async (rig) => {
+    global.fetch = async () => { throw new Error("no network"); };
+    toRecording(rig);
+    const before = rig.screen();
+    await rig.upload();
+    rig.frames(3);
+    assert.equal(rig.screen(), before, "a failed upload changed what the operator sees");
+    assert.deepEqual(rig.errors, []);
+  }));
+
+
+/* =====================================================================
+ * the video path
+ *
+ * There is no camera behind a browser tab, so these attach a recorder of
+ * their own. What is being tested is not the bytes - it is the rule that
+ * the rig only lets go of a take after the server has verified what
+ * landed, and that everything before that step is a retry.
+ * ===================================================================== */
+
+const TAKE = new Blob([new Uint8Array(2048).fill(7)]);
+
+/* A server that answers the three steps, and counts what it was asked. */
+function fakeStore(opts) {
+  const o = opts || {};
+  const seen = { presign: 0, put: 0, complete: 0, bytes: 0 };
+  global.fetch = async (url, init) => {
+    const u = String(url);
+    if (u.includes("video:presign")) {
+      seen.presign += 1;
+      if (o.notProjected) return { ok: false, status: 404, json: async () => ({}) };
+      const camera = JSON.parse(init.body).camera;
+      return { ok: true, status: 200, json: async () => ({
+        key: "RIG-03/ep/" + camera + ".mp4",
+        url: "/api/storage/RIG-03/ep/" + camera + ".mp4",
+        method: "PUT",
+      }) };
+    }
+    if (u.includes("/api/storage/")) {
+      seen.put += 1;
+      seen.bytes = init.body.byteLength;
+      if (o.putFails) return { ok: false, status: 503, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ bytes: seen.bytes }) };
+    }
+    if (u.includes("video:complete")) {
+      seen.complete += 1;
+      if (o.mismatch) return { ok: false, status: 409, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({
+        key: "RIG-03/ep/front.mp4", safeToDelete: true,
+      }) };
+    }
+    if (u.includes("/cursor")) return { ok: true, json: async () => ({ seq: 0 }) };
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  return seen;
+}
+
+/* checklist -> handover -> recording -> review -> scored, which is the
+   only route by which a take is ever saved. */
+function saveATake(rig) {
+  rig.press(2); rig.frames(1);      // check passed
+  rig.press(2); rig.frames(30);     // start, record
+  rig.press(3); rig.frames(1);      // save
+  rig.press(2); rig.frames(1);      // scored
+}
+
+test("with no recorder attached, a saved take queues no video",
+  withRig({ search: "?demo" }, async (rig) => {
+    fakeStore();
+    saveATake(rig);
+    await rig.uploadVideo();
+    assert.equal(rig.video().queued, 0,
+      "a page with no camera must not invent bytes to send");
+  }));
+
+test("a saved take queues one upload per camera",
+  withRig({ search: "?demo" }, async (rig) => {
+    fakeStore();
+    rig.setVideoSource(() => TAKE);
+    saveATake(rig);
+    assert.equal(rig.video().queued, 3, "three panes, three videos");
+  }));
+
+test("the camera name becomes a key that can be a filename",
+  withRig({ search: "?demo" }, async (rig) => {
+    const asked = [];
+    rig.setVideoSource((episodeId, camera) => { asked.push(camera); return TAKE; });
+    fakeStore();
+    saveATake(rig);
+    assert.deepEqual(asked, ["front", "wrist-l", "overhead"],
+      '"Wrist L" is a label on a screen, not a path in a store');
+  }));
+
+test("a take is released only after the server says what landed is right",
+  withRig({ search: "?demo" }, async (rig) => {
+    const seen = fakeStore();
+    rig.setVideoSource(() => TAKE);
+    saveATake(rig);
+    assert.equal(rig.video().queued, 3);
+
+    await rig.uploadVideo();
+    assert.equal(seen.presign, 1, "asked where to put it");
+    assert.equal(seen.put, 1, "put the bytes");
+    assert.equal(seen.complete, 1, "reported the checksum");
+    assert.equal(seen.bytes, 2048, "sent the whole take");
+    assert.equal(rig.video().queued, 2, "the confirmed camera was released");
+    assert.equal(rig.video().sent.length, 1);
+  }));
+
+test("a checksum the server refuses keeps the bytes on the rig",
+  withRig({ search: "?demo" }, async (rig) => {
+    fakeStore({ mismatch: true });
+    rig.setVideoSource(() => TAKE);
+    saveATake(rig);
+    await rig.uploadVideo();
+
+    const v = rig.video();
+    assert.equal(v.queued, 3, "a refused upload must not drop the only good copy");
+    assert.equal(v.sent.length, 0);
+    assert.match(v.error, /409/);
+  }));
+
+test("an upload that never reaches the store keeps the bytes on the rig",
+  withRig({ search: "?demo" }, async (rig) => {
+    fakeStore({ putFails: true });
+    rig.setVideoSource(() => TAKE);
+    saveATake(rig);
+    await rig.uploadVideo();
+    assert.equal(rig.video().queued, 3);
+    assert.equal(rig.video().state, "offline");
+  }));
+
+test("an episode not projected yet is waited for, not given up on",
+  withRig({ search: "?demo" }, async (rig) => {
+    /* The rig saves a take and reaches the upload in the same second;
+       projection runs on its own timer. A 404 here means "not yet". */
+    fakeStore({ notProjected: true });
+    rig.setVideoSource(() => TAKE);
+    saveATake(rig);
+    await rig.uploadVideo();
+
+    const v = rig.video();
+    assert.equal(v.state, "waiting", "a take about to exist was treated as a failure");
+    assert.equal(v.queued, 3, "nothing was dropped");
+  }));
+
+test("uploading video does not interrupt the operator",
+  withRig({ search: "?demo" }, async (rig) => {
+    global.fetch = async () => { throw new Error("no network"); };
+    rig.setVideoSource(() => TAKE);
+    saveATake(rig);
+    const before = rig.screen();
+    await rig.uploadVideo(2);
+    rig.frames(3);
+    assert.equal(rig.screen(), before, "a failed video upload changed the screen");
+    assert.deepEqual(rig.errors, []);
+  }));

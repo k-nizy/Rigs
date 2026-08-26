@@ -179,6 +179,10 @@ const BY_PEDALS = {
   "—|Restart demo|—": "session_ended",
   "—|Check the rig|—": "standby",
   "—|Check again|—": "standby",
+  /* The only screen in the app with nothing to press at all, which is
+     what makes it recognisable here: a rig that was never told which rig
+     it is must not be offered a way to start work. */
+  "—|—|—": "no_identity",
 };
 
 /* =====================================================================
@@ -224,8 +228,18 @@ async function mountRig(opts) {
 
   global.Date = FakeDate;
   global.window = global;
-  global.location = { hash: opts.hash ? "#" + opts.hash : "", search: opts.search || "" };
-  global.performance = { now: () => nowMs };
+  global.location = {
+    hash: opts.hash ? "#" + opts.hash : "",
+    search: opts.search || "",
+    /* Real pages have one, and code that decides what is same-origin has
+       to be exercised against a location that behaves like a browser's. */
+    origin: opts.origin || "http://localhost:8000",
+  };
+  /* Only `now` is faked. Inheriting the rest matters: node's own fetch
+     reaches for performance.markResourceTiming, so a stub that replaces
+     the whole object breaks any test that talks to a real server. */
+  global.performance = Object.create(realPerf || Object.prototype);
+  global.performance.now = () => nowMs;
   global.requestAnimationFrame = (fn) => { if (running) queue.push(fn); return queue.length; };
   global.setTimeout = (fn, ms) => { const id = realSetTimeout(fn, ms); timeouts.push(id); return id; };
   global.addEventListener = (t, fn) => { (listeners[t] = listeners[t] || []).push(fn); };
@@ -243,6 +257,16 @@ async function mountRig(opts) {
   const roster = require(path.join(REPO, "packages/demo-roster/demo-roster.js"));
   global.DEMO_ROSTER = structuredClone(roster);   // never let one test's edits reach the next
   global.PUSHED_SCHEDULE = opts.pushed || undefined;
+  /* The journal. A test that hands the same one to two mounts is
+     simulating a reload, which is the whole point of it existing. */
+  global.RIG_JOURNAL = opts.journal || undefined;
+  /* The token Ansible places on the machine. */
+  global.RIG_TOKEN = opts.token || undefined;
+  /* What the service writes into the rig-config.js it serves this
+     machine. `seenAs` is the address it was recognised by, and is only
+     ever shown on the no-identity screen. */
+  global.RIG_ID = opts.rigId || undefined;
+  global.RIG_SEEN_AS = opts.seenAs || undefined;
 
   const errors = [];
   new Function(fs.readFileSync(path.join(ROOT, "assets/rig.js"), "utf8"))();
@@ -324,6 +348,40 @@ async function mountRig(opts) {
       };
     },
     log() { return byId["log"].querySelectorAll("p").map((p) => p.textContent.replace(/\s+/g, " ").trim()); },
+
+    /* The envelopes the uploader would drain - what the backend actually
+       receives, as opposed to the sentence the operator reads. */
+    events() { return global.rigEvents ? global.rigEvents() : []; },
+    eventsOf(name) { return this.events().filter((e) => e.event === name); },
+
+    /* What the uploader is holding, and a way to drain it on demand
+       rather than waiting for its timer. */
+    outbox() { return global.rigOutbox ? global.rigOutbox() : null; },
+    async upload() { if (global.rigFlush) await global.rigFlush(); await this.settle(); },
+
+    /* The video path. A browser tab has no camera, so a test attaches a
+       recorder of its own and drives the three steps by hand rather than
+       waiting on the uploader's timer. */
+    setVideoSource(fn) { if (global.setVideoSource) global.setVideoSource(fn); },
+    journal() { return global.rigJournal ? global.rigJournal() : null; },
+
+    /* Ask for a fresh schedule now rather than waiting on the timer. */
+    async resync() { if (global.rigResync) await global.rigResync(); await this.settle(); },
+    /* What the injected journal is still holding - the durable half of
+       the outbox, as opposed to the in-memory one. */
+    journalHeld() {
+      return opts.journal && opts.journal.heldEvents ? opts.journal.heldEvents() : [];
+    },
+    journalVideos() {
+      return opts.journal && opts.journal.heldVideos ? opts.journal.heldVideos() : [];
+    },
+    video() { return global.rigVideo ? global.rigVideo() : null; },
+    async uploadVideo(times) {
+      for (let i = 0; i < (times || 1); i++) {
+        if (global.rigFlushVideo) await global.rigFlushVideo();
+        await this.settle();
+      }
+    },
     logOf(event) { return this.log().filter((l) => l.includes(event)); },
 
     /* Every timer and every frame this mount started, stopped. */

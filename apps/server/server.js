@@ -27,6 +27,7 @@ const fs   = require("node:fs");
 const path = require("node:path");
 
 const { validate } = require("../../packages/schema/payload.js");
+const RE = require("../../packages/engine/rotation-engine.js");
 
 const ROOT      = path.resolve(__dirname, "..", "..");
 const STATE     = process.env.STATE_FILE || path.join(__dirname, "state.json");
@@ -45,7 +46,7 @@ const MIME      = {
 
 /* ------------------------------------------------------------- the store
  *
- * { pushedAt: "2026-08-22T09:00:00Z", rigs: { "RIG-01": <payload>, ... } }
+ * { pushedAt: "2026-08-22T09:00:00Z", rigs: { "RIG-01": [<payload>, ...] } }
  *
  * Kept in memory and written to disk on every accepted push, so a rig
  * restart or a server restart still shows the current shift. */
@@ -121,30 +122,97 @@ async function handlePush(req, res) {
     return sendJSON(res, 422, { error: "one or more payloads failed validation", problems });
   }
 
+  // Every shift of the day, not just the one on screen. A payload covers
+  // one shift, so keying a rig to a single payload meant the last one
+  // pushed silently won and the floor ran whichever shift happened to be
+  // written last.
   const next = { pushedAt: new Date().toISOString(), rigs: {} };
-  payloads.forEach(p => { next.rigs[p.rigId] = p; });
+  payloads.forEach(p => { (next.rigs[p.rigId] = next.rigs[p.rigId] || []).push(p); });
   store = next;
   persist();
 
   sendJSON(res, 200, { ok: true, pushedAt: store.pushedAt, count: payloads.length });
 }
 
+/* What this rig was pushed, oldest first. Tolerates a state.json written
+   before a push carried the whole day, so a restart across the change
+   does not 404 the floor. */
+function heldFor(rigId) {
+  const held = store.rigs[rigId];
+  if (!held) return [];
+  return Array.isArray(held) ? held : [held];
+}
+
+/* The schedule this rig should be running, by comparison against the
+   window the desk wrote - never by working out when a shift runs. */
+function pick(held, now) {
+  const live = RE.inForce(held, now);
+  if (live) return live;
+
+  // Nothing covers now. Show the shift that starts next, so a rig sitting
+  // before its first turn is waiting on the right one rather than holding
+  // a finished schedule. The rig reads that as Standby, which is true.
+  const dated = held.map(p => [RE.shiftWindow(p), p]).filter(x => x[0]);
+  if (!dated.length) return held[0];
+
+  // Chosen from the payloads, never from the order they arrived in. Every
+  // rig on the floor holds the same shifts, so every rig has to land on
+  // the same answer - otherwise one rig waits in Standby against the Day
+  // sheet while its neighbour waits against the Night one, out of a
+  // single push.
+  const upcoming = dated.filter(x => x[0].start > now);
+  if (upcoming.length) {
+    return upcoming.reduce((a, b) => (b[0].start < a[0].start ? b : a))[1];
+  }
+  // They have all finished: the one that finished most recently.
+  return dated.reduce((a, b) => (b[0].end > a[0].end ? b : a))[1];
+}
+
 function sendRigSchedule(res, rigId) {
-  const p = store.rigs[rigId];
-  if (!p) return sendJSON(res, 404, { error: "nothing pushed for " + rigId + " yet" });
-  sendJSON(res, 200, p);
+  const held = heldFor(rigId);
+  if (!held.length) return sendJSON(res, 404, { error: "nothing pushed for " + rigId + " yet" });
+  sendJSON(res, 200, pick(held, Date.now()));
 }
 
 /* --------------------------------------------------------------- static */
 
+/* The three folders nginx serves, and the landing page. Everything else
+ * under this checkout is not web content and must not be reachable.
+ *
+ * This used to serve the whole repository, because it only refused paths
+ * that escaped it. `deploy/nginx.conf` says plainly that nothing under
+ * `backend/` should be served, and this contradicted that: `/backend/.env`
+ * came back with the database password in it, and `/.git/config` with the
+ * remote. Bound to 127.0.0.1 by default, so it took `HOST=0.0.0.0` to
+ * matter - which is the obvious thing to type to show somebody the demo
+ * on the office network.
+ *
+ * Same list, same order, same reason as the location blocks in nginx.conf.
+ * If one changes the other has to.
+ */
+const SERVED = [path.join("apps", "rig"), "packages", "rotation-desk-v1"]
+  .map((d) => path.join(ROOT, d) + path.sep);
+const LANDING = path.join(ROOT, "index.html");
+
 function sendStatic(req, res, url) {
   // Map "/" to the landing page, everything else to a file under the repo.
   let rel = decodeURIComponent(url.pathname);
+  const isRoot = rel === "/";
+  if (isRoot) rel = "/index.html";
   if (rel.endsWith("/")) rel += "index.html";
-  const filePath = path.join(ROOT, rel);
 
-  // Refuse anything that escapes the repo, even after ..-resolution.
-  if (!filePath.startsWith(ROOT)) return sendJSON(res, 403, { error: "forbidden" });
+  /* Resolved first, then checked. A prefix test on the raw path is not a
+     check at all: `/apps/../backend/.env` starts with an allowed folder
+     and lands two directories away from it. */
+  const filePath = path.resolve(ROOT, "." + rel);
+
+  /* The landing page answers to "/" and to nothing else, which is what
+     nginx does - `location = /` serves it and `location /` returns 404.
+     A dev server that answers more URLs than the deployment is one that
+     hides the difference until somebody is standing on a floor. */
+  const allowed = (isRoot && filePath === LANDING)
+    || SERVED.some((dir) => filePath.startsWith(dir));
+  if (!allowed) return sendJSON(res, 404, { error: "not found" });
 
   fs.stat(filePath, (err, stat) => {
     if (err || !stat.isFile()) return sendJSON(res, 404, { error: "not found" });

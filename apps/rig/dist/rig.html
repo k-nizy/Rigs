@@ -2,9 +2,181 @@
 <title>RIG-03 Pedal Loop</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800;900&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 
 <style>
+/* =====================================================================
+ * Verlet Robotics — one design system, three apps.
+ *
+ * The landing page, the desk and the rig each had their own palette and
+ * their own type stack, which meant three places to change a colour and
+ * three chances to forget one. This is the single place now, and it
+ * lives in packages/ for the same reason the engine does: imported by
+ * things that ship, not shipped itself.
+ *
+ * Taken from verlet.co: DM Serif Display for anything that announces
+ * itself, DM Sans for everything a person reads, JetBrains Mono for
+ * anything a machine produced — an id, a timestamp, a rig name. That
+ * last one is not decoration. On these screens the difference between
+ * RIG-01 and RIG-07 has to survive being read quickly, and a mono
+ * typeface is what keeps a column of them scannable.
+ *
+ * One rule the rig bends. Its screen is read from two metres away by
+ * somebody with their hands full, and CLAUDE.md fixes that constraint
+ * before any of this: large type, high contrast, no colour-coding. So
+ * the rig takes the typefaces and the mark and keeps its own contrast.
+ * Family resemblance, not uniform.
+ * ===================================================================== */
+
+/* Light: the palette as verlet.co uses it. */
+:root {
+  --v-ground:  #f4f4f6;
+  --v-panel:   #ffffff;
+  --v-sunk:    #ececef;   /* wells, table stripes, anything set back */
+  --v-ink:     #1c1c1e;
+  --v-ink-2:   #48484a;
+  --v-muted:   #8e8e93;
+  --v-line:    #e0e0e5;
+  --v-line-2:  #c7c7cc;
+  --v-accent:  #d64d7a;   /* the one saturated colour; use it sparingly */
+  --v-accent-ink: #ffffff;
+  /* The accent at low alpha. A token because box-shadow cannot fade a
+     colour on its own, and the alternative is hard-coding the accent
+     somewhere it will not follow the theme. */
+  --v-accent-glow: rgba(214, 77, 122, 0.55);
+
+  /* Kept from the apps' own vocabulary rather than replaced. The desk
+     tells break from think from work at a glance, and that is a job
+     colour does well and the brand palette does not do at all. */
+  --v-work:    #2f7d4f;
+  --v-break:   #b06d00;
+  --v-think:   #1f6f9a;
+  --v-down:    #b3261e;
+
+  --v-radius:  8px;
+  --v-radius-sm: 4px;
+
+  --v-display: "DM Serif Display", Georgia, "Times New Roman", serif;
+  --v-sans:    "DM Sans", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --v-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Display type on the site is set tight. At small sizes it is not. */
+  --v-display-tracking: -0.025em;
+}
+
+/* Dark, for the screens that are looked at all night. verlet.co is
+   light-only, so these are derived rather than copied: the same hues,
+   the accent lifted because #d64d7a on near-black is muddy. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --v-ground:  #0e0e10;
+    --v-panel:   #17171a;
+    --v-sunk:    #1e1e22;
+    --v-ink:     #f2f2f4;
+    --v-ink-2:   #babac0;
+    --v-muted:   #8e8e93;
+    --v-line:    #26262b;
+    --v-line-2:  #3a3a42;
+    --v-accent:  #e8688f;
+    --v-accent-ink: #1c1c1e;
+    --v-accent-glow: rgba(232, 104, 143, 0.55);
+
+    --v-work:    #5fbf87;
+    --v-break:   #e0a33a;
+    --v-think:   #6bb3d8;
+    --v-down:    #f2685e;
+  }
+}
+
+:root[data-theme="dark"] {
+  --v-ground:  #0e0e10;
+  --v-panel:   #17171a;
+  --v-sunk:    #1e1e22;
+  --v-ink:     #f2f2f4;
+  --v-ink-2:   #babac0;
+  --v-muted:   #8e8e93;
+  --v-line:    #26262b;
+  --v-line-2:  #3a3a42;
+  --v-accent:  #e8688f;
+  --v-accent-ink: #1c1c1e;
+  --v-accent-glow: rgba(232, 104, 143, 0.55);
+
+  --v-work:    #5fbf87;
+  --v-break:   #e0a33a;
+  --v-think:   #6bb3d8;
+  --v-down:    #f2685e;
+}
+
+/* ------------------------------------------------------------ the mark */
+
+/* A mask rather than an <img> or three inlined copies.
+ *
+ * <img> cannot take the ink colour, so it would need a second file for
+ * dark mode. Inlining the SVG in each page means three copies of the
+ * same path in three apps, and three copies drift. A mask is one file,
+ * painted with `currentColor`, so it is correct in both themes and in
+ * every app from a single source.
+ *
+ * url() here resolves against this stylesheet, not the page that loads
+ * it, so the same rule works from /, /apps/rig/ and /rotation-desk-v1/. */
+.v-mark {
+  display: inline-block;
+  width: 1.6em;
+  height: 1.6em;
+  flex: none;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MDAgNTAwIiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlZlcmxldCBSb2JvdGljcyI+CiAgPHRpdGxlPlZlcmxldCBSb2JvdGljczwvdGl0bGU+CiAgPHBhdGggZmlsbD0iY3VycmVudENvbG9yIiBkPSJNIDQzNS40MTcgOTIuMDA1IEMgNDM5LjEwMiA5MS41NDggNDQyLjk0NiA5MS40OTIgNDQ2LjYyMyA5Mi4wMjggQyA0NTYuNjM4IDkzLjc1NCA0NjUuNjkgMTAwLjY5MyA0NjkuODA3IDEwOS45OTkgQyA0NzUuMTM2IDEyMS4yMSA0NzMuMjAzIDEzNS4xODQgNDY1LjA0NiAxNDQuNTg2IEMgNDU3LjAyNCAxNTQuMDYzIDQ0My40OTEgMTU4LjEzMSA0MzEuNjcyIDE1NC4zNDMgQyA0MTQuMDY4IDE4MC44NCAzOTQuMjA0IDIwNS45NTQgMzczLjAxNCAyMjkuNjc4IEMgMzU0LjQzMiAyNTAuMzQzIDMzNC42NiAyNjkuODk5IDMxMy43NDIgMjg4LjE5NCBDIDMwMy40MDEgMjk3LjUwNyAyOTIuNDE2IDMwNi4xMTEgMjgxLjU2NyAzMTQuODIyIEMgMjgzLjM4NiAzMjIuNTYxIDI4My4yNzMgMzMwLjQ2OSAyNzkuODM4IDMzNy43ODYgQyAyNzQuOTYzIDM0OC43MzQgMjYzLjkwOSAzNTYuMzM4IDI1MS45MjMgMzU2LjcyOSBDIDI0NC4yMjggMzU3LjA0NiAyMzYuNTkzIDM1NC40MDYgMjMwLjYxMiAzNDkuNjEzIEMgMjExLjAyOSAzNjEuNzYxIDE5MC42MiAzNzIuNTkzIDE2OS42NzIgMzgyLjE5MiBDIDE0OS41NTggMzkxLjQwOSAxMjkuMDI4IDM5OS4wNjUgMTA3LjUxMiA0MDQuMjU1IEMgOTUuNjAxIDQwNy4wMjUgODIuOTcgNDA5LjMxNSA3MC43MjYgNDA5LjA4NSBDIDYyLjM0MSA0MDkuMDc5IDU0LjA2MiA0MDcuNjc4IDQ2LjM2NyA0MDQuMzM0IEMgMzkuMzU0IDQwMS4yMjggMzMuMDMxIDM5Ni40NjcgMjkuMzYyIDM4OS42MDggQyAyNC44MTMgMzgxLjU3OCAyNC4yNTIgMzcyLjI5MyAyNS40OCAzNjMuMjgxIEMgMjcuNDUxIDM0OS40NSAzMy45ODcgMzM2LjU2OCA0MS4xNzQgMzI0LjczOCBDIDUzLjYxNSAzMDQuNzMyIDY5LjQwNyAyODYuNjU4IDg1LjY2OSAyNjkuNjgyIEMgOTcuMDggMjU3Ljg2OCAxMDkuMDk2IDI0Ni42NjcgMTIxLjQxNiAyMzUuODA0IEMgMTE4LjY1NiAyMjkuMjgzIDExOC42MDMgMjIwLjk2NiAxMjAuODQgMjE0LjI2MSBDIDEyMy4zOTUgMjA2LjQwMiAxMjkuMjE3IDE5OS43NDcgMTM2LjYwMiAxOTYuMDU4IEMgMTQ4LjAzNCAxOTAuNDA5IDE2Mi4zMjYgMTkxLjU0NiAxNzEuOTc3IDIwMC4wNiBDIDE4Mi44MzMgMjA5LjMzMyAxODYuMTYyIDIyNS42OTMgMTc5Ljc0IDIzOC41MjkgQyAxODYuNTg2IDI0NS43OSAxOTMuODA0IDI1Mi43MDggMjAwLjY4OCAyNTkuOTMgQyAyMTIuMzg2IDI3Mi4xNzIgMjI0LjIzNiAyODQuMjUzIDIzNi4wMzIgMjk2LjM5NiBDIDI0Ni40NTcgMjkxLjA2OSAyNTkuNzU1IDI5MS43NjQgMjY5LjIyNCAyOTguNzE3IEMgMjgxLjA1MSAyODkuMTk5IDI5Mi44MSAyNzkuNjI4IDMwNC4xMDYgMjY5LjQ4MyBDIDMyOS4zNiAyNDYuOTE0IDM1My4wNiAyMjIuNTQxIDM3NC42NTIgMTk2LjQ0MSBDIDM4OC45MDUgMTc5LjE3MSA0MDIuNDYxIDE2MS4yNzUgNDE0Ljc3MyAxNDIuNTY2IEMgNDA3LjY4NCAxMzMuMzEzIDQwNi41MzIgMTIwLjIyNSA0MTEuNzQ4IDEwOS43NiBDIDQxNi4xMjIgMTAwLjQzNyA0MjUuMjczIDkzLjYwOCA0MzUuNDE3IDkyLjAwNSBaIE0gMTMyLjk0IDI1My4wOTYgQyAxMjEuMjI2IDI2My42MTQgMTA5LjUyOCAyNzQuMjUzIDk4LjY3MiAyODUuNjU0IEMgODguMzE1IDI5Ni4xMzYgNzguODQ2IDMwNy41MDggNjkuODcgMzE5LjE4IEMgNjEuNTc2IDMzMC40MjUgNTMuMTkgMzQyLjkwNyA0OC40MjkgMzU2LjA5OCBDIDQ2LjM5IDM2Mi4zMzkgNDQuNDQ5IDM2OS45MzEgNDYuMzY3IDM3Ni4zNzMgQyA0Ny42MzMgMzgwLjc3MiA1MS4wOSAzODMuODExIDU1LjE3NyAzODUuNTg4IEMgNjIuOTQgMzg5LjAwOSA3Mi4wNjggMzg4LjkxMiA4MC40IDM4OC4zMTEgQyAxMDYuNjcgMzg1LjUyNSAxMzMuMTY3IDM3NS44NDYgMTU3LjI5OSAzNjUuMjk5IEMgMTc4LjUzNSAzNTUuNzc1IDE5OS4xNTYgMzQ0LjgyNyAyMTkuMjA5IDMzMy4wMTggQyAyMTcuNjkzIDMyNS42MDMgMjE4LjI3NyAzMTcuOTczIDIyMS40NjggMzExLjA0NCBDIDIwMi41MzggMjkxLjkgMTgzLjgxOSAyNzIuNDU5IDE2NS4wMzIgMjUzLjE3IEMgMTU1LjQ4NyAyNTguMTA2IDE0My41NDYgMjU3LjE2OSAxMzQuNDU2IDI1MS43NjIgQyAxMzMuOTQxIDI1Mi4yMDQgMTMzLjQ0IDI1Mi42NDYgMTMyLjk0IDI1My4wOTYgWiIvPgo8L3N2Zz4K") center / contain no-repeat;
+  mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MDAgNTAwIiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlZlcmxldCBSb2JvdGljcyI+CiAgPHRpdGxlPlZlcmxldCBSb2JvdGljczwvdGl0bGU+CiAgPHBhdGggZmlsbD0iY3VycmVudENvbG9yIiBkPSJNIDQzNS40MTcgOTIuMDA1IEMgNDM5LjEwMiA5MS41NDggNDQyLjk0NiA5MS40OTIgNDQ2LjYyMyA5Mi4wMjggQyA0NTYuNjM4IDkzLjc1NCA0NjUuNjkgMTAwLjY5MyA0NjkuODA3IDEwOS45OTkgQyA0NzUuMTM2IDEyMS4yMSA0NzMuMjAzIDEzNS4xODQgNDY1LjA0NiAxNDQuNTg2IEMgNDU3LjAyNCAxNTQuMDYzIDQ0My40OTEgMTU4LjEzMSA0MzEuNjcyIDE1NC4zNDMgQyA0MTQuMDY4IDE4MC44NCAzOTQuMjA0IDIwNS45NTQgMzczLjAxNCAyMjkuNjc4IEMgMzU0LjQzMiAyNTAuMzQzIDMzNC42NiAyNjkuODk5IDMxMy43NDIgMjg4LjE5NCBDIDMwMy40MDEgMjk3LjUwNyAyOTIuNDE2IDMwNi4xMTEgMjgxLjU2NyAzMTQuODIyIEMgMjgzLjM4NiAzMjIuNTYxIDI4My4yNzMgMzMwLjQ2OSAyNzkuODM4IDMzNy43ODYgQyAyNzQuOTYzIDM0OC43MzQgMjYzLjkwOSAzNTYuMzM4IDI1MS45MjMgMzU2LjcyOSBDIDI0NC4yMjggMzU3LjA0NiAyMzYuNTkzIDM1NC40MDYgMjMwLjYxMiAzNDkuNjEzIEMgMjExLjAyOSAzNjEuNzYxIDE5MC42MiAzNzIuNTkzIDE2OS42NzIgMzgyLjE5MiBDIDE0OS41NTggMzkxLjQwOSAxMjkuMDI4IDM5OS4wNjUgMTA3LjUxMiA0MDQuMjU1IEMgOTUuNjAxIDQwNy4wMjUgODIuOTcgNDA5LjMxNSA3MC43MjYgNDA5LjA4NSBDIDYyLjM0MSA0MDkuMDc5IDU0LjA2MiA0MDcuNjc4IDQ2LjM2NyA0MDQuMzM0IEMgMzkuMzU0IDQwMS4yMjggMzMuMDMxIDM5Ni40NjcgMjkuMzYyIDM4OS42MDggQyAyNC44MTMgMzgxLjU3OCAyNC4yNTIgMzcyLjI5MyAyNS40OCAzNjMuMjgxIEMgMjcuNDUxIDM0OS40NSAzMy45ODcgMzM2LjU2OCA0MS4xNzQgMzI0LjczOCBDIDUzLjYxNSAzMDQuNzMyIDY5LjQwNyAyODYuNjU4IDg1LjY2OSAyNjkuNjgyIEMgOTcuMDggMjU3Ljg2OCAxMDkuMDk2IDI0Ni42NjcgMTIxLjQxNiAyMzUuODA0IEMgMTE4LjY1NiAyMjkuMjgzIDExOC42MDMgMjIwLjk2NiAxMjAuODQgMjE0LjI2MSBDIDEyMy4zOTUgMjA2LjQwMiAxMjkuMjE3IDE5OS43NDcgMTM2LjYwMiAxOTYuMDU4IEMgMTQ4LjAzNCAxOTAuNDA5IDE2Mi4zMjYgMTkxLjU0NiAxNzEuOTc3IDIwMC4wNiBDIDE4Mi44MzMgMjA5LjMzMyAxODYuMTYyIDIyNS42OTMgMTc5Ljc0IDIzOC41MjkgQyAxODYuNTg2IDI0NS43OSAxOTMuODA0IDI1Mi43MDggMjAwLjY4OCAyNTkuOTMgQyAyMTIuMzg2IDI3Mi4xNzIgMjI0LjIzNiAyODQuMjUzIDIzNi4wMzIgMjk2LjM5NiBDIDI0Ni40NTcgMjkxLjA2OSAyNTkuNzU1IDI5MS43NjQgMjY5LjIyNCAyOTguNzE3IEMgMjgxLjA1MSAyODkuMTk5IDI5Mi44MSAyNzkuNjI4IDMwNC4xMDYgMjY5LjQ4MyBDIDMyOS4zNiAyNDYuOTE0IDM1My4wNiAyMjIuNTQxIDM3NC42NTIgMTk2LjQ0MSBDIDM4OC45MDUgMTc5LjE3MSA0MDIuNDYxIDE2MS4yNzUgNDE0Ljc3MyAxNDIuNTY2IEMgNDA3LjY4NCAxMzMuMzEzIDQwNi41MzIgMTIwLjIyNSA0MTEuNzQ4IDEwOS43NiBDIDQxNi4xMjIgMTAwLjQzNyA0MjUuMjczIDkzLjYwOCA0MzUuNDE3IDkyLjAwNSBaIE0gMTMyLjk0IDI1My4wOTYgQyAxMjEuMjI2IDI2My42MTQgMTA5LjUyOCAyNzQuMjUzIDk4LjY3MiAyODUuNjU0IEMgODguMzE1IDI5Ni4xMzYgNzguODQ2IDMwNy41MDggNjkuODcgMzE5LjE4IEMgNjEuNTc2IDMzMC40MjUgNTMuMTkgMzQyLjkwNyA0OC40MjkgMzU2LjA5OCBDIDQ2LjM5IDM2Mi4zMzkgNDQuNDQ5IDM2OS45MzEgNDYuMzY3IDM3Ni4zNzMgQyA0Ny42MzMgMzgwLjc3MiA1MS4wOSAzODMuODExIDU1LjE3NyAzODUuNTg4IEMgNjIuOTQgMzg5LjAwOSA3Mi4wNjggMzg4LjkxMiA4MC40IDM4OC4zMTEgQyAxMDYuNjcgMzg1LjUyNSAxMzMuMTY3IDM3NS44NDYgMTU3LjI5OSAzNjUuMjk5IEMgMTc4LjUzNSAzNTUuNzc1IDE5OS4xNTYgMzQ0LjgyNyAyMTkuMjA5IDMzMy4wMTggQyAyMTcuNjkzIDMyNS42MDMgMjE4LjI3NyAzMTcuOTczIDIyMS40NjggMzExLjA0NCBDIDIwMi41MzggMjkxLjkgMTgzLjgxOSAyNzIuNDU5IDE2NS4wMzIgMjUzLjE3IEMgMTU1LjQ4NyAyNTguMTA2IDE0My41NDYgMjU3LjE2OSAxMzQuNDU2IDI1MS43NjIgQyAxMzMuOTQxIDI1Mi4yMDQgMTMzLjQ0IDI1Mi42NDYgMTMyLjk0IDI1My4wOTYgWiIvPgo8L3N2Zz4K") center / contain no-repeat;
+}
+
+.v-wordmark {
+  font-family: var(--v-display);
+  font-weight: 700;
+  letter-spacing: var(--v-display-tracking);
+  color: var(--v-ink);
+  white-space: nowrap;
+}
+
+.v-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  text-decoration: none;
+  color: inherit;
+}
+
+/* --------------------------------------------------------- small parts */
+
+.v-eyebrow {
+  font-family: var(--v-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--v-muted);
+}
+
+.v-btn {
+  font-family: var(--v-sans);
+  font-weight: 500;
+  font-size: 0.875rem;
+  padding: 0.55rem 1rem;
+  border-radius: var(--v-radius);
+  border: 1px solid transparent;
+  background: var(--v-accent);
+  color: var(--v-accent-ink);
+  text-decoration: none;
+  cursor: pointer;
+  display: inline-block;
+}
+.v-btn:hover { filter: brightness(1.06); }
+.v-btn:focus-visible { outline: 2px solid var(--v-ink); outline-offset: 2px; }
+
+.v-btn--quiet {
+  background: transparent;
+  color: var(--v-ink);
+  border-color: var(--v-line-2);
+}
+
 /* ------------------------------------------------------------------ *
  * The rig screen commits to one visual world on purpose: a bright
  * white wall, black type, one signal colour. It is read from two
@@ -30,7 +202,7 @@ html, body { height: 100%; }
 body {
   background: var(--ground);
   color: var(--ink);
-  font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--v-sans);
   font-synthesis-weight: none;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
@@ -51,7 +223,7 @@ body {
   gap: 2rem;
   padding: 0.7rem 1.4rem;
   border-bottom: 2px solid var(--ink);
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: clamp(0.68rem, 1.05vw, 0.9rem);
   letter-spacing: 0.11em;
   text-transform: uppercase;
@@ -80,7 +252,7 @@ body {
 
 .kicker {
   font-style: normal;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: clamp(0.7rem, 1.1vw, 0.95rem);
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -105,7 +277,7 @@ body {
 }
 
 .figure {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.04em;
@@ -139,7 +311,7 @@ body {
 .metrics { display: flex; gap: clamp(1.5rem, 5vw, 4rem); align-items: flex-end; }
 .metric { display: flex; flex-direction: column; gap: 0.25rem; }
 .metric b {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-weight: 600; font-variant-numeric: tabular-nums;
   letter-spacing: -0.03em; line-height: 0.9;
   /* Three camera panes across a 16:9 wall are always width-limited, so the
@@ -167,7 +339,7 @@ body {
   padding: 0.4rem 0.6rem;
   background: linear-gradient(to top, rgba(11,11,12,0.88), rgba(11,11,12,0));
   color: #fff;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: clamp(0.6rem, 1vw, 0.8rem);
   letter-spacing: 0.14em; text-transform: uppercase;
 }
@@ -183,7 +355,7 @@ body {
 .choice { border: 3px solid var(--ink); padding: clamp(0.8rem, 2.2vh, 1.4rem); display: flex; flex-direction: column; gap: 0.4rem; }
 .choice em {
   font-style: normal;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: clamp(0.65rem, 1vw, 0.82rem); letter-spacing: 0.16em;
   text-transform: uppercase; color: var(--grey);
 }
@@ -211,7 +383,7 @@ body {
 .pedal:disabled { cursor: default; }
 .pedal em {
   font-style: normal;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: clamp(0.58rem, 0.92vw, 0.76rem);
   letter-spacing: 0.2em; text-transform: uppercase; color: var(--grey);
 }
@@ -247,7 +419,7 @@ body {
   max-width: 34ch;
   background: var(--ink); color: var(--ground);
   padding: 0.7rem 1rem;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.8rem; letter-spacing: 0.04em;
   opacity: 0; transform: translateY(6px);
   transition: opacity 160ms ease, transform 160ms ease;
@@ -263,7 +435,7 @@ body {
   background: var(--ink); color: var(--ground);
   border: 0; cursor: pointer;
   padding: 1rem 0.45rem;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.7rem; letter-spacing: 0.22em; text-transform: uppercase;
 }
 .drawer {
@@ -271,7 +443,7 @@ body {
   background: var(--ink); color: var(--ground);
   transform: translateX(100%); transition: transform 220ms ease;
   display: flex; flex-direction: column;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.78rem; line-height: 1.55;
 }
 .drawer.open { transform: none; }
@@ -342,10 +514,33 @@ body {
   line-height: 1.05;
   margin-top: 0.2rem;
 }
+
+
+/* ---------------------------------------------------------- the mark
+ *
+ * The only thing the brand adds to this screen besides the typefaces.
+ * The palette is deliberately NOT taken from packages/brand: CLAUDE.md
+ * fixes this screen's constraint before any of it - read from two metres
+ * away, high contrast, no colour-coding - and Verlet's light, low
+ * contrast look would cost exactly that.
+ *
+ * Sized in em so it tracks the rail, and set to the rail's own ink so it
+ * is never brighter than the rig id beside it.
+ *
+ * The mask itself comes from .v-mark in brand.css, whose url() resolves
+ * against that stylesheet rather than this one. Repeating it here would
+ * mean a ../../../ path that breaks the moment either file moves. */
+.rail-mark {
+  width: 1.15em;
+  height: 1.15em;
+  margin-right: 0.5em;
+  opacity: 0.75;
+}
 </style>
 
 <div id="app">
   <header class="rail">
+    <span class="v-mark rail-mark" aria-hidden="true"></span>
     <span class="rail-id" id="rail-rig">Rig 03</span>
     <span class="rail-task" id="rail-task">Task — Box transfer, bin to conveyor</span>
     <span class="rail-mode" id="rail-mode"></span>
@@ -620,12 +815,28 @@ body {
       mode: cfg.mode,
       shift: shiftById(cfg.shift),
       date: cfg.date,
+      tz: cfg.tz || localZone(),
       nBlocks: nBlocks,
       groups: planned,
     };
   }
 
   // --------------------------------------------------------------- time
+
+  /* The floor's own zone, as an IANA name.
+   *
+   * Every "HH:MM" in a payload is wall-clock time on the floor, and a
+   * reader in another zone - a server keeping UTC, say - cannot recover
+   * that from the string. So it travels with the schedule instead of
+   * being assumed at both ends, which is the only way the desk, the rig
+   * and the backend can agree on when a turn starts. */
+  function localZone() {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    } catch (e) {
+      return "UTC";
+    }
+  }
 
   function hhmm(mins) {
     var h = Math.floor(mins / 60) % 24, m = mins % 60;
@@ -823,6 +1034,7 @@ body {
         date: plan.date,
         start: hhmm(plan.shift.start),
         end: hhmm(shiftEnd(plan)),
+        tz: plan.tz || localZone(),
       },
       blockMinutes: plan.blockMin,
       rotation: plan.mode,
@@ -844,6 +1056,120 @@ body {
         var endsIn = (to - t + 1440) % 1440;
         return { turn: turn, minutesLeft: endsIn === 0 ? payload.blockMinutes : endsIn };
       }
+    }
+    return null;
+  }
+
+  /* ------------------------------------------------ which shift is running
+
+     A payload covers ONE shift. A rig that is handed a whole day, or a
+     server holding three payloads per rig, has to answer "which of these
+     is running right now" - and that answer must be a COMPARISON, never a
+     calculation. The desk already wrote the window into the payload:
+     `shift.date`, `start`, `end` and `tz`. This reads it back.
+
+     The distinction is the founding rule of the system. Working out when
+     a shift runs, rather than reading what the desk said, would be a
+     second opinion about the schedule - and the first one able to
+     disagree with the desk that made it. */
+
+  /* Minutes that `tz` is ahead of UTC at a given instant. Uses the
+     formatter to render that instant in the zone, then reads the wall
+     clock back - the standard way to get at the tz database without
+     shipping one. */
+  function zoneOffset(utcMs, tz) {
+    var dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+    var p = {};
+    dtf.formatToParts(new Date(utcMs)).forEach(function (x) { p[x.type] = x.value; });
+    var asUTC = Date.UTC(+p.year, +p.month - 1, +p.day,
+                         (+p.hour) % 24, +p.minute, +p.second);
+    return asUTC - utcMs;
+  }
+
+  /* A wall-clock time on the floor, as an instant. Guess, then correct -
+     the second pass matters on the two days a year a shift starts inside
+     a daylight-saving jump. */
+  function floorInstant(y, mo, d, hh, mi, tz) {
+    var guess = Date.UTC(y, mo - 1, d, hh, mi);
+    var off = zoneOffset(guess, tz);
+    var ms = guess - off;
+    var again = zoneOffset(ms, tz);
+    return again === off ? ms : guess - again;
+  }
+
+  /* The half-open window [start, end) this payload covers, in real time.
+     Null if the payload does not carry one - malformed rather than
+     malicious, but it must not be treated as covering everything. */
+  function shiftWindow(payload) {
+    var s = payload && payload.shift;
+    if (!s) return null;
+    var d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s.date || ""));
+    var t = /^(\d{2}):(\d{2})$/.exec(String(s.start || ""));
+    if (!d || !t) return null;
+
+    var startMin = (+t[1]) * 60 + (+t[2]);
+    var mins = SHIFT_MINUTES;
+    var e = /^(\d{2}):(\d{2})$/.exec(String(s.end || ""));
+    if (e) {
+      // The desk is the authority on length, not the constant here.
+      mins = ((((+e[1]) * 60 + (+e[2])) - startMin) + 1440) % 1440;
+      if (mins === 0) mins = 1440;          // a full round trip, not zero
+    }
+
+    var start = floorInstant(+d[1], +d[2], +d[3], +t[1], +t[2], s.tz || "UTC");
+    return { start: start, end: start + mins * 60000 };
+  }
+
+  var asMs = function (at) {
+    if (at == null) return Date.now();
+    if (at instanceof Date) return at.getTime();
+    return typeof at === "number" ? at : Date.parse(at);
+  };
+
+  /* The wall-clock minute on the FLOOR, from a payload and an instant.
+
+     Every "HH:MM" in a payload is wall-clock time where the rigs are, and
+     the desk writes the zone in beside them. Reading them against the
+     machine's own clock is how this system spent a day believing no turn
+     was in progress on any of twelve rigs - the backend was fixed for
+     exactly that, and the rig was left reading `new Date().getHours()`.
+
+     On a properly provisioned floor the two agree and this changes
+     nothing. It matters when they do not: a rig imaged in UTC standing on
+     a floor at UTC+2 is two hours out, and what it gets wrong is which
+     operator is sitting at it. */
+  function minutesOnFloor(payload, at) {
+    var ms = asMs(at);
+    var tz = payload && payload.shift && payload.shift.tz;
+    if (!tz) {
+      // No zone in the payload - older pushes, and the local demo.
+      var here = new Date(ms);
+      return here.getHours() * 60 + here.getMinutes() + here.getSeconds() / 60;
+    }
+    var there = new Date(ms + zoneOffset(ms, tz));
+    return there.getUTCHours() * 60 + there.getUTCMinutes() + there.getUTCSeconds() / 60;
+  }
+
+  function coversAt(payload, at) {
+    var w = shiftWindow(payload);
+    if (!w) return false;
+    var ms = asMs(at);
+    return ms >= w.start && ms < w.end;
+  }
+
+  /* The one of these payloads whose own window contains `at`, or null.
+     Deliberately does not fall back: what to show when no shift is
+     running is the caller's decision, and hiding it here would let a
+     finished schedule look like a live one. */
+  function inForce(payloads, at) {
+    if (!Array.isArray(payloads)) return null;
+    var ms = asMs(at);
+    for (var i = 0; i < payloads.length; i++) {
+      if (coversAt(payloads[i], ms)) return payloads[i];
     }
     return null;
   }
@@ -871,6 +1197,10 @@ body {
 
     rigPayload: rigPayload,
     whoIsOn: whoIsOn,
+    shiftWindow: shiftWindow,
+    coversAt: coversAt,
+    minutesOnFloor: minutesOnFloor,
+    inForce: inForce,
 
     hhmm: hhmm,
     blockStart: blockStart,
@@ -1181,6 +1511,9 @@ function boot(screen) {
     stint: 0,           // which 45-minute stint we are in
     stintAt: 0,         // shift seconds when this operator took the rig
     episode: 0,
+    episodeId: null,   // minted at start_episode, names the video too
+    episodeWho: null,  // the turn and operator that pressed start
+    stintWho: null,    // whose stint this is, captured when it began
     recordedSecs: 0,
     faultSecs: 0,
     downSecs: 0,
@@ -1198,7 +1531,13 @@ function boot(screen) {
   lastViewKey = null;
   lastPedalKey = null;
   holding = null;
-  emit("shift_check", "rig_shift_checks", "shift started, checklist raised");
+  /* The first stint of this boot belongs to whoever is on the rig now.
+     Captured for the same reason an episode is: a stint is a span of
+     time, and it is filed at the end of that span, by which point the
+     clock may already have moved on to the next operator. */
+  S.stintWho = current();
+  emit("shift_check", "rig_shift_checks", "shift started, checklist raised",
+       { outcome: "raised" });
   /* Only a screen the app actually has. An unrecognised hash used to
      leave the rig on an undefined phase — blank stage, three dead
      pedals, nothing to press and no way back but a reload. */
@@ -1225,6 +1564,7 @@ function boot(screen) {
    jumping straight to the screen you want to argue about, not waiting
    forty-five minutes for a handover to come round. */
 const SCREENS = [
+  ["no-identity","No identity"],
   ["standby",    "Standby"],
   ["checklist",  "Shift check"],
   ["fault-class","Report a fault"],
@@ -1268,15 +1608,40 @@ function shiftStartMin() {
   return Number(p[0]) * 60 + Number(p[1]);
 }
 function nowMin() {
-  if (live) {
-    const d = new Date();
-    return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
-  }
+  /* The floor's wall clock, not this machine's.
+   *
+   * Every "HH:MM" in the payload is time where the rigs are, and the desk
+   * writes the zone in beside them. This used to read the machine's own
+   * clock and ignore that zone entirely - the same mistake the backend
+   * made and had fixed, left standing here.
+   *
+   * On a correctly provisioned rig the two are the same and nothing
+   * changes. It matters when they are not: a rig imaged in UTC on a floor
+   * at UTC+2 is two hours out, and what it gets wrong is which operator
+   * it thinks is sitting at it. Which is the one thing it must not. */
+  if (live) return RE.minutesOnFloor(PAYLOAD, Date.now());
   return shiftStartMin() + S.t / 60;
 }
 
+/* A schedule that has run out is not a schedule.
+
+   `whoIsOn` matches on the time of day and nothing else, so last night's
+   sheet still cheerfully claims somebody is on at half past midnight
+   tonight - a different person, on a shift that ended twenty-four hours
+   ago. The rig believed it, and filed takes against yesterday.
+
+   Checking the window the desk wrote into the payload closes that. When
+   it does not cover now, this rig has no schedule and says so. Standby is
+   the truthful answer, and an idle rig gets noticed and fixed; one
+   quietly running the wrong roster does not.
+
+   Live only. The demo is one simulated shift with no calendar behind it,
+   so there is nothing for its date to be wrong against. */
+const scheduleIsCurrent = () => !live || RE.coversAt(PAYLOAD, Date.now());
+
 /* The whole of "who is at this rig right now" is this one call. */
-const current = () => (PAYLOAD ? RE.whoIsOn(PAYLOAD, nowMin()) : null);
+const current = () =>
+  (PAYLOAD && scheduleIsCurrent() ? RE.whoIsOn(PAYLOAD, nowMin()) : null);
 
 const operator     = () => { const c = current(); return c ? c.turn.operator.name : "—"; };
 const nextOperator = () => { const c = current(); return c && c.turn.relievedBy ? c.turn.relievedBy : "End of shift"; };
@@ -1291,6 +1656,21 @@ const nextPeriod   = () => { const c = current(); return c ? c.turn.theyGoTo : "
 function syncTurnKey() {
   const c = current();
   turnKey = c ? c.turn.from : null;
+}
+
+/* The whole path taken through the issue tree, not just where it landed.
+   "Other > Other hardware > Cable" says more about a recurring fault than
+   "Cable" does on its own. */
+function issuePath(leaf) {
+  const walk = (node, trail) => {
+    if (node === leaf) return trail.concat(node.label);
+    for (const c of node.children || []) {
+      const hit = walk(c, trail.concat(node === ISSUE_TREE ? [] : [node.label]));
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return (walk(ISSUE_TREE, []) || [leaf.label]).join(" > ");
 }
 
 /* The operator whose stint just *ended*, which is not the one arriving.
@@ -1335,6 +1715,12 @@ function pedals() {
        the shift: check the rig at 07:40 and nobody burns 60 seconds at
        08:00. It also keeps the rule that every screen offers a way
        forward. */
+    /* The one screen with no way forward, and the only place in this app
+       that breaks the rule that every screen offers one. There is nothing
+       an operator can do about it and nothing they should be invited to
+       try: any work started here would be filed under another rig. */
+    case "no_identity":
+      return [null, null, null];
     case "standby":
       return [null, act(S.checkedAt == null ? "Check the rig" : "Check again", "start_check"), null];
     case "checklist":
@@ -1384,16 +1770,19 @@ function dispatch(intent) {
     case "fault_right": {
       S.fault = FAULTS[intent.split("_")[1]];
       go("fault_fixing");
-      emit("fault_opened", "rig_shift_checks", S.fault + " reported at shift check");
+      emit("fault_opened", "rig_shift_checks", S.fault + " reported at shift check",
+           { subsystem: S.fault });
       break;
     }
     case "fault_back":
-      emit("fault_reclassified", "rig_shift_checks", S.fault + " was the wrong subsystem");
+      emit("fault_reclassified", "rig_shift_checks", S.fault + " was the wrong subsystem",
+           { subsystem: S.fault });
       S.fault = null; go("fault_class");
       break;
     case "fault_fixed":
       emit("fault_closed", "rig_shift_checks",
-           S.fault + " fixed in " + clock(phaseSecs()) + " — not charged");
+           S.fault + " fixed in " + clock(phaseSecs()) + " — not charged",
+           { subsystem: S.fault, secondsCharged: 0, secondsSpent: Math.round(phaseSecs()) });
       S.fault = null; go("checklist");
       break;
     case "fault_cancel":
@@ -1401,7 +1790,8 @@ function dispatch(intent) {
       // clock — the excluded time is charged back to the operator.
       S.faultSecs = Math.max(0, S.faultSecs - phaseSecs());
       emit("fault_cancelled", "rig_shift_checks",
-           "report withdrawn — " + clock(phaseSecs()) + " charged to operator");
+           "report withdrawn — " + clock(phaseSecs()) + " charged to operator",
+           { subsystem: S.fault, secondsCharged: Math.round(phaseSecs()) });
       S.fault = null; go("checklist");
       break;
 
@@ -1409,10 +1799,13 @@ function dispatch(intent) {
       // Measured from the start of the shift, less any fault time — the
       // phase clock restarts each time the operator returns from a fault.
       S.checkedAt = S.t;
-      emit("shift_check", "rig_shift_checks", "checklist passed in " + clock(S.t - S.faultSecs));
       // A check run early goes back to Standby: the rig is ready, but
-      // nobody is due at it yet.
+      // nobody is due at it yet. Decided before the event is filed, so
+      // the two cannot disagree about which kind of check this was.
       const early = S.fromStandby && !current();
+      emit("shift_check", "rig_shift_checks", "checklist passed in " + clock(S.t - S.faultSecs),
+           { outcome: early ? "passed_early" : "passed",
+             secondsTaken: Math.round(S.t - S.faultSecs) });
       S.fromStandby = false;
       go(early ? "standby" : "handover");
       break;
@@ -1420,11 +1813,25 @@ function dispatch(intent) {
 
     case "start_episode":
       S.episode += 1;
+      /* Minted before RODA-RS would be told anything, so the video
+         directory on disk and the event that reports it name the same
+         take. No lookup table, no reconciliation, and an id that exists
+         even for a take the recorder failed to start. */
+      S.episodeId = uuid();
+      /* Who is making this take, captured now rather than looked up when
+         it is saved. A take may run past a turn boundary - the rig
+         deliberately never cuts a recording - and the operator who
+         pressed this pedal is the one who did the work. Read at save
+         time instead, the take would be filed under whoever came on
+         next, and nothing downstream could tell. */
+      S.episodeWho = current();
       go("recording");
       break;
 
     case "discard":
-      emit("episode_discarded", "episodes", "episode " + S.episode + " discarded after " + clock(phaseSecs()));
+      emit("episode_discarded", "episodes", "episode " + S.episode + " discarded after " + clock(phaseSecs()),
+           { episodeId: S.episodeId, durationSecs: Math.round(phaseSecs()) },
+           S.episodeWho);
       S.episode -= 1;
       afterEpisode();
       break;
@@ -1438,7 +1845,10 @@ function dispatch(intent) {
       const score = Number(intent.slice(-1));
       S.recordedSecs += S.pendingSecs || 0;
       emit("episode_saved", "episodes",
-           "episode " + S.episode + " · " + clock(S.pendingSecs || 0) + " · scored " + score + "/5");
+           "episode " + S.episode + " · " + clock(S.pendingSecs || 0) + " · scored " + score + "/5",
+           { episodeId: S.episodeId, durationSecs: Math.round(S.pendingSecs || 0), score: score },
+           S.episodeWho);
+      queueVideo(S.episodeId);
       S.pendingSecs = 0;
       afterEpisode();
       break;
@@ -1457,13 +1867,18 @@ function dispatch(intent) {
       go("rig_down");
       emit("rig_down", "rig_downtime_events",
            child.label + (child.needsManager ? " — manager needed" : "") +
-           (S.reportedAtHandover ? " · found at handover, charged to previous operator" : ""));
+           (S.reportedAtHandover ? " · found at handover, charged to previous operator" : ""),
+           { issue: child.label,
+             issuePath: issuePath(child),
+             needsManager: !!child.needsManager,
+             chargedTo: S.reportedAtHandover ? "previous_operator" : "rig" });
       break;
     }
 
     case "problem_solved":
       // downSecs already accrued frame by frame while the rig was down.
-      emit("rig_up", "rig_downtime_events", "resolved after " + clock(phaseSecs()) + " down");
+      emit("rig_up", "rig_downtime_events", "resolved after " + clock(phaseSecs()) + " down",
+           { downSecs: Math.round(phaseSecs()) });
       S.reportedIssue = null;
       go("resetting");
       break;
@@ -1473,7 +1888,11 @@ function dispatch(intent) {
       break;
 
     case "end_session":
-      emit("session_ended", "sessions", "operator ended session with the rig down");
+      /* The session belongs to the operator who held the stint, so it
+         closes the one that was opened rather than opening a second one
+         under whoever the clock has moved on to. */
+      emit("session_ended", "sessions", "operator ended session with the rig down",
+           { endedBy: "operator" }, S.stintWho);
       go("session_ended");
       break;
 
@@ -1492,11 +1911,30 @@ function afterEpisode() {
 function go(phase) { S.phase = phase; S.phaseAt = S.t; }
 
 function rotate() {
+  /* The sentence keeps the percentage because the operator reads it.
+     The data carries the four numbers it was made of, so the formula can
+     be corrected in six months and every shift already filed recomputes
+     correctly. A stored ratio cannot be. */
+  /* Filed under whoever held the rig for this stint, not whoever the
+     clock says is on now. rotate() runs *after* the boundary - that is
+     the whole point of handoverDue, which waits for a take to land -
+     so reading the clock here credited an operator's entire turn to
+     the person who relieved them. The sentence already named the right
+     person via outgoingOperator(); only the data was wrong, which is
+     the worst way round because nobody at the rig could see it. */
   emit("stint_ended", "rig_productivity_blocks",
-       outgoingOperator() + " · " + S.episode + " episodes · " + pct(efficiency()) + " efficiency");
+       outgoingOperator() + " · " + S.episode + " episodes · " + pct(efficiency()) + " efficiency",
+       { episodes: S.episode,
+         recordedSecs: Math.round(S.recordedSecs),
+         assignedSecs: Math.round(assignedSecs()),
+         faultSecs: Math.round(S.faultSecs),
+         downSecs: Math.round(S.downSecs) },
+       S.stintWho);
   S.stint += 1;
   S.stintAt = S.t;
   syncTurnKey();
+  // The next stint belongs to whoever has just come on.
+  S.stintWho = current();
   S.episode = 0;
   S.recordedSecs = 0;
   S.faultSecs = 0;
@@ -1505,6 +1943,108 @@ function rotate() {
   S.handoverDue = false;
   go("handover");
 }
+
+// ------------------------------------------------------ keeping in step
+
+/* A payload covers one shift. Without this the rig read its schedule
+   once at boot and never again, so at 16:00 the Morning payload it was
+   holding ran out, `whoIsOn()` found nothing, and it dropped to Standby
+   until somebody walked round and reloaded twelve browsers. Three times
+   a day.
+
+   Two triggers, and they are different questions:
+
+     the payload has run out   ask now, and keep asking
+     everything is fine        ask occasionally, so a manager who fixes
+                               a roster mid-shift reaches the floor
+   Two rules, both of which protect work in progress:
+
+     never swap during a take. The rig already refuses to cut a
+     recording at a turn boundary; a schedule arriving mid-episode is
+     the same situation, and swapping would file the take under whoever
+     the new payload says is on.
+
+     never let a new payload put a working rig on Standby. If what
+     arrives leaves this rig with no turn covering now - the groups were
+     restructured, this rig was dropped while somebody fixed something -
+     applying it would strand an operator on a dead screen mid-shift. A
+     stale schedule that works beats a fresh one that stops the rig. */
+
+/* How long a corrected roster can take to reach the floor. Twelve rigs
+   asking every thirty seconds is under two kilobytes a second between
+   them, which is nothing, and it means a manager who fixes a name sees
+   it land while they are still looking at the screen.
+
+   A rig with no usable schedule asks far more often, because it is doing
+   no work until one arrives. */
+const RESYNC_IDLE_MS = 30000;    // half a minute, when the rig is working
+const RESYNC_HUNGRY_MS = 10000;  // when it has nothing it can run
+let resyncTimer = null;
+let resyncing = false;
+
+function pushId(p) {
+  /* Payloads carry no version, so identity is the shift they describe
+     plus who is in it. Enough to tell "the same schedule again" from "a
+     corrected roster", which is all this needs. */
+  if (!p || !p.shift) return "";
+  return [p.rigId, p.shift.date, p.shift.label,
+          (p.turns || []).map((t) => t.from + ":" + (t.operator && t.operator.id)).join(",")
+         ].join("|");
+}
+
+async function resync() {
+  if (resyncing || !PAYLOAD) return;
+
+  // Rule one: not while a take is in flight.
+  if (S && (S.phase === "recording" || S.phase === "review")) return;
+
+  resyncing = true;
+  try {
+    const next = await loadPayload(RIG_ID);
+    if (!next || next.rigId !== RIG_ID) return;        // never another rig's
+    if (pushId(next) === pushId(PAYLOAD)) return;      // the same schedule
+
+    // Rule two: not if it would strand a working operator.
+    const working = S && S.phase !== "standby" && S.phase !== "session_ended";
+    const covers = RE.whoIsOn(next, nowMin());
+    if (working && !covers) {
+      emitLog("schedule_held", "sessions",
+              "a new schedule arrived that does not cover this rig now — keeping the current one");
+      return;
+    }
+
+    /* applyPayload only. boot() would reset the state machine, clear the
+       drawer log and file a fresh shift check - it is what the demo's
+       rig switcher calls, and wiring it here would wipe the screen under
+       somebody mid-shift. */
+    applyPayload(next);
+    syncTurnKey();
+    lastViewKey = null;
+    const who = current();
+    emitLog("schedule_updated", "sessions",
+            who ? "Schedule updated — " + who.turn.operator.name + " on this rig now"
+                : "Schedule updated — nothing scheduled on this rig yet");
+    if (who) toast("Schedule updated — " + who.turn.operator.name);
+  } catch (e) {
+    // The floor keeps working on the schedule it has.
+  } finally {
+    resyncing = false;
+  }
+}
+
+function startResync() {
+  if (resyncTimer) return;
+  const beat = async () => {
+    await resync();
+    // Hungry while the rig has nothing to do, patient once it has.
+    const hungry = !PAYLOAD || !current();
+    resyncTimer = setTimeout(beat, hungry ? RESYNC_HUNGRY_MS : RESYNC_IDLE_MS);
+  };
+  resyncTimer = setTimeout(beat, RESYNC_HUNGRY_MS);
+}
+
+/* For the tests: ask now rather than waiting on the timer. */
+window.rigResync = resync;
 
 // ----------------------------------------------------------------- clock
 
@@ -1520,10 +2060,29 @@ function tick(now) {
      leave `last` alone so the first real frame starts from a standstill. */
   if (!S) { requestAnimationFrame(tick); return; }
   if (last === null) last = now;
-  const dt = Math.min(0.25, (now - last) / 1000) * speed;
+  const real = (now - last) / 1000;
   last = now;
 
-  if (S.phase !== "session_ended") {
+  /* At 1x the rig's clock IS the wall clock, so a frame gap counts in
+     full. It used to be capped at a quarter second whatever the speed,
+     which meant every stall longer than that was silently dropped: a
+     three-second take could be filed as zero seconds long, and a stint
+     could report less time than it was actually given.
+     
+     Efficiency survived that, because it divides two numbers that both
+     came from this clock and the loss cancelled. Durations did not.
+     
+     The cap belongs to the demo and only the demo. At 30x, one frame
+     after a backgrounded tab would otherwise leap half an hour. */
+  const dt = speed === 1 ? real : Math.min(0.25, real) * speed;
+
+  /* Two phases the clock does not run in. `session_ended` is over;
+     `no_identity` never began, and must stay that way - the turn-boundary
+     branch below calls rotate(), which would quietly move a rig with no
+     identity on to the next operator and put a working screen in front of
+     somebody. A refusal that a passing turn boundary lifts is not a
+     refusal. */
+  if (S.phase !== "session_ended" && S.phase !== "no_identity") {
     S.t += dt;
     if (S.phase === "fault_fixing") S.faultSecs += dt;
     if (S.phase === "rig_down")     S.downSecs += dt;
@@ -1682,6 +2241,21 @@ function view(behind) {
     /* A sign, read from across the room. Everything an operator walking
        up needs to know that the rig is theirs and ready, and nothing to
        do about it. */
+    /* Written for whoever gets sent to fix it, not for the operator: it
+       names the machine by the address the service saw, because that is
+       the only thing anybody knows about it yet. */
+    case "no_identity": {
+      return `
+        <p class="kicker">This rig has no identity</p>
+        <h1 class="headline">Not set up yet</h1>
+        <p class="lede">The floor does not recognise this machine${
+          SEEN_AS ? ", which called from " + SEEN_AS : ""}.</p>
+        <p class="sub">Nothing can be recorded here: a take filed now would
+        be credited to another rig, and nothing downstream could tell.
+        Add this machine to <code>RIG_ADDRESSES</code> on the server and
+        reload.</p>`;
+    }
+
     case "standby": {
       const p = PAYLOAD;
       const first = p && p.turns.length ? p.turns[0] : null;
@@ -1904,11 +2478,659 @@ function mountCameras() {
 // ------------------------------------------------------------------- log
 
 const logLines = [];
-function emit(event, bucket, detail) {
+
+/* Every event the rig sends back, in the shape packages/schema/event.js
+   validates. Two things this has to get right:
+
+   The id is minted here, at the moment the pedal was pressed, before
+   anything downstream is told. That is what lets the uploader resend a
+   batch blindly, forever, without ever asking whether the last attempt
+   landed - ingest dedupes on (rigId, eventId).
+
+   Everything outside `data` comes from the schedule the desk pushed, not
+   from the rig's own reckoning. The payload is the dimension table for
+   the whole event stream, so a rig that made up its own shift date would
+   quietly orphan every row it filed. */
+const envelopes = [];
+let seq = 0;
+
+function uuid() {
+  if (typeof crypto === "object" && crypto.randomUUID) return crypto.randomUUID();
+  // Older webviews: still a v4-shaped id, still unique enough to dedupe on.
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+function envelope(event, bucket, data, who) {
+  /* `who` is the turn and operator captured when the thing being reported
+     actually began, for events that span time. Without it this reads the
+     clock, which is right for a point-in-time fact and wrong for a take:
+     a recording that runs past a turn boundary would be filed under the
+     operator who came on next, not the one who made it. */
+  const c = who || current();
+  return {
+    eventId: uuid(),
+    seq: seq++,
+    at: new Date().toISOString(),
+    rigId: RIG_ID,
+    shiftDate: PAYLOAD ? PAYLOAD.shift.date : null,
+    shiftLabel: PAYLOAD ? PAYLOAD.shift.label : null,
+    // Null on standby: nothing is scheduled, but the rig still reports.
+    turnFrom: c ? c.turn.from : null,
+    operatorId: c ? c.turn.operator.id : null,
+    bucket: bucket,
+    event: event,
+    data: data || {},
+  };
+}
+
+/* `detail` is the sentence on the operator's drawer log and stays exactly
+   as it was - it is for the person standing at the rig, not the database,
+   and it is good. `data` is the parallel machine-readable half. */
+function emit(event, bucket, detail, data, who) {
+  const e = envelope(event, bucket, data, who);
+  envelopes.push(e);
+  // Held until the server acknowledges it. A rig with no network keeps
+  // working and keeps filing; the outbox grows and drains later.
+  outbox.push(e);
+  /* Journal before network, always. The uploader runs on a timer and is
+     never the thing holding an event; this is. */
+  onJournal(() => journal.appendEvent(e), "an event");
   logLines.push({ at: clock(S ? S.t : 0), event, bucket, detail });
   const el = document.getElementById("log");
   el.innerHTML = logLines.slice(-40).map((l) =>
     `<p><time>${l.at}</time><b>${l.event} <span class="bucket">→ ${l.bucket}</span><br>${l.detail}</b></p>`).join("");
+}
+
+/* Everything the rig has ever filed this session. Exposed so the headless
+   tests can assert the shape the backend receives, rather than the
+   sentence the operator reads. */
+window.rigEvents = () => envelopes.slice();
+
+// ------------------------------------------------------------ credentials
+
+/* The machine authenticates; the operator never does.
+
+   That is the whole of the rig's auth story and it is what lets this
+   screen keep having no login. Ansible places a token on the machine
+   beside `/etc/rig/id`, the page is served with it, and every call the
+   rig makes carries it. Nobody standing at the rig types anything.
+
+   Only same-origin calls get the header. A presigned upload URL points
+   at the object store, is already signed, and is not ours to add
+   credentials to - sending a bearer token to somebody else's bucket is
+   how a token ends up in somebody else's logs. */
+
+const RIG_TOKEN = (typeof window !== "undefined" && window.RIG_TOKEN) || "";
+
+/* Which rig this machine is.
+ *
+ * Ansible writes `rig-config.js` beside this file, per machine, from the
+ * same source as /etc/rig/id. Without it every rig boots as the default
+ * and asks the server for RIG-03's schedule - twelve machines that all
+ * believe they are the same one, filing every episode under one rig id
+ * and uploading video into one prefix. There is nothing downstream that
+ * could detect that, because from the server's side it is exactly what
+ * one very busy rig looks like.
+ *
+ * Not a URL parameter. The token travels with it, and tokens in URLs end
+ * up in access logs, browser history and referrer headers. */
+const CONFIGURED_RIG = (typeof window !== "undefined" && window.RIG_ID) || null;
+
+/* The address the service saw this machine call from, when it is the one
+   serving `rig-config.js`. Only ever shown on the no-identity screen, so
+   whoever is sent to fix it knows which machine they are looking for. */
+const SEEN_AS = (typeof window !== "undefined" && window.RIG_SEEN_AS) || null;
+
+/* A rig that was not told which rig it is must not guess.
+ *
+ * Left alone it takes the default at the top of this file, asks for that
+ * rig's schedule, and files every episode under it. Twelve machines doing
+ * that is indistinguishable, from the service's side, from one very busy
+ * rig - so nothing downstream can notice, and the takes are wrong for
+ * ever. Idle time is loud, cheap and recoverable; misattributed work is
+ * silent and permanent. Same trade as Standby for an expired sheet.
+ *
+ * The floor is asked rather than assumed. `rigIdentity` says whether this
+ * service tells rigs apart at all: where it does, not being named is a
+ * fault, and where it does not - a laptop, the demo on the landing page -
+ * nothing changes. Deliberately not keyed on `rigAuth`, because the worst
+ * version of this failure is a floor whose auth is off, where twelve rigs
+ * filing as one are accepted rather than refused.
+ *
+ * A service that cannot be reached at all leaves the rig as it was. That
+ * is the static-deploy and no-network case, and it costs nothing: with no
+ * service there is nothing to file to either. */
+async function confirmIdentity() {
+  if (CONFIGURED_RIG) return;
+  let health = null;
+  try {
+    const r = await fetch("/api/health");
+    health = r.ok ? await r.json() : null;
+  } catch (e) {
+    return;                       // no service to ask; nothing to be wrong about
+  }
+  if (!health || health.rigIdentity !== "on") return;
+
+  /* Everything filed before this answer came back was filed under the
+     default rig. It is one shift check raised at boot, and it names the
+     wrong machine - so it is dropped rather than uploaded. On a floor
+     whose auth is off it would otherwise be accepted, which is the exact
+     failure this screen exists to prevent, arriving from the one window
+     where the rig did not yet know.
+     Forgotten from the journal too: it survives a reload, so clearing
+     only the outbox would replay it on the next boot. */
+  const stranded = outbox.splice(0, outbox.length);
+  if (stranded.length) {
+    onJournal(() => journal.forgetEvents(stranded.map((e) => e.eventId)),
+              "events filed before this machine knew it was not a rig");
+  }
+
+  /* The rail is the other half of the sentence. Left alone it goes on
+     naming the default rig and its task beside a screen saying this
+     machine has no identity - and of the two, the operator believes the
+     one that names a rig. */
+  PAYLOAD = null;
+  RIG_ID = "";
+  document.getElementById("rail-rig").textContent = "";
+  document.getElementById("rail-task").textContent = "";
+  document.title = "No identity";
+
+  go("no_identity");
+  render();
+}
+
+function ours(url) {
+  const u = String(url);
+  if (u.startsWith("/")) return true;                    // rooted at us
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(u)) return true;      // no scheme: relative
+  /* Absolute, with a scheme. Ours only if it names our own origin - and
+     if we cannot tell what that is, the answer is no. An earlier version
+     fell back to `location.origin || ""`, and startsWith("") is true of
+     every string, so an unknown origin quietly sent the floor's token to
+     every host the rig was pointed at. */
+  const origin = (typeof location === "object" && location.origin) || null;
+  return !!origin && (u === origin || u.startsWith(origin + "/"));
+}
+
+function withToken(url, init) {
+  if (!RIG_TOKEN || !ours(url)) return init;
+  const opts = Object.assign({}, init);
+  opts.headers = Object.assign({}, opts.headers, {
+    Authorization: "Bearer " + RIG_TOKEN,
+  });
+  return opts;
+}
+
+/* Everything the rig sends goes through here, so a route added later
+   cannot quietly be the one that forgot to authenticate. */
+function api(url, init) {
+  return fetch(url, withToken(url, init));
+}
+
+// ----------------------------------------------------------- the journal
+
+/* The rig tells the operator, on the session-ended screen:
+
+       Downtime and episodes are queued for upload.
+
+   Until this existed that sentence was aspirational. The outbox was an
+   array, so a reload, a crash, a closed lid or a browser deciding to
+   discard a background tab took every event since boot with it - and the
+   screen said they were safe the whole time. A promise on a screen that
+   the code does not keep is worse than no promise.
+
+   The plan writes this as `/var/lib/rig/journal.ndjson`, flushed before
+   the UI advances, with the uploader a separate process reading from a
+   checkpoint. That is the Tauri shape and it is the right one. This is
+   the same property in the medium a browser actually has: IndexedDB,
+   which survives a reload, holds Blobs, and is measured in gigabytes
+   rather than the five megabytes of localStorage.
+
+   One honest difference. A browser cannot write synchronously, so "on
+   disk before the UI advances" becomes "handed to the store before the
+   network is touched". A hard power cut in the few milliseconds before
+   that transaction commits can still lose the last event. Closing that
+   window needs a synchronous write, which needs Tauri. Everything larger
+   than that window - which is every failure an operator will actually
+   have - is covered.
+
+   `window.RIG_JOURNAL` is the seam. Tauri injects a disk-backed one and
+   nothing below this line changes; the tests inject one that survives a
+   remount, which is what a reload is. */
+
+const memoryJournal = {
+  durable: false,
+  async load() { return { events: [], videos: [] }; },
+  async appendEvent() {},
+  async forgetEvents() {},
+  async putVideo() {},
+  async forgetVideo() {},
+};
+
+function browserJournal() {
+  const NAME = "rigs-rig-journal";
+  const VERSION = 1;
+  let opening = null;
+
+  function db() {
+    if (opening) return opening;
+    opening = new Promise((resolve, reject) => {
+      const req = indexedDB.open(NAME, VERSION);
+      req.onupgradeneeded = () => {
+        const d = req.result;
+        /* Keyed on what already makes each row unique. eventId is what
+           the server dedupes on, so re-appending the same event cannot
+           produce two of it here either. */
+        if (!d.objectStoreNames.contains("events")) {
+          d.createObjectStore("events", { keyPath: "eventId" })
+           .createIndex("rig", "rigId");
+        }
+        if (!d.objectStoreNames.contains("videos")) {
+          d.createObjectStore("videos", { keyPath: "key" })
+           .createIndex("rig", "rigId");
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return opening;
+  }
+
+  /* One transaction, resolved on complete rather than on the request -
+     a request that succeeded inside a transaction that then aborted did
+     not happen, and treating it as done would drop the only copy. */
+  function tx(store, mode, fn) {
+    return db().then((d) => new Promise((resolve, reject) => {
+      const t = d.transaction(store, mode);
+      let value;
+      const req = fn(t.objectStore(store));
+      if (req) req.onsuccess = () => { value = req.result; };
+      t.oncomplete = () => resolve(value);
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error || new Error("transaction aborted"));
+    }));
+  }
+
+  return {
+    durable: true,
+    async load(rigId) {
+      const events = (await tx("events", "readonly",
+        (s) => s.index("rig").getAll(rigId))) || [];
+      const videos = (await tx("videos", "readonly",
+        (s) => s.index("rig").getAll(rigId))) || [];
+      /* getAll comes back in key order, which is eventId - meaningless.
+         The uploader sends oldest first, so put them back in the order
+         they were filed. */
+      events.sort((a, b) => a.seq - b.seq);
+      return { events, videos };
+    },
+    appendEvent(ev) { return tx("events", "readwrite", (s) => s.put(ev)); },
+    forgetEvents(ids) {
+      return tx("events", "readwrite", (s) => { ids.forEach((id) => s.delete(id)); });
+    },
+    putVideo(item) { return tx("videos", "readwrite", (s) => s.put(item)); },
+    forgetVideo(key) { return tx("videos", "readwrite", (s) => s.delete(key)); },
+  };
+}
+
+let journal = memoryJournal;
+if (typeof window !== "undefined" && window.RIG_JOURNAL) {
+  journal = window.RIG_JOURNAL;
+} else if (typeof indexedDB !== "undefined" && indexedDB) {
+  try { journal = browserJournal(); } catch (e) { journal = memoryJournal; }
+}
+
+/* Writes are serialised. Two appends racing inside IndexedDB is safe, but
+   an append racing the forget that follows an acknowledgement is not: the
+   delete can land before the put and leave a row nobody will ever send. */
+let journalChain = Promise.resolve();
+let journalBroken = false;
+
+function onJournal(fn, what) {
+  journalChain = journalChain.then(fn).catch((e) => {
+    /* A journal that has stopped working must not stop the rig. The
+       operator keeps working and the events stay in memory; what changes
+       is that the screen may no longer promise they are safe. */
+    if (!journalBroken) {
+      journalBroken = true;
+      emitLog("journal_failed", "sessions",
+              what + " could not be written: " + String((e && e.message) || e));
+    }
+  });
+  return journalChain;
+}
+
+/* Read back whatever the last boot did not finish sending. */
+async function recoverJournal() {
+  let held;
+  try {
+    held = await journal.load(RIG_ID);
+  } catch (e) {
+    journalBroken = true;
+    return { events: 0, videos: 0 };
+  }
+  const events = (held && held.events) || [];
+  const videos = (held && held.videos) || [];
+
+  if (events.length) {
+    /* In front of anything filed this boot, because they are older. */
+    outbox.unshift(...events);
+    /* seq must not go backwards or repeat: it is the cursor the server
+       reads. alignSeq only ever raises it, so doing this first is safe. */
+    const highest = events.reduce((m, e) => Math.max(m, e.seq || 0), -1);
+    if (highest + 1 > seq) seq = highest + 1;
+  }
+  videos.forEach((v) => {
+    if (v && v.blob) videoQueue.push({ episodeId: v.episodeId, camera: v.camera, blob: v.blob });
+  });
+
+  /* Reported, not logged. boot() clears the drawer log and then files
+     the shift check, so a line written here is wiped a moment later and
+     the operator never sees that there is a backlog at all. */
+  return { events: events.length, videos: videos.length };
+}
+
+/* For the tests and the drawer. */
+window.rigJournal = () => ({ durable: !!journal.durable, broken: journalBroken });
+
+// ---------------------------------------------------------- the uploader
+
+/* Events reach the server from here, and the whole design is one idea:
+   the rig keeps them until the server says it has them, and never stops
+   trying. Ingest dedupes on (rigId, eventId), so re-sending a batch is
+   free and asking "did that land?" is unnecessary. That is what keeps
+   this short.
+
+   Nothing here blocks the operator. A rig with no network keeps working
+   and keeps filing; the outbox simply grows until the network returns. */
+
+const UPLOAD_BATCH = 100;
+const UPLOAD_IDLE_MS = 3000;     // how often to look when there is nothing wrong
+const UPLOAD_BACKOFF_MS = 1000;  // doubled per consecutive failure
+const UPLOAD_BACKOFF_MAX = 60000;
+
+const outbox = [];               // filed, not yet acknowledged
+const rejected = [];             // refused by the server: a bug, not a retry
+let uploadFailures = 0;
+let uploading = false;
+let uploadState = "idle";        // idle | sending | offline | rejected
+let uploadError = null;          // why the last attempt failed, for the drawer
+
+/* A rig that restarts begins counting from zero again, which would make
+   `seq` go backwards - and seq is the cursor the server reads to know
+   what it already holds. So on boot the rig asks what the server has and
+   carries on from there. This is the cursor protocol used for the reason
+   it exists, rather than only after a network drop. */
+async function alignSeq() {
+  try {
+    const r = await api("/api/rigs/" + encodeURIComponent(RIG_ID) + "/cursor",
+                        { cache: "no-store" });
+    if (!r.ok) return false;
+    const { seq: held } = await r.json();
+    if (typeof held === "number" && held + 1 > seq) seq = held + 1;
+    return true;
+  } catch (e) {
+    return false;   // no server: seq starts at 0 and aligns when one appears
+  }
+}
+
+async function flush() {
+  if (uploading || !outbox.length) return;
+  uploading = true;
+  const batch = outbox.slice(0, UPLOAD_BATCH);
+  try {
+    const r = await api("/api/rigs/" + encodeURIComponent(RIG_ID) + "/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events: batch }),
+    });
+
+    if (r.ok) {
+      outbox.splice(0, batch.length);
+      /* Only now. The server has them, so this rig no longer needs to. */
+      onJournal(() => journal.forgetEvents(batch.map((e) => e.eventId)),
+                "an acknowledgement");
+      uploadFailures = 0;
+      uploadState = outbox.length ? "sending" : "idle";
+    } else if (r.status === 422) {
+      /* The server refused the batch outright. Retrying will refuse it
+         again forever and the outbox would never drain, so the batch is
+         set aside rather than dropped: the floor keeps working, the
+         events are still in memory, and the drawer says so. A rig filing
+         events its own schema rejects is a bug in the rig, and it should
+         be loud rather than silent. */
+      rejected.push(...outbox.splice(0, batch.length));
+      /* Dropped from the journal too. A batch the server refuses will be
+         refused again on every boot for ever, and a journal that reloads
+         events nobody will accept never drains. They stay in memory and
+         in the log, which is where a bug in this rig belongs. */
+      onJournal(() => journal.forgetEvents(batch.map((e) => e.eventId)),
+                "a rejection");
+      uploadState = "rejected";
+      emitLog("upload_rejected", "sessions",
+              batch.length + " events refused by the server — see the log");
+    } else {
+      throw new Error("HTTP " + r.status);
+    }
+  } catch (e) {
+    uploadFailures += 1;
+    uploadState = "offline";
+    /* Kept and shown. A rig that cannot reach the server is a rig whose
+       events nobody has, and "offline" without a reason is the kind of
+       thing that costs an afternoon on a floor. */
+    uploadError = String((e && e.message) || e);
+    if (uploadFailures === 1) {
+      emitLog("upload_failed", "sessions", uploadError);
+    }
+  } finally {
+    uploading = false;
+    showMode();
+  }
+}
+
+function uploadDelay() {
+  if (!uploadFailures) return UPLOAD_IDLE_MS;
+  return Math.min(UPLOAD_BACKOFF_MS * Math.pow(2, uploadFailures - 1), UPLOAD_BACKOFF_MAX);
+}
+
+let uploadTimer = null;
+function startUploader() {
+  if (uploadTimer) return;
+  const tick = async () => {
+    await flush();
+    uploadTimer = setTimeout(tick, uploadDelay());
+  };
+  uploadTimer = setTimeout(tick, UPLOAD_IDLE_MS);
+}
+
+/* For the tests and the drawer: what the uploader is holding. */
+window.rigOutbox = () => ({
+  queued: outbox.length,
+  rejected: rejected.length,
+  failures: uploadFailures,
+  state: uploadState,
+  error: uploadError,
+  nextSeq: seq,
+});
+window.rigFlush = flush;
+
+// -------------------------------------------------------- the video path
+
+/* Three steps and one rule, the same four lines the server is written to:
+
+     1. the rig finishes a take
+     2. it asks where to put the bytes
+     3. it puts them
+     4. it reports the checksum, and the server verifies what landed
+
+   Only then may the rig let go of its copy.
+
+   Step 4 is the whole design. Everything before it is a retry - safe to
+   repeat, safe to interrupt, safe to run twice - and this is the one
+   place that must never be optimistic, because past it the only other
+   copy is gone.
+
+   There is no camera behind a browser tab, so `videoSource` is the seam:
+   it is handed an episode and a camera and returns a Blob, or null when
+   there is nothing to send. A page with no source queues nothing, which
+   is why running the demo does not post fabricated bytes and does not
+   pollute what /floor/video measures. Tauri and RODA-RS supply a real one
+   later, and nothing below this line changes when they do. */
+
+const VIDEO_BACKOFF_MS = 2000;
+const VIDEO_BACKOFF_MAX = 60000;
+
+let videoSource = null;
+const videoQueue = [];           // { episodeId, camera, blob }
+const videoSent = [];            // keys the server has released
+let videoSending = false;
+let videoFailures = 0;
+let videoState = "idle";         // idle | sending | waiting | offline
+let videoError = null;
+
+/* Cameras are named for a person on screen ("Wrist L") and for a path in
+   the store ("wrist-l"). The key has to survive being a filename. */
+function camSlug(name) {
+  return String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+async function sha256Hex(buf) {
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/* Called when a take is saved. Queued per camera, because that is how the
+   store keys them and how a partial upload stays partial rather than
+   costing the whole episode. */
+function queueVideo(episodeId) {
+  if (!videoSource || !episodeId) return;
+  CAMERAS.forEach((cam) => {
+    const blob = videoSource(episodeId, camSlug(cam));
+    if (!blob) return;
+    const camera = camSlug(cam);
+    videoQueue.push({ episodeId, camera, blob });
+    /* The take outlives the tab. Video is the one thing here with no
+       second copy anywhere until the server confirms it. */
+    onJournal(() => journal.putVideo({
+      key: episodeId + "/" + camera, rigId: RIG_ID, episodeId, camera, blob,
+    }), "a video");
+  });
+}
+
+async function sendVideo(item) {
+  const base = "/api/rigs/" + encodeURIComponent(RIG_ID) +
+               "/episodes/" + encodeURIComponent(item.episodeId);
+  const json = { "Content-Type": "application/json" };
+
+  const asked = await api(base + "/video:presign", {
+    method: "POST", headers: json,
+    body: JSON.stringify({ camera: item.camera }),
+  });
+  if (asked.status === 404) {
+    /* The episode is in the ledger but has not been projected into a row
+       yet. Ordinary: the rig saves a take and reaches here in the same
+       second, and projection runs on its own timer. Waiting is correct -
+       treating it as a failure would give up on a take that is about to
+       exist. */
+    const e = new Error("episode not projected yet");
+    e.waiting = true;
+    throw e;
+  }
+  if (!asked.ok) throw new Error("presign HTTP " + asked.status);
+  const where = await asked.json();
+
+  const buf = await item.blob.arrayBuffer();
+  /* where.url is absolute for a presigned upload and relative for the
+     gateway model; `api` adds the token only to the second. */
+  const put = await api(where.url, { method: where.method || "PUT", body: buf });
+  if (!put.ok) throw new Error("put HTTP " + put.status);
+
+  const said = await api(base + "/video:complete", {
+    method: "POST", headers: json,
+    body: JSON.stringify({
+      camera: item.camera,
+      sha256: await sha256Hex(buf),
+      bytes: buf.byteLength,
+    }),
+  });
+  /* 409 is the server saying what landed is not what was sent. The bytes
+     are still here, so this goes round again from the PUT rather than
+     being set aside - a truncated upload is the commonest real failure
+     and it is exactly the one a retry fixes. */
+  if (!said.ok) throw new Error("complete HTTP " + said.status);
+
+  const result = await said.json();
+  if (!result.safeToDelete) throw new Error("the server did not release the copy");
+  return result;
+}
+
+async function flushVideo() {
+  if (videoSending || !videoQueue.length) return;
+  videoSending = true;
+  const item = videoQueue[0];
+  try {
+    const result = await sendVideo(item);
+    videoQueue.shift();          // only now: the server has verified it
+    onJournal(() => journal.forgetVideo(item.episodeId + "/" + item.camera),
+              "a confirmed video");
+    videoSent.push(result.key);
+    videoFailures = 0;
+    videoState = videoQueue.length ? "sending" : "idle";
+    videoError = null;
+  } catch (e) {
+    videoFailures += 1;
+    videoState = e && e.waiting ? "waiting" : "offline";
+    videoError = String((e && e.message) || e);
+    if (videoFailures === 1 && !(e && e.waiting)) {
+      emitLog("video_upload_failed", "episodes", videoError);
+    }
+  } finally {
+    videoSending = false;
+  }
+}
+
+function videoDelay() {
+  if (!videoFailures) return VIDEO_BACKOFF_MS;
+  return Math.min(VIDEO_BACKOFF_MS * Math.pow(2, videoFailures - 1), VIDEO_BACKOFF_MAX);
+}
+
+let videoTimer = null;
+function startVideoUploader() {
+  if (videoTimer) return;
+  const tick = async () => {
+    await flushVideo();
+    videoTimer = setTimeout(tick, videoDelay());
+  };
+  videoTimer = setTimeout(tick, VIDEO_BACKOFF_MS);
+}
+
+/* For the tests and the drawer. `setVideoSource` is how a recorder is
+   attached - the browser has none, a harness supplies a fake one, and
+   Tauri will supply a real one. */
+window.setVideoSource = (fn) => { videoSource = fn; };
+window.rigVideo = () => ({
+  queued: videoQueue.length,
+  sent: videoSent.slice(),
+  failures: videoFailures,
+  state: videoState,
+  error: videoError,
+});
+window.rigFlushVideo = flushVideo;
+
+/* The uploader writes to the operator's log without filing an event.
+   A refused batch is a fact about this rig's software, not about the
+   floor, and it has no business in the ledger. */
+function emitLog(event, bucket, detail) {
+  logLines.push({ at: clock(S ? S.t : 0), event, bucket, detail });
+  const el = document.getElementById("log");
+  if (el) {
+    el.innerHTML = logLines.slice(-40).map((l) =>
+      `<p><time>${l.at}</time><b>${l.event} <span class="bucket">→ ${l.bucket}</span><br>${l.detail}</b></p>`).join("");
+  }
 }
 
 let toastTimer;
@@ -1990,7 +3212,7 @@ async function loadPayload(rigId) {
   // to the co-located schedule.json (still supported for a plain static
   // deploy) and then to a locally generated schedule so the demo runs.
   try {
-    const r = await fetch("/api/rigs/" + encodeURIComponent(id) + "/schedule.json", { cache: "no-store" });
+    const r = await api("/api/rigs/" + encodeURIComponent(id) + "/schedule.json", { cache: "no-store" });
     if (r.ok) { SOURCE = "server"; return await r.json(); }
   } catch (e) { /* server not up */ }
   try {
@@ -2019,6 +3241,14 @@ function modeLine() {
   else if (SOURCE === "baked") bits.push("demo build");
   if (DEMO) bits.push("demo clock " + speed + "×");
   else if (!live) bits.push("shift clock " + speed + "×");
+  /* A rig that cannot reach the server is still a working rig - it keeps
+     recording and keeps filing - but it is not a rig whose events anyone
+     has. Saying so is the same rule as the rest of this line. */
+  if (uploadState === "offline" && outbox.length) {
+    bits.push(outbox.length + " events queued");
+  } else if (rejected.length) {
+    bits.push(rejected.length + " events refused");
+  }
   return bits.join(" · ");
 }
 
@@ -2055,7 +3285,24 @@ addEventListener("resize", () => { lastViewKey = null; render(); });
 
 async function start(rigId) {
   applyPayload(await loadPayload(rigId));
+  /* Before anything is filed, and before the cursor is read: whatever the
+     last boot did not finish sending is still owed to the server, and its
+     sequence numbers have to be accounted for before new ones are minted. */
+  const owed = await recoverJournal();
+  // Ask what the server already holds before filing anything, so `seq`
+  // carries on rather than restarting and going backwards.
+  await alignSeq();
   boot(location.hash.slice(1));   // boot() reads the turn in progress back itself
+  /* After boot, which clears the log. A backlog the operator cannot see
+     is the same as no backlog from where they are standing. */
+  if (owed && (owed.events || owed.videos)) {
+    emitLog("journal_recovered", "sessions",
+            owed.events + " events and " + owed.videos +
+            " videos were still waiting from before the last restart");
+  }
+  startUploader();
+  startVideoUploader();
+  startResync();
 }
 
 /* Demo affordance: watch any rig on the floor. A real rig is only ever
@@ -2074,6 +3321,10 @@ window.setLiveClock = function (on) {
   toast(on ? "Following the wall clock" : "Demo clock");
 };
 
-start();
+/* Chained, not called beside it. `start()` is async - on a real rig the
+   payload arrives over the network - and it is what builds the state the
+   screen is drawn from. Asked in parallel, the health answer routinely
+   won the race and replaced a screen that did not exist yet. */
+start(CONFIGURED_RIG).then(confirmIdentity);
 requestAnimationFrame(tick);
 </script>

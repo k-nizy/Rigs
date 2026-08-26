@@ -1,0 +1,17 @@
+{
+  "eventId": "00000000-0000-4000-8000-000000000009",
+  "seq": 6,
+  "at": "2026-08-24T09:09:02.881Z",
+  "rigId": "RIG-03",
+  "shiftDate": "2026-08-24",
+  "shiftLabel": "Morning",
+  "turnFrom": "09:00",
+  "operatorId": "op-a4",
+  "bucket": "rig_downtime_events",
+  "event": "rig_down",
+  "data": {
+    "issue": "Other",
+    "needsManager": true,
+    "chargedTo": "rig"
+  }
+}

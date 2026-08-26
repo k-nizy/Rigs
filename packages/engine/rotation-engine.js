@@ -210,12 +210,28 @@
       mode: cfg.mode,
       shift: shiftById(cfg.shift),
       date: cfg.date,
+      tz: cfg.tz || localZone(),
       nBlocks: nBlocks,
       groups: planned,
     };
   }
 
   // --------------------------------------------------------------- time
+
+  /* The floor's own zone, as an IANA name.
+   *
+   * Every "HH:MM" in a payload is wall-clock time on the floor, and a
+   * reader in another zone - a server keeping UTC, say - cannot recover
+   * that from the string. So it travels with the schedule instead of
+   * being assumed at both ends, which is the only way the desk, the rig
+   * and the backend can agree on when a turn starts. */
+  function localZone() {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    } catch (e) {
+      return "UTC";
+    }
+  }
 
   function hhmm(mins) {
     var h = Math.floor(mins / 60) % 24, m = mins % 60;
@@ -413,6 +429,7 @@
         date: plan.date,
         start: hhmm(plan.shift.start),
         end: hhmm(shiftEnd(plan)),
+        tz: plan.tz || localZone(),
       },
       blockMinutes: plan.blockMin,
       rotation: plan.mode,
@@ -434,6 +451,120 @@
         var endsIn = (to - t + 1440) % 1440;
         return { turn: turn, minutesLeft: endsIn === 0 ? payload.blockMinutes : endsIn };
       }
+    }
+    return null;
+  }
+
+  /* ------------------------------------------------ which shift is running
+
+     A payload covers ONE shift. A rig that is handed a whole day, or a
+     server holding three payloads per rig, has to answer "which of these
+     is running right now" - and that answer must be a COMPARISON, never a
+     calculation. The desk already wrote the window into the payload:
+     `shift.date`, `start`, `end` and `tz`. This reads it back.
+
+     The distinction is the founding rule of the system. Working out when
+     a shift runs, rather than reading what the desk said, would be a
+     second opinion about the schedule - and the first one able to
+     disagree with the desk that made it. */
+
+  /* Minutes that `tz` is ahead of UTC at a given instant. Uses the
+     formatter to render that instant in the zone, then reads the wall
+     clock back - the standard way to get at the tz database without
+     shipping one. */
+  function zoneOffset(utcMs, tz) {
+    var dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+    var p = {};
+    dtf.formatToParts(new Date(utcMs)).forEach(function (x) { p[x.type] = x.value; });
+    var asUTC = Date.UTC(+p.year, +p.month - 1, +p.day,
+                         (+p.hour) % 24, +p.minute, +p.second);
+    return asUTC - utcMs;
+  }
+
+  /* A wall-clock time on the floor, as an instant. Guess, then correct -
+     the second pass matters on the two days a year a shift starts inside
+     a daylight-saving jump. */
+  function floorInstant(y, mo, d, hh, mi, tz) {
+    var guess = Date.UTC(y, mo - 1, d, hh, mi);
+    var off = zoneOffset(guess, tz);
+    var ms = guess - off;
+    var again = zoneOffset(ms, tz);
+    return again === off ? ms : guess - again;
+  }
+
+  /* The half-open window [start, end) this payload covers, in real time.
+     Null if the payload does not carry one - malformed rather than
+     malicious, but it must not be treated as covering everything. */
+  function shiftWindow(payload) {
+    var s = payload && payload.shift;
+    if (!s) return null;
+    var d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s.date || ""));
+    var t = /^(\d{2}):(\d{2})$/.exec(String(s.start || ""));
+    if (!d || !t) return null;
+
+    var startMin = (+t[1]) * 60 + (+t[2]);
+    var mins = SHIFT_MINUTES;
+    var e = /^(\d{2}):(\d{2})$/.exec(String(s.end || ""));
+    if (e) {
+      // The desk is the authority on length, not the constant here.
+      mins = ((((+e[1]) * 60 + (+e[2])) - startMin) + 1440) % 1440;
+      if (mins === 0) mins = 1440;          // a full round trip, not zero
+    }
+
+    var start = floorInstant(+d[1], +d[2], +d[3], +t[1], +t[2], s.tz || "UTC");
+    return { start: start, end: start + mins * 60000 };
+  }
+
+  var asMs = function (at) {
+    if (at == null) return Date.now();
+    if (at instanceof Date) return at.getTime();
+    return typeof at === "number" ? at : Date.parse(at);
+  };
+
+  /* The wall-clock minute on the FLOOR, from a payload and an instant.
+
+     Every "HH:MM" in a payload is wall-clock time where the rigs are, and
+     the desk writes the zone in beside them. Reading them against the
+     machine's own clock is how this system spent a day believing no turn
+     was in progress on any of twelve rigs - the backend was fixed for
+     exactly that, and the rig was left reading `new Date().getHours()`.
+
+     On a properly provisioned floor the two agree and this changes
+     nothing. It matters when they do not: a rig imaged in UTC standing on
+     a floor at UTC+2 is two hours out, and what it gets wrong is which
+     operator is sitting at it. */
+  function minutesOnFloor(payload, at) {
+    var ms = asMs(at);
+    var tz = payload && payload.shift && payload.shift.tz;
+    if (!tz) {
+      // No zone in the payload - older pushes, and the local demo.
+      var here = new Date(ms);
+      return here.getHours() * 60 + here.getMinutes() + here.getSeconds() / 60;
+    }
+    var there = new Date(ms + zoneOffset(ms, tz));
+    return there.getUTCHours() * 60 + there.getUTCMinutes() + there.getUTCSeconds() / 60;
+  }
+
+  function coversAt(payload, at) {
+    var w = shiftWindow(payload);
+    if (!w) return false;
+    var ms = asMs(at);
+    return ms >= w.start && ms < w.end;
+  }
+
+  /* The one of these payloads whose own window contains `at`, or null.
+     Deliberately does not fall back: what to show when no shift is
+     running is the caller's decision, and hiding it here would let a
+     finished schedule look like a live one. */
+  function inForce(payloads, at) {
+    if (!Array.isArray(payloads)) return null;
+    var ms = asMs(at);
+    for (var i = 0; i < payloads.length; i++) {
+      if (coversAt(payloads[i], ms)) return payloads[i];
     }
     return null;
   }
@@ -461,6 +592,10 @@
 
     rigPayload: rigPayload,
     whoIsOn: whoIsOn,
+    shiftWindow: shiftWindow,
+    coversAt: coversAt,
+    minutesOnFloor: minutesOnFloor,
+    inForce: inForce,
 
     hhmm: hhmm,
     blockStart: blockStart,

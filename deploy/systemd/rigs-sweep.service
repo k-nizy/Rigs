@@ -1,0 +1,22 @@
+[Unit]
+Description=Rigs worker - absence detection
+After=network-online.target postgresql.service rigs-api.service
+PartOf=rigs.target
+
+[Service]
+Type=exec
+User=rigs
+Group=rigs
+WorkingDirectory=/srv/rigs/backend
+EnvironmentFile=/etc/rigs/rigs.env
+ExecStart=/srv/rigs/backend/.venv/bin/python -m workers.sweep_floor
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/rigs/spool
+
+[Install]
+WantedBy=rigs.target

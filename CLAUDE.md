@@ -76,6 +76,14 @@ The engine still implements `rotate` and other block sizes and they are
 still tested — the desk never asks for them. If the format has to
 change, that is `rotation-desk-v2`, not a setting.
 
+`packages/engine/rotate.test.js` is where "still tested" is made true.
+It asks rotate the same questions the reference sheet asks of hold: the
+6h + 60 + 60 budget, every rig manned by exactly one person in every
+block, one turn length with no stubs, an operator who actually moves and
+sees all three rigs, and a payload that reads back the same answer. It
+also pins the claim above about block size — 15×4 and 20×3 come out as
+the same schedule, asserted rather than assumed.
+
 `packages/engine/reference-sheet.test.js` is the guardrail: the sheet
 transcribed by hand as data (which operator is on which rig in all 32
 blocks, who is off and whether it is written Break or Think), asserted
@@ -154,7 +162,48 @@ checklist → handover → recording → review → resetting → (loop)
   episode to land before rotating.
 - The event log tags each event with its backend bucket (`episodes`,
   `rig_shift_checks`, `rig_downtime_events`, `rig_productivity_blocks`,
-  `sessions`). Nothing is persisted yet.
+  `sessions`). These are filed as real envelopes, journalled to IndexedDB
+  before the network is touched, and uploaded to `backend/`.
+- The rig has no login and never will: a token authenticates the machine,
+  and the operator authenticates nothing.
+- **The machine does not choose which rig it is; the service tells it.**
+  `index.html` loads `rig-config.js` by a relative path and the kiosk
+  loads the page from the server, so a per-machine file placed on the rig
+  is never read - the browser asks the server for its copy. That is how
+  twelve machines came to load one blank file and all became the same
+  rig, and it is invisible from every angle: from the service's side,
+  twelve rigs reporting as one is exactly what one very busy rig looks
+  like. So the service answers that path per caller, from `RIG_ADDRESSES`.
+- A rig the floor cannot place **refuses to work**. It says it has no
+  identity, names the address it called from, offers no pedal, and throws
+  away anything it filed before it found out. Same trade as Standby for
+  an expired sheet: idle time is loud, cheap and recoverable, and work
+  filed under the wrong rig is silent, permanent, and uncorrectable.
+
+## The return arrow (built)
+
+`backend/` is the other half: a FastAPI service on Postgres, laid out in
+the platform team's convention so `core/` and `services/rigs/` lift into
+their tree unmodified. Its own README covers it; three properties are
+worth knowing here because nothing in a route list shows them.
+
+**The ledger is the system.** `POST /api/rigs/:rigId/events` appends to an
+append-only table and every other table is *derived* from it. Replay is
+the property the design is arranged around.
+
+**Sending the same events twice is safe.** Unique on `(rigId, eventId)`,
+so a rig that loses its connection mid-batch retries blind and a resend
+reports `accepted: 0`. `GET .../cursor` tells it where it got to.
+
+**Measurements, not conclusions.** No percentage is stored. A productivity
+block keeps four seconds columns and efficiency is computed at read time
+from one definition, so correcting the formula corrects every shift ever
+recorded.
+
+The service stores the pushed payload opaque and reads it back. It never
+derives a rotation - that is the founding invariant, and a Python
+re-implementation would be a third answer and the first one that could
+silently disagree.
 
 ## The push (built)
 
@@ -178,18 +227,64 @@ falls back to a co-located `schedule.json` (still supported for a plain
 static deploy), and finally generates locally so the demo runs even with
 no server.
 
+## Running a floor day to day
+
+A payload covers **one shift**, and a push covers **one calendar day** -
+midnight to midnight, three shifts, twelve rigs, thirty six sheets. So
+the rule for whoever is managing the floor is one line:
+
+> Push once a day. Any time that day. Push again whenever the roster
+> changes.
+
+Timing does not affect coverage: a push made at nine in the morning and
+one made at four in the afternoon both cover the whole of that day,
+including the hours already gone. What it does affect is content -
+whatever is on the desk when the button is pressed is what the floor
+runs, and it reaches every rig within thirty seconds.
+
+The part that catches people is that **a Night shift belongs to the date
+it starts on**. Night runs 00:00-08:00, so the night that *follows*
+Tuesday is not on Tuesday's sheet; it starts at 00:00 on Wednesday and
+lives on Wednesday's. A floor that is only ever pushed in the morning
+therefore has no schedule for the night crew who arrive at midnight.
+
+When that happens the rigs **stay put**. They show Standby and refuse to
+start a take. That is deliberate and it is the important decision in this
+whole area, so it is worth being explicit about why.
+
+`whoIsOn()` matches on the time of day and nothing else, which means an
+expired sheet still cheerfully names somebody at half past midnight - a
+different person, on a shift that ended a day earlier. A rig that
+believed it would file every take under the wrong operator, against the
+wrong shift, on the wrong day, and *nothing downstream could tell*: the
+episode is well formed, the operator exists, the score is real. So the
+rig checks the window the desk wrote before trusting the sheet, and
+stops when it does not cover now.
+
+The trade is deliberate. Standby costs idle time, which is loud, cheap
+and recoverable - a rig with nothing to run asks for a schedule every ten
+seconds, so it starts working seconds after somebody pushes. A misfiled
+take costs provenance, which is silent, permanent and poisons the
+training data. There is no correction mechanism in the ledger. Refuse
+rather than guess, which is the same instinct as rejecting a bad push in
+full and storing measurements rather than percentages.
+
+Because the floor depends on a person remembering, the desk has to be
+honest about it. When nothing it holds covers the current minute the Live
+badge reads **"Nothing scheduled for now"** in the warning colour rather
+than "On the floor", so the one screen a manager would check to find out
+cannot quietly reassure them.
+
 ## What the reference sheet does not ask for
 
 The sheet defines the scope. It does not speak to:
 
-- **Persistence of the rig event log.** Buckets are named in `emit()`
-  (`episodes`, `rig_shift_checks`, `rig_downtime_events`,
-  `rig_productivity_blocks`, `sessions`) but nothing writes them.
 - **Crew changeover at shift boundaries.** The engine hard-codes three
   8-hour shifts; the rig treats each boot as the start of a shift. No
   handover-window vs. cold-takeover decision has been made.
-- **Auth, accounts, permissions.** The rig has no login by design; the
-  desk has no gate.
+- **Accounts and permissions for people.** The rig authenticates as a
+  machine and that is settled; who may read the desk, and whether anyone
+  reviews the scores an operator gives their own takes, is not.
 
 These are open questions to answer when the product is ready, not
 implicit requirements to fill in.
@@ -199,9 +294,27 @@ implicit requirements to fill in.
 - Run everything (server + push): `npm run serve`  →  `http://127.0.0.1:8765/`
 - Static-only fallback (no push): `./serve.sh` (python)
 - Rebuild the two single-file dists: `./build.sh` (or `npm run build`)
-- Run the tests: `npm test`  (engine + the reference sheet + schema +
-  server end-to-end + both screens, headless)
+- Run the tests: `npm test`  (engine + the reference sheet + rotate +
+  schema + server end-to-end + both screens, headless)
 - The desk is at `/rotation-desk-v1/`, the rig at `/apps/rig/`
+
+`npm test` is the JavaScript half and nothing else. The rest has to be
+run where it lives:
+
+```
+npm test                                       the screens, engine, schema
+cd backend && pytest                           ledger, projection, floor, video
+cd backend && lint-imports                     the three layering contracts
+cd backend && node tests/e2e_rig_to_floor.js   the seam, against a live service
+```
+
+`.github/workflows/ci.yml` runs all four on every push, plus the two
+things nobody runs by hand: that the committed dists still match their
+sources, and that the migrations apply to an empty database, come back
+down, and still agree with the models. That last one matters because the
+test suite builds its schema from the models while a deployment builds
+it from the migrations — a green suite on its own cannot tell you those
+two have not drifted apart.
 
 Before changing anything in `packages/engine/`, run the tests. Before
 changing the payload shape, remember it is a contract between three

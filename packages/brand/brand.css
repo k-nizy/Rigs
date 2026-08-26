@@ -1,0 +1,171 @@
+/* =====================================================================
+ * Verlet Robotics — one design system, three apps.
+ *
+ * The landing page, the desk and the rig each had their own palette and
+ * their own type stack, which meant three places to change a colour and
+ * three chances to forget one. This is the single place now, and it
+ * lives in packages/ for the same reason the engine does: imported by
+ * things that ship, not shipped itself.
+ *
+ * Taken from verlet.co: DM Serif Display for anything that announces
+ * itself, DM Sans for everything a person reads, JetBrains Mono for
+ * anything a machine produced — an id, a timestamp, a rig name. That
+ * last one is not decoration. On these screens the difference between
+ * RIG-01 and RIG-07 has to survive being read quickly, and a mono
+ * typeface is what keeps a column of them scannable.
+ *
+ * One rule the rig bends. Its screen is read from two metres away by
+ * somebody with their hands full, and CLAUDE.md fixes that constraint
+ * before any of this: large type, high contrast, no colour-coding. So
+ * the rig takes the typefaces and the mark and keeps its own contrast.
+ * Family resemblance, not uniform.
+ * ===================================================================== */
+
+/* Light: the palette as verlet.co uses it. */
+:root {
+  --v-ground:  #f4f4f6;
+  --v-panel:   #ffffff;
+  --v-sunk:    #ececef;   /* wells, table stripes, anything set back */
+  --v-ink:     #1c1c1e;
+  --v-ink-2:   #48484a;
+  --v-muted:   #8e8e93;
+  --v-line:    #e0e0e5;
+  --v-line-2:  #c7c7cc;
+  --v-accent:  #d64d7a;   /* the one saturated colour; use it sparingly */
+  --v-accent-ink: #ffffff;
+  /* The accent at low alpha. A token because box-shadow cannot fade a
+     colour on its own, and the alternative is hard-coding the accent
+     somewhere it will not follow the theme. */
+  --v-accent-glow: rgba(214, 77, 122, 0.55);
+
+  /* Kept from the apps' own vocabulary rather than replaced. The desk
+     tells break from think from work at a glance, and that is a job
+     colour does well and the brand palette does not do at all. */
+  --v-work:    #2f7d4f;
+  --v-break:   #b06d00;
+  --v-think:   #1f6f9a;
+  --v-down:    #b3261e;
+
+  --v-radius:  8px;
+  --v-radius-sm: 4px;
+
+  --v-display: "DM Serif Display", Georgia, "Times New Roman", serif;
+  --v-sans:    "DM Sans", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --v-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Display type on the site is set tight. At small sizes it is not. */
+  --v-display-tracking: -0.025em;
+}
+
+/* Dark, for the screens that are looked at all night. verlet.co is
+   light-only, so these are derived rather than copied: the same hues,
+   the accent lifted because #d64d7a on near-black is muddy. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --v-ground:  #0e0e10;
+    --v-panel:   #17171a;
+    --v-sunk:    #1e1e22;
+    --v-ink:     #f2f2f4;
+    --v-ink-2:   #babac0;
+    --v-muted:   #8e8e93;
+    --v-line:    #26262b;
+    --v-line-2:  #3a3a42;
+    --v-accent:  #e8688f;
+    --v-accent-ink: #1c1c1e;
+    --v-accent-glow: rgba(232, 104, 143, 0.55);
+
+    --v-work:    #5fbf87;
+    --v-break:   #e0a33a;
+    --v-think:   #6bb3d8;
+    --v-down:    #f2685e;
+  }
+}
+
+:root[data-theme="dark"] {
+  --v-ground:  #0e0e10;
+  --v-panel:   #17171a;
+  --v-sunk:    #1e1e22;
+  --v-ink:     #f2f2f4;
+  --v-ink-2:   #babac0;
+  --v-muted:   #8e8e93;
+  --v-line:    #26262b;
+  --v-line-2:  #3a3a42;
+  --v-accent:  #e8688f;
+  --v-accent-ink: #1c1c1e;
+  --v-accent-glow: rgba(232, 104, 143, 0.55);
+
+  --v-work:    #5fbf87;
+  --v-break:   #e0a33a;
+  --v-think:   #6bb3d8;
+  --v-down:    #f2685e;
+}
+
+/* ------------------------------------------------------------ the mark */
+
+/* A mask rather than an <img> or three inlined copies.
+ *
+ * <img> cannot take the ink colour, so it would need a second file for
+ * dark mode. Inlining the SVG in each page means three copies of the
+ * same path in three apps, and three copies drift. A mask is one file,
+ * painted with `currentColor`, so it is correct in both themes and in
+ * every app from a single source.
+ *
+ * url() here resolves against this stylesheet, not the page that loads
+ * it, so the same rule works from /, /apps/rig/ and /rotation-desk-v1/. */
+.v-mark {
+  display: inline-block;
+  width: 1.6em;
+  height: 1.6em;
+  flex: none;
+  background-color: currentColor;
+  -webkit-mask: url("logo.svg") center / contain no-repeat;
+  mask: url("logo.svg") center / contain no-repeat;
+}
+
+.v-wordmark {
+  font-family: var(--v-display);
+  font-weight: 700;
+  letter-spacing: var(--v-display-tracking);
+  color: var(--v-ink);
+  white-space: nowrap;
+}
+
+.v-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  text-decoration: none;
+  color: inherit;
+}
+
+/* --------------------------------------------------------- small parts */
+
+.v-eyebrow {
+  font-family: var(--v-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--v-muted);
+}
+
+.v-btn {
+  font-family: var(--v-sans);
+  font-weight: 500;
+  font-size: 0.875rem;
+  padding: 0.55rem 1rem;
+  border-radius: var(--v-radius);
+  border: 1px solid transparent;
+  background: var(--v-accent);
+  color: var(--v-accent-ink);
+  text-decoration: none;
+  cursor: pointer;
+  display: inline-block;
+}
+.v-btn:hover { filter: brightness(1.06); }
+.v-btn:focus-visible { outline: 2px solid var(--v-ink); outline-offset: 2px; }
+
+.v-btn--quiet {
+  background: transparent;
+  color: var(--v-ink);
+  border-color: var(--v-line-2);
+}

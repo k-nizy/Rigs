@@ -3,107 +3,328 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Teleop Floor</title>
+<title>Teleop Stations | Verlet Robotics</title>
+<meta name="description" content="The desk builds the shift. Every rig runs it.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="packages/brand/brand.css">
 <style>
+/* =====================================================================
+ * A control surface, not a brochure.
+ *
+ * The thing this page is the front door to is a floor: twelve machines,
+ * three shifts, a schedule drawn as a grid. So it is built like an
+ * instrument rather than a landing page - a graph ruling underneath
+ * everything, hairlines instead of shadows, panels with header strips,
+ * and one signal colour used only where something is live or actionable.
+ *
+ * The accent is the floor's own amber. It was already in this repo,
+ * described in the desk's stylesheet as "the rig-floor signal yellow",
+ * and it is the honest colour for this product.
+ *
+ * Type: Space Grotesk is technical without being a novelty, Inter is for
+ * reading, JetBrains Mono is for anything a machine produced. Numbers and
+ * ids are always mono - on these screens RIG-01 and RIG-07 have to stay
+ * apart at a glance.
+ * ===================================================================== */
+
 :root {
-  --ground: #f4f6f7; --panel: #ffffff; --ink: #0f1418; --ink-2: #414c57;
-  --muted: #6f7b87; --line: #dbe1e7; --line-2: #bfc8d1; --accent: #b06d00;
-  --desk: #1f6f9a; --rig: #c2571b;
+  --bg:        #f7f7f4;   /* warm paper, not the blue-grey of a web app */
+  --bg-2:      #ffffff;
+  --grid:      #0f14180d; /* the ruling. barely there on purpose */
+  --ink:       #12171b;
+  --ink-2:     #48545d;
+  --ink-3:     #616e77;   /* 4.89:1 on the ground. #7d8b95 was 3.26 */
+  --rule:      #dcdcd4;
+  --rule-2:    #c3c3b8;
+  --signal:    #9a6408;   /* the floor's amber. 4.66:1 on the ground,
+                             5.00:1 on a panel. #b8790a was 3.63 */
 }
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --ground: #0c0f12; --panel: #14181d; --ink: #e9edf1; --ink-2: #b0bac4;
-    --muted: #7c8794; --line: #242b33; --line-2: #384250; --accent: #ffc400;
-    --desk: #63aad4; --rig: #e5895a;
+    --bg:        #0c0f11;
+    --bg-2:      #14181b;
+    --grid:      #ffffff0a;
+    --ink:       #eef2f3;
+    --ink-2:     #aab6bd;
+    --ink-3:     #75838c;
+    --rule:      #232a2e;
+    --rule-2:    #354046;
+    --signal:    #f0b323;
   }
 }
 :root[data-theme="dark"] {
-  --ground: #0c0f12; --panel: #14181d; --ink: #e9edf1; --ink-2: #b0bac4;
-  --muted: #7c8794; --line: #242b33; --line-2: #384250; --accent: #ffc400;
-  --desk: #63aad4; --rig: #e5895a;
-}
+  --bg: #0c0f11; --bg-2: #14181b; --grid: #ffffff0a;
+  --ink: #eef2f3; --ink-2: #aab6bd; --ink-3: #75838c;
+  --rule: #232a2e; --rule-2: #354046;
+  --signal: #f0b323;}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
+
 body {
-  background: var(--ground); color: var(--ink);
-  font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
-  line-height: 1.5; padding: clamp(1.5rem, 6vw, 4rem);
+  background-color: var(--bg);
+  /* The ruling. A schedule is a grid; the page it lives behind may as
+     well admit it. 32px squares, one hairline, almost invisible. */
+  background-image:
+    linear-gradient(to right, var(--grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  color: var(--ink);
+  font-family: Inter, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
 }
-main { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem; }
-.eyebrow {
-  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.7rem;
-  letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted);
+a { color: inherit; }
+
+.shell { max-width: 70rem; margin: 0 auto; padding: 0 clamp(1.1rem, 4vw, 3rem); }
+
+/* ------------------------------------------------------------- header */
+
+.top {
+  border-bottom: 1px solid var(--rule);
+  background: var(--bg);
+  position: sticky; top: 0; z-index: 20;
 }
-h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); font-weight: 800; letter-spacing: -0.035em; line-height: 1; margin-top: 0.4rem; }
-header p { color: var(--ink-2); margin-top: 0.8rem; max-width: 60ch; font-size: 0.95rem; }
-.apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
-a.app {
-  display: block; text-decoration: none; color: inherit; background: var(--panel);
-  border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: 4px;
-  padding: 1.1rem 1.2rem 1.2rem;
+.top .shell {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; height: 3.75rem;
 }
-a.app:hover { border-color: var(--c); }
-a.app:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-a.app h2 { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
-a.app .who { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--c); }
-a.app p { color: var(--ink-2); font-size: 0.86rem; margin-top: 0.5rem; }
-a.app code { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.76rem; color: var(--muted); display: block; margin-top: 0.7rem; }
-.rule { border: 0; border-top: 1px solid var(--line); }
-.note { font-size: 0.86rem; color: var(--ink-2); }
-.note b { font-weight: 600; color: var(--ink); }
-.note code, .flow code {
-  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.82rem;
-  background: var(--panel); border: 1px solid var(--line); padding: 0.05rem 0.3rem; border-radius: 3px;
+/* The mark on its own. With no wordmark beside it there is nothing to
+   balance against, so it carries a little more weight and the anchor
+   takes the accessible name the text used to give it. */
+.lockup { display: inline-flex; align-items: center; text-decoration: none; }
+.lockup .v-mark { width: 1.9rem; height: 1.9rem; }
+.lockup:focus-visible { outline: 2px solid var(--signal); outline-offset: 4px; }
+.top nav { display: flex; align-items: center; gap: 0.4rem; }
+.top nav a {
+  font-family: "JetBrains Mono", monospace; font-size: 0.7rem;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--ink-2); text-decoration: none;
+  padding: 0.45rem 0.7rem; border-radius: 2px;
 }
-.flow {
-  display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
-  font-size: 0.8rem; color: var(--muted);
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+.top nav a:hover { color: var(--ink); background: var(--bg-2); }
+
+/* Square, not pill. This is a control, not a call to action. */
+.btn {
+  font-family: "JetBrains Mono", monospace; font-size: 0.7rem;
+  letter-spacing: 0.1em; text-transform: uppercase; font-weight: 500;
+  padding: 0.62rem 1rem; border-radius: 2px;
+  background: var(--ink); color: var(--bg);
+  border: 1px solid var(--ink); text-decoration: none;
+  display: inline-block; cursor: pointer;
+  transition: background .12s ease, color .12s ease;
 }
-.flow span.arrow { color: var(--line-2); }
+.btn:hover { background: transparent; color: var(--ink); }
+.btn--ghost { background: transparent; color: var(--ink); border-color: var(--rule-2); }
+.btn--ghost:hover { border-color: var(--ink); background: transparent; }
+.btn:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+/* --------------------------------------------------------------- hero */
+
+.hero { padding: clamp(3rem, 9vw, 6rem) 0 clamp(2rem, 5vw, 3.5rem); position: relative; }
+
+h1 {
+  font-family: "Space Grotesk", sans-serif; font-weight: 700;
+  font-size: clamp(2.9rem, 9vw, 5.75rem);
+  letter-spacing: -0.045em; line-height: 0.94;
+}
+.lede {
+  font-size: clamp(1.1rem, 2.4vw, 1.5rem); color: var(--ink-2);
+  margin-top: 1.1rem; max-width: 34ch; line-height: 1.35;
+}
+.actions { display: flex; gap: 0.6rem; margin-top: 2.1rem; flex-wrap: wrap; }
+
+/* --------------------------------------------------- the two panels */
+
+.panels {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+  gap: 1px; background: var(--rule);
+  border: 1px solid var(--rule);
+  margin-bottom: clamp(3rem, 7vw, 4.5rem);
+}
+
+a.panel {
+  display: flex; flex-direction: column; text-decoration: none;
+  background: var(--bg-2); padding: 0;
+  transition: background .12s ease;
+}
+a.panel:hover { background: var(--bg); }
+a.panel:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
+
+/* The header strip. Every instrument has one. */
+.panel .strip {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; padding: 0.6rem 1.4rem;
+  border-bottom: 1px solid var(--rule);
+  font-family: "JetBrains Mono", monospace; font-size: 0.66rem;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-3);
+}
+.panel .strip span:last-child { color: var(--signal); }
+.panel .body { padding: 1.5rem 1.4rem 1.6rem; display: flex; flex-direction: column; flex: 1; }
+.panel h2 {
+  font-family: "Space Grotesk", sans-serif; font-weight: 700;
+  font-size: 1.7rem; letter-spacing: -0.03em;
+}
+.panel .sub { color: var(--ink-2); font-size: 0.94rem; margin-top: 0.5rem; }
+
+.panel ul { list-style: none; margin-top: 1.3rem; display: grid; }
+.panel li {
+  font-size: 0.875rem; color: var(--ink-2);
+  padding: 0.55rem 0 0.55rem 1.6rem; position: relative;
+  border-top: 1px dashed var(--rule);
+}
+.panel li:first-child { border-top: 0; padding-top: 0; }
+.panel li:first-child::before { top: 0.16em; }
+.panel li::before {
+  content: "+"; position: absolute; left: 0; top: 0.72em;
+  font-family: "JetBrains Mono", monospace; font-size: 0.8rem;
+  color: var(--signal); line-height: 1;
+}
+.panel .go {
+  margin-top: auto; padding-top: 1.4rem;
+  font-family: "JetBrains Mono", monospace; font-size: 0.7rem;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink);
+}
+a.panel:hover .go { color: var(--signal); }
+
+/* ------------------------------------------------------------ the steps */
+
+.how { border-top: 1px solid var(--rule); padding: clamp(2.5rem, 6vw, 3.75rem) 0; }
+.how h2 {
+  font-family: "Space Grotesk", sans-serif; font-weight: 700;
+  font-size: clamp(1.5rem, 3.2vw, 2.1rem); letter-spacing: -0.03em;
+}
+.steps {
+  list-style: none; counter-reset: step;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 0; margin-top: 1.9rem;
+  border-top: 1px solid var(--rule);
+}
+.steps li {
+  counter-increment: step; padding: 1.4rem 1.5rem 1.5rem 0;
+  border-right: 1px solid var(--rule);
+}
+.steps li:last-child { border-right: 0; }
+.steps li:not(:first-child) { padding-left: 1.5rem; }
+.steps li::before {
+  content: counter(step, decimal-leading-zero);
+  font-family: "JetBrains Mono", monospace; font-weight: 700;
+  font-size: 0.72rem; color: var(--signal);
+  display: block; margin-bottom: 0.9rem;
+}
+.steps h3 {
+  font-family: "Space Grotesk", sans-serif; font-weight: 600;
+  font-size: 1rem; letter-spacing: -0.015em;
+}
+.steps p { color: var(--ink-2); font-size: 0.9rem; margin-top: 0.45rem; }
+
+footer {
+  border-top: 1px solid var(--rule);
+  font-family: "JetBrains Mono", monospace; font-size: 0.68rem;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3);
+}
+footer .shell {
+  display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+  padding-top: 1.35rem; padding-bottom: 1.35rem;
+}
+footer a { color: var(--ink-3); text-decoration: none; }
+footer a:hover { color: var(--ink); }
+
+@media (max-width: 46rem) {
+  .steps li { border-right: 0; border-bottom: 1px solid var(--rule); padding-left: 0; }
+  .steps li:last-child { border-bottom: 0; }
+  .steps li:not(:first-child) { padding-left: 0; }
+}
 </style>
 </head>
 <body>
-<main>
 
-  <header>
-    <p class="eyebrow">16 operators &middot; 12 rigs &middot; 4 groups</p>
-    <h1>Teleop Floor</h1>
-    <p>Two screens and one schedule between them. The desk generates the rotation and pushes it out; each rig reads its own copy and already knows who is standing there. Neither can compute a different answer, because both run the same engine.</p>
-  </header>
-
-  <div class="apps">
-    <a class="app" href="rotation-desk-v1/" style="--c: var(--desk)">
-      <span class="who">Manager</span>
-      <h2>Rotation Desk <span style="font-size:.72em;color:var(--muted)">v1</span></h2>
-      <p>Assign four operators and a task to each group of three rigs. The rotation is generated in the reference-sheet format, checked against the 6h / 1h / 1h budget, and handed to the rigs.</p>
-      <code>rotation-desk-v1/</code>
+<header class="top">
+  <div class="shell">
+    <a class="lockup" href="/" aria-label="Verlet Robotics">
+      <span class="v-mark" aria-hidden="true"></span>
     </a>
-
-    <a class="app" href="apps/rig/" style="--c: var(--rig)">
-      <span class="who">Operator</span>
-      <h2>Rig Pedal Loop</h2>
-      <p>One full-screen page, three foot pedals, no login and no task picker. It reads the pushed schedule and signs the right operator in when their turn starts.</p>
-      <code>apps/rig/</code>
-    </a>
+    <!-- Navigation only. The actions live in the hero, under the line
+         that explains them - the same button in both places is the same
+         decision asked twice. -->
+    <nav>
+      <a href="rotation-desk-v1/">Desk</a>
+      <a href="apps/rig/">Rig</a>
+    </nav>
   </div>
+</header>
 
-  <hr class="rule">
+<div class="shell">
 
-  <p class="flow">
-    <span>desk</span><span class="arrow">-&gt;</span>
-    <span>rigPayload()</span><span class="arrow">-&gt;</span>
-    <span>apps/rig/schedule.json</span><span class="arrow">-&gt;</span>
-    <span>whoIsOn()</span><span class="arrow">-&gt;</span>
-    <span>the operator is signed in</span>
-  </p>
+  <section class="hero">
+    <h1>Teleop&nbsp;Stations</h1>
+    <p class="lede">The desk builds the shift. Every rig runs it.</p>
+    <div class="actions">
+      <a class="btn" href="rotation-desk-v1/">Open the desk</a>
+      <a class="btn btn--ghost" href="apps/rig/">Open a rig</a>
+    </div>
+  </section>
 
-  <p class="note">
-    The schedule lives in <code>packages/engine/rotation-engine.js</code>, which both apps load. It has no DOM and no globals, so it runs in the browser and under node alike &mdash; and the rig cannot drift from the desk that scheduled it. The desk is locked to the reference sheet: 15-minute blocks, 45-minute turns, each operator holding one rig until they step off. <code>packages/engine/reference-sheet.test.js</code> holds that sheet cell by cell and fails the build if the engine stops drawing it.
-  </p>
+  <section class="panels">
+    <a class="panel" href="rotation-desk-v1/">
+      <div class="strip"><span>For the manager</span><span>01</span></div>
+      <div class="body">
+        <h2>Rotation Desk</h2>
+        <p class="sub">Build the shift, watch the whole floor, and push it out.</p>
+        <ul>
+          <li>Who is on every rig right now, and how long is left on their turn</li>
+          <li>Who takes over next, and whether the person leaving goes to break or think</li>
+          <li>A rig that has gone quiet, or that nobody arrived at</li>
+          <li>Whether the shift comes out even, before you push it</li>
+        </ul>
+        <span class="go">Open the desk &rarr;</span>
+      </div>
+    </a>
 
-</main>
+    <a class="panel" href="apps/rig/">
+      <div class="strip"><span>For the operator</span><span>02</span></div>
+      <div class="body">
+        <h2>Rig Pedal Loop</h2>
+        <p class="sub">Three foot pedals, and nothing to sign into.</p>
+        <ul>
+          <li>The screen already knows whose turn it is</li>
+          <li>Counts down to the handover and names who is taking over</li>
+          <li>The right pedal reports a problem, on any screen</li>
+          <li>A recording always finishes before a handover</li>
+        </ul>
+        <span class="go">Open a rig &rarr;</span>
+      </div>
+    </a>
+  </section>
+
+  <section class="how">
+    <h2>How a shift runs</h2>
+    <ol class="steps">
+      <li>
+        <h3>The desk builds the rotation</h3>
+        <p>Four groups of three rigs, four operators each. One task per group for the whole shift, so nobody changes skill halfway through the day.</p>
+      </li>
+      <li>
+        <h3>One button puts it on the floor</h3>
+        <p>Every rig picks up its own copy. The desk checks first that each operator gets six hours of work, an hour of break and an hour of think time.</p>
+      </li>
+      <li>
+        <h3>The rig takes it from there</h3>
+        <p>It signs in whoever the schedule says is there, and hands over at the right minute. Never in the middle of a take.</p>
+      </li>
+    </ol>
+  </section>
+
+</div>
+
+<footer>
+  <div class="shell">
+    <span>&copy; 2026 Verlet Robotics</span>
+    <span><a href="rotation-desk-v1/">Desk</a> &middot; <a href="apps/rig/">Rig</a></span>
+  </div>
+</footer>
+
 </body>
 </html>

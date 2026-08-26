@@ -1,0 +1,15 @@
+{
+  "eventId": "00000000-0000-4000-8000-000000000005",
+  "seq": 2,
+  "at": "2026-08-24T09:05:02.881Z",
+  "rigId": "RIG-03",
+  "shiftDate": "2026-08-24",
+  "shiftLabel": "Morning",
+  "turnFrom": null,
+  "operatorId": null,
+  "bucket": "rig_shift_checks",
+  "event": "shift_check",
+  "data": {
+    "outcome": "passed_early"
+  }
+}

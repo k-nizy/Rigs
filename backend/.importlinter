@@ -1,0 +1,36 @@
+# The platform team enforces one-directional layering in CI with
+# lint-imports. Building against it from the first commit costs nothing;
+# retrofitting it costs a refactor. Arrows only point down:
+#
+#   gateway  -> services, core
+#   services -> core          (never another service)
+#   core     -> nothing above it
+#
+[importlinter]
+root_packages =
+    workers
+    core
+    services
+
+[importlinter:contract:layers]
+name = Arrows only point down
+type = layers
+layers =
+    workers
+    services
+    core
+
+[importlinter:contract:core-independence]
+name = core never imports a service
+type = forbidden
+source_modules =
+    core
+forbidden_modules =
+    services
+
+[importlinter:contract:domains-are-independent]
+name = One domain never imports another
+type = independence
+modules =
+    core.domains.schedules
+    core.domains.rig_events

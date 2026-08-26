@@ -1,0 +1,16 @@
+{
+  "eventId": "00000000-0000-4000-8000-000000000006",
+  "seq": 3,
+  "at": "2026-08-24T09:06:02.881Z",
+  "rigId": "RIG-03",
+  "shiftDate": "2026-08-24",
+  "shiftLabel": "Morning",
+  "turnFrom": "09:00",
+  "operatorId": "op-a4",
+  "bucket": "rig_shift_checks",
+  "event": "fault_closed",
+  "data": {
+    "subsystem": "Camera",
+    "secondsCharged": 0
+  }
+}

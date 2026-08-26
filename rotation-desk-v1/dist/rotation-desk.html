@@ -1,10 +1,182 @@
 <meta charset="utf-8">
-<title>Rotation Desk v1</title>
+<title>Rotation Desk v1 &mdash; Verlet Robotics</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500;600&display=swap">
 
 <style>
+/* =====================================================================
+ * Verlet Robotics — one design system, three apps.
+ *
+ * The landing page, the desk and the rig each had their own palette and
+ * their own type stack, which meant three places to change a colour and
+ * three chances to forget one. This is the single place now, and it
+ * lives in packages/ for the same reason the engine does: imported by
+ * things that ship, not shipped itself.
+ *
+ * Taken from verlet.co: DM Serif Display for anything that announces
+ * itself, DM Sans for everything a person reads, JetBrains Mono for
+ * anything a machine produced — an id, a timestamp, a rig name. That
+ * last one is not decoration. On these screens the difference between
+ * RIG-01 and RIG-07 has to survive being read quickly, and a mono
+ * typeface is what keeps a column of them scannable.
+ *
+ * One rule the rig bends. Its screen is read from two metres away by
+ * somebody with their hands full, and CLAUDE.md fixes that constraint
+ * before any of this: large type, high contrast, no colour-coding. So
+ * the rig takes the typefaces and the mark and keeps its own contrast.
+ * Family resemblance, not uniform.
+ * ===================================================================== */
+
+/* Light: the palette as verlet.co uses it. */
+:root {
+  --v-ground:  #f4f4f6;
+  --v-panel:   #ffffff;
+  --v-sunk:    #ececef;   /* wells, table stripes, anything set back */
+  --v-ink:     #1c1c1e;
+  --v-ink-2:   #48484a;
+  --v-muted:   #8e8e93;
+  --v-line:    #e0e0e5;
+  --v-line-2:  #c7c7cc;
+  --v-accent:  #d64d7a;   /* the one saturated colour; use it sparingly */
+  --v-accent-ink: #ffffff;
+  /* The accent at low alpha. A token because box-shadow cannot fade a
+     colour on its own, and the alternative is hard-coding the accent
+     somewhere it will not follow the theme. */
+  --v-accent-glow: rgba(214, 77, 122, 0.55);
+
+  /* Kept from the apps' own vocabulary rather than replaced. The desk
+     tells break from think from work at a glance, and that is a job
+     colour does well and the brand palette does not do at all. */
+  --v-work:    #2f7d4f;
+  --v-break:   #b06d00;
+  --v-think:   #1f6f9a;
+  --v-down:    #b3261e;
+
+  --v-radius:  8px;
+  --v-radius-sm: 4px;
+
+  --v-display: "DM Serif Display", Georgia, "Times New Roman", serif;
+  --v-sans:    "DM Sans", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --v-mono:    "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Display type on the site is set tight. At small sizes it is not. */
+  --v-display-tracking: -0.025em;
+}
+
+/* Dark, for the screens that are looked at all night. verlet.co is
+   light-only, so these are derived rather than copied: the same hues,
+   the accent lifted because #d64d7a on near-black is muddy. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --v-ground:  #0e0e10;
+    --v-panel:   #17171a;
+    --v-sunk:    #1e1e22;
+    --v-ink:     #f2f2f4;
+    --v-ink-2:   #babac0;
+    --v-muted:   #8e8e93;
+    --v-line:    #26262b;
+    --v-line-2:  #3a3a42;
+    --v-accent:  #e8688f;
+    --v-accent-ink: #1c1c1e;
+    --v-accent-glow: rgba(232, 104, 143, 0.55);
+
+    --v-work:    #5fbf87;
+    --v-break:   #e0a33a;
+    --v-think:   #6bb3d8;
+    --v-down:    #f2685e;
+  }
+}
+
+:root[data-theme="dark"] {
+  --v-ground:  #0e0e10;
+  --v-panel:   #17171a;
+  --v-sunk:    #1e1e22;
+  --v-ink:     #f2f2f4;
+  --v-ink-2:   #babac0;
+  --v-muted:   #8e8e93;
+  --v-line:    #26262b;
+  --v-line-2:  #3a3a42;
+  --v-accent:  #e8688f;
+  --v-accent-ink: #1c1c1e;
+  --v-accent-glow: rgba(232, 104, 143, 0.55);
+
+  --v-work:    #5fbf87;
+  --v-break:   #e0a33a;
+  --v-think:   #6bb3d8;
+  --v-down:    #f2685e;
+}
+
+/* ------------------------------------------------------------ the mark */
+
+/* A mask rather than an <img> or three inlined copies.
+ *
+ * <img> cannot take the ink colour, so it would need a second file for
+ * dark mode. Inlining the SVG in each page means three copies of the
+ * same path in three apps, and three copies drift. A mask is one file,
+ * painted with `currentColor`, so it is correct in both themes and in
+ * every app from a single source.
+ *
+ * url() here resolves against this stylesheet, not the page that loads
+ * it, so the same rule works from /, /apps/rig/ and /rotation-desk-v1/. */
+.v-mark {
+  display: inline-block;
+  width: 1.6em;
+  height: 1.6em;
+  flex: none;
+  background-color: currentColor;
+  -webkit-mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MDAgNTAwIiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlZlcmxldCBSb2JvdGljcyI+CiAgPHRpdGxlPlZlcmxldCBSb2JvdGljczwvdGl0bGU+CiAgPHBhdGggZmlsbD0iY3VycmVudENvbG9yIiBkPSJNIDQzNS40MTcgOTIuMDA1IEMgNDM5LjEwMiA5MS41NDggNDQyLjk0NiA5MS40OTIgNDQ2LjYyMyA5Mi4wMjggQyA0NTYuNjM4IDkzLjc1NCA0NjUuNjkgMTAwLjY5MyA0NjkuODA3IDEwOS45OTkgQyA0NzUuMTM2IDEyMS4yMSA0NzMuMjAzIDEzNS4xODQgNDY1LjA0NiAxNDQuNTg2IEMgNDU3LjAyNCAxNTQuMDYzIDQ0My40OTEgMTU4LjEzMSA0MzEuNjcyIDE1NC4zNDMgQyA0MTQuMDY4IDE4MC44NCAzOTQuMjA0IDIwNS45NTQgMzczLjAxNCAyMjkuNjc4IEMgMzU0LjQzMiAyNTAuMzQzIDMzNC42NiAyNjkuODk5IDMxMy43NDIgMjg4LjE5NCBDIDMwMy40MDEgMjk3LjUwNyAyOTIuNDE2IDMwNi4xMTEgMjgxLjU2NyAzMTQuODIyIEMgMjgzLjM4NiAzMjIuNTYxIDI4My4yNzMgMzMwLjQ2OSAyNzkuODM4IDMzNy43ODYgQyAyNzQuOTYzIDM0OC43MzQgMjYzLjkwOSAzNTYuMzM4IDI1MS45MjMgMzU2LjcyOSBDIDI0NC4yMjggMzU3LjA0NiAyMzYuNTkzIDM1NC40MDYgMjMwLjYxMiAzNDkuNjEzIEMgMjExLjAyOSAzNjEuNzYxIDE5MC42MiAzNzIuNTkzIDE2OS42NzIgMzgyLjE5MiBDIDE0OS41NTggMzkxLjQwOSAxMjkuMDI4IDM5OS4wNjUgMTA3LjUxMiA0MDQuMjU1IEMgOTUuNjAxIDQwNy4wMjUgODIuOTcgNDA5LjMxNSA3MC43MjYgNDA5LjA4NSBDIDYyLjM0MSA0MDkuMDc5IDU0LjA2MiA0MDcuNjc4IDQ2LjM2NyA0MDQuMzM0IEMgMzkuMzU0IDQwMS4yMjggMzMuMDMxIDM5Ni40NjcgMjkuMzYyIDM4OS42MDggQyAyNC44MTMgMzgxLjU3OCAyNC4yNTIgMzcyLjI5MyAyNS40OCAzNjMuMjgxIEMgMjcuNDUxIDM0OS40NSAzMy45ODcgMzM2LjU2OCA0MS4xNzQgMzI0LjczOCBDIDUzLjYxNSAzMDQuNzMyIDY5LjQwNyAyODYuNjU4IDg1LjY2OSAyNjkuNjgyIEMgOTcuMDggMjU3Ljg2OCAxMDkuMDk2IDI0Ni42NjcgMTIxLjQxNiAyMzUuODA0IEMgMTE4LjY1NiAyMjkuMjgzIDExOC42MDMgMjIwLjk2NiAxMjAuODQgMjE0LjI2MSBDIDEyMy4zOTUgMjA2LjQwMiAxMjkuMjE3IDE5OS43NDcgMTM2LjYwMiAxOTYuMDU4IEMgMTQ4LjAzNCAxOTAuNDA5IDE2Mi4zMjYgMTkxLjU0NiAxNzEuOTc3IDIwMC4wNiBDIDE4Mi44MzMgMjA5LjMzMyAxODYuMTYyIDIyNS42OTMgMTc5Ljc0IDIzOC41MjkgQyAxODYuNTg2IDI0NS43OSAxOTMuODA0IDI1Mi43MDggMjAwLjY4OCAyNTkuOTMgQyAyMTIuMzg2IDI3Mi4xNzIgMjI0LjIzNiAyODQuMjUzIDIzNi4wMzIgMjk2LjM5NiBDIDI0Ni40NTcgMjkxLjA2OSAyNTkuNzU1IDI5MS43NjQgMjY5LjIyNCAyOTguNzE3IEMgMjgxLjA1MSAyODkuMTk5IDI5Mi44MSAyNzkuNjI4IDMwNC4xMDYgMjY5LjQ4MyBDIDMyOS4zNiAyNDYuOTE0IDM1My4wNiAyMjIuNTQxIDM3NC42NTIgMTk2LjQ0MSBDIDM4OC45MDUgMTc5LjE3MSA0MDIuNDYxIDE2MS4yNzUgNDE0Ljc3MyAxNDIuNTY2IEMgNDA3LjY4NCAxMzMuMzEzIDQwNi41MzIgMTIwLjIyNSA0MTEuNzQ4IDEwOS43NiBDIDQxNi4xMjIgMTAwLjQzNyA0MjUuMjczIDkzLjYwOCA0MzUuNDE3IDkyLjAwNSBaIE0gMTMyLjk0IDI1My4wOTYgQyAxMjEuMjI2IDI2My42MTQgMTA5LjUyOCAyNzQuMjUzIDk4LjY3MiAyODUuNjU0IEMgODguMzE1IDI5Ni4xMzYgNzguODQ2IDMwNy41MDggNjkuODcgMzE5LjE4IEMgNjEuNTc2IDMzMC40MjUgNTMuMTkgMzQyLjkwNyA0OC40MjkgMzU2LjA5OCBDIDQ2LjM5IDM2Mi4zMzkgNDQuNDQ5IDM2OS45MzEgNDYuMzY3IDM3Ni4zNzMgQyA0Ny42MzMgMzgwLjc3MiA1MS4wOSAzODMuODExIDU1LjE3NyAzODUuNTg4IEMgNjIuOTQgMzg5LjAwOSA3Mi4wNjggMzg4LjkxMiA4MC40IDM4OC4zMTEgQyAxMDYuNjcgMzg1LjUyNSAxMzMuMTY3IDM3NS44NDYgMTU3LjI5OSAzNjUuMjk5IEMgMTc4LjUzNSAzNTUuNzc1IDE5OS4xNTYgMzQ0LjgyNyAyMTkuMjA5IDMzMy4wMTggQyAyMTcuNjkzIDMyNS42MDMgMjE4LjI3NyAzMTcuOTczIDIyMS40NjggMzExLjA0NCBDIDIwMi41MzggMjkxLjkgMTgzLjgxOSAyNzIuNDU5IDE2NS4wMzIgMjUzLjE3IEMgMTU1LjQ4NyAyNTguMTA2IDE0My41NDYgMjU3LjE2OSAxMzQuNDU2IDI1MS43NjIgQyAxMzMuOTQxIDI1Mi4yMDQgMTMzLjQ0IDI1Mi42NDYgMTMyLjk0IDI1My4wOTYgWiIvPgo8L3N2Zz4K") center / contain no-repeat;
+  mask: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MDAgNTAwIiByb2xlPSJpbWciIGFyaWEtbGFiZWw9IlZlcmxldCBSb2JvdGljcyI+CiAgPHRpdGxlPlZlcmxldCBSb2JvdGljczwvdGl0bGU+CiAgPHBhdGggZmlsbD0iY3VycmVudENvbG9yIiBkPSJNIDQzNS40MTcgOTIuMDA1IEMgNDM5LjEwMiA5MS41NDggNDQyLjk0NiA5MS40OTIgNDQ2LjYyMyA5Mi4wMjggQyA0NTYuNjM4IDkzLjc1NCA0NjUuNjkgMTAwLjY5MyA0NjkuODA3IDEwOS45OTkgQyA0NzUuMTM2IDEyMS4yMSA0NzMuMjAzIDEzNS4xODQgNDY1LjA0NiAxNDQuNTg2IEMgNDU3LjAyNCAxNTQuMDYzIDQ0My40OTEgMTU4LjEzMSA0MzEuNjcyIDE1NC4zNDMgQyA0MTQuMDY4IDE4MC44NCAzOTQuMjA0IDIwNS45NTQgMzczLjAxNCAyMjkuNjc4IEMgMzU0LjQzMiAyNTAuMzQzIDMzNC42NiAyNjkuODk5IDMxMy43NDIgMjg4LjE5NCBDIDMwMy40MDEgMjk3LjUwNyAyOTIuNDE2IDMwNi4xMTEgMjgxLjU2NyAzMTQuODIyIEMgMjgzLjM4NiAzMjIuNTYxIDI4My4yNzMgMzMwLjQ2OSAyNzkuODM4IDMzNy43ODYgQyAyNzQuOTYzIDM0OC43MzQgMjYzLjkwOSAzNTYuMzM4IDI1MS45MjMgMzU2LjcyOSBDIDI0NC4yMjggMzU3LjA0NiAyMzYuNTkzIDM1NC40MDYgMjMwLjYxMiAzNDkuNjEzIEMgMjExLjAyOSAzNjEuNzYxIDE5MC42MiAzNzIuNTkzIDE2OS42NzIgMzgyLjE5MiBDIDE0OS41NTggMzkxLjQwOSAxMjkuMDI4IDM5OS4wNjUgMTA3LjUxMiA0MDQuMjU1IEMgOTUuNjAxIDQwNy4wMjUgODIuOTcgNDA5LjMxNSA3MC43MjYgNDA5LjA4NSBDIDYyLjM0MSA0MDkuMDc5IDU0LjA2MiA0MDcuNjc4IDQ2LjM2NyA0MDQuMzM0IEMgMzkuMzU0IDQwMS4yMjggMzMuMDMxIDM5Ni40NjcgMjkuMzYyIDM4OS42MDggQyAyNC44MTMgMzgxLjU3OCAyNC4yNTIgMzcyLjI5MyAyNS40OCAzNjMuMjgxIEMgMjcuNDUxIDM0OS40NSAzMy45ODcgMzM2LjU2OCA0MS4xNzQgMzI0LjczOCBDIDUzLjYxNSAzMDQuNzMyIDY5LjQwNyAyODYuNjU4IDg1LjY2OSAyNjkuNjgyIEMgOTcuMDggMjU3Ljg2OCAxMDkuMDk2IDI0Ni42NjcgMTIxLjQxNiAyMzUuODA0IEMgMTE4LjY1NiAyMjkuMjgzIDExOC42MDMgMjIwLjk2NiAxMjAuODQgMjE0LjI2MSBDIDEyMy4zOTUgMjA2LjQwMiAxMjkuMjE3IDE5OS43NDcgMTM2LjYwMiAxOTYuMDU4IEMgMTQ4LjAzNCAxOTAuNDA5IDE2Mi4zMjYgMTkxLjU0NiAxNzEuOTc3IDIwMC4wNiBDIDE4Mi44MzMgMjA5LjMzMyAxODYuMTYyIDIyNS42OTMgMTc5Ljc0IDIzOC41MjkgQyAxODYuNTg2IDI0NS43OSAxOTMuODA0IDI1Mi43MDggMjAwLjY4OCAyNTkuOTMgQyAyMTIuMzg2IDI3Mi4xNzIgMjI0LjIzNiAyODQuMjUzIDIzNi4wMzIgMjk2LjM5NiBDIDI0Ni40NTcgMjkxLjA2OSAyNTkuNzU1IDI5MS43NjQgMjY5LjIyNCAyOTguNzE3IEMgMjgxLjA1MSAyODkuMTk5IDI5Mi44MSAyNzkuNjI4IDMwNC4xMDYgMjY5LjQ4MyBDIDMyOS4zNiAyNDYuOTE0IDM1My4wNiAyMjIuNTQxIDM3NC42NTIgMTk2LjQ0MSBDIDM4OC45MDUgMTc5LjE3MSA0MDIuNDYxIDE2MS4yNzUgNDE0Ljc3MyAxNDIuNTY2IEMgNDA3LjY4NCAxMzMuMzEzIDQwNi41MzIgMTIwLjIyNSA0MTEuNzQ4IDEwOS43NiBDIDQxNi4xMjIgMTAwLjQzNyA0MjUuMjczIDkzLjYwOCA0MzUuNDE3IDkyLjAwNSBaIE0gMTMyLjk0IDI1My4wOTYgQyAxMjEuMjI2IDI2My42MTQgMTA5LjUyOCAyNzQuMjUzIDk4LjY3MiAyODUuNjU0IEMgODguMzE1IDI5Ni4xMzYgNzguODQ2IDMwNy41MDggNjkuODcgMzE5LjE4IEMgNjEuNTc2IDMzMC40MjUgNTMuMTkgMzQyLjkwNyA0OC40MjkgMzU2LjA5OCBDIDQ2LjM5IDM2Mi4zMzkgNDQuNDQ5IDM2OS45MzEgNDYuMzY3IDM3Ni4zNzMgQyA0Ny42MzMgMzgwLjc3MiA1MS4wOSAzODMuODExIDU1LjE3NyAzODUuNTg4IEMgNjIuOTQgMzg5LjAwOSA3Mi4wNjggMzg4LjkxMiA4MC40IDM4OC4zMTEgQyAxMDYuNjcgMzg1LjUyNSAxMzMuMTY3IDM3NS44NDYgMTU3LjI5OSAzNjUuMjk5IEMgMTc4LjUzNSAzNTUuNzc1IDE5OS4xNTYgMzQ0LjgyNyAyMTkuMjA5IDMzMy4wMTggQyAyMTcuNjkzIDMyNS42MDMgMjE4LjI3NyAzMTcuOTczIDIyMS40NjggMzExLjA0NCBDIDIwMi41MzggMjkxLjkgMTgzLjgxOSAyNzIuNDU5IDE2NS4wMzIgMjUzLjE3IEMgMTU1LjQ4NyAyNTguMTA2IDE0My41NDYgMjU3LjE2OSAxMzQuNDU2IDI1MS43NjIgQyAxMzMuOTQxIDI1Mi4yMDQgMTMzLjQ0IDI1Mi42NDYgMTMyLjk0IDI1My4wOTYgWiIvPgo8L3N2Zz4K") center / contain no-repeat;
+}
+
+.v-wordmark {
+  font-family: var(--v-display);
+  font-weight: 700;
+  letter-spacing: var(--v-display-tracking);
+  color: var(--v-ink);
+  white-space: nowrap;
+}
+
+.v-lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5em;
+  text-decoration: none;
+  color: inherit;
+}
+
+/* --------------------------------------------------------- small parts */
+
+.v-eyebrow {
+  font-family: var(--v-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--v-muted);
+}
+
+.v-btn {
+  font-family: var(--v-sans);
+  font-weight: 500;
+  font-size: 0.875rem;
+  padding: 0.55rem 1rem;
+  border-radius: var(--v-radius);
+  border: 1px solid transparent;
+  background: var(--v-accent);
+  color: var(--v-accent-ink);
+  text-decoration: none;
+  cursor: pointer;
+  display: inline-block;
+}
+.v-btn:hover { filter: brightness(1.06); }
+.v-btn:focus-visible { outline: 2px solid var(--v-ink); outline-offset: 2px; }
+
+.v-btn--quiet {
+  background: transparent;
+  color: var(--v-ink);
+  border-color: var(--v-line-2);
+}
+
 /* ===================================================================
  * Rotation Desk v1 - the manager side of the rig floor.
  *
@@ -19,16 +191,19 @@
  * =================================================================== */
 
 :root {
-  /* cool-steel neutrals - aluminium, not paper */
-  --ground:      #f4f6f7;
-  --panel:       #ffffff;
-  --panel-2:     #e9edf0;
+  /* Verlet's neutrals, via packages/brand/brand.css.
+     The desk keeps its own vocabulary - --panel-2 still means what it
+     always meant - so every rule below is untouched and the whole screen
+     restyles from one place. */
+  --ground:      var(--v-ground);
+  --panel:       var(--v-panel);
+  --panel-2:     var(--v-sunk);
   --panel-3:     #dfe4e9;
-  --ink:         #0f1418;
-  --ink-2:       #414c57;
-  --muted:       #6f7b87;
-  --line:        #dbe1e7;
-  --line-2:      #bfc8d1;
+  --ink:         var(--v-ink);
+  --ink-2:       var(--v-ink-2);
+  --muted:       var(--v-muted);
+  --line:        var(--v-line);
+  --line-2:      var(--v-line-2);
 
   --accent:      #b06d00;   /* amber, darkened to stay legible on white */
   --accent-fill: #ffc400;   /* the rig-floor signal yellow */
@@ -45,7 +220,7 @@
   --g2: #4a7c2f;  --g2-soft: #e7f1df;
   --g3: #8e3b52;  --g3-soft: #f7e4ea;
 
-  --radius: 4px;
+  --radius: var(--v-radius-sm);
 }
 
 :root:not([data-theme="light"]) { color-scheme: light; }
@@ -53,15 +228,15 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --ground:      #0c0f12;
-    --panel:       #14181d;
-    --panel-2:     #1b2128;
+    --ground:      var(--v-ground);
+    --panel:       var(--v-panel);
+    --panel-2:     var(--v-sunk);
     --panel-3:     #232a32;
-    --ink:         #e9edf1;
-    --ink-2:       #b0bac4;
-    --muted:       #7c8794;
-    --line:        #242b33;
-    --line-2:      #384250;
+    --ink:         var(--v-ink);
+    --ink-2:       var(--v-ink-2);
+    --muted:       var(--v-muted);
+    --line:        var(--v-line);
+    --line-2:      var(--v-line-2);
 
     --accent:      #ffc400;
     --accent-fill: #ffc400;
@@ -111,7 +286,7 @@
 body {
   background: var(--ground);
   color: var(--ink);
-  font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--v-sans);
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -131,16 +306,25 @@ main { display: flex; flex-direction: column; gap: 1.1rem; }
 /* ------------------------------------------------------------ atoms */
 
 .mono {
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
 }
 
 .eyebrow {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.66rem;
   letter-spacing: 0.15em;
   text-transform: uppercase;
   color: var(--muted);
+}
+
+/* The mark sits on the eyebrow's baseline rather than above it. Sized in
+   em so it tracks the label it belongs to. */
+.eyebrow .v-mark {
+  width: 1.35em;
+  height: 1.35em;
+  vertical-align: -0.35em;
+  margin-right: 0.45em;
 }
 
 html { scroll-behavior: smooth; }
@@ -174,7 +358,7 @@ button, select, input, summary, .gcard, .grp, .src, .btn {
 .btn.ghost:hover { background: var(--panel-2); opacity: 1; }
 
 .grp-key {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-weight: 600;
   font-size: 0.7rem;
   letter-spacing: 0.1em;
@@ -198,13 +382,16 @@ header.masthead {
 }
 
 .masthead h1 {
-  font-size: clamp(1.35rem, 3vw, 1.9rem);
-  font-weight: 800;
-  letter-spacing: -0.035em;
+  /* The display face, as on the landing page. Only the title takes it -
+     everything below is read across quickly and stays sans. */
+  font-family: var(--v-display);
+  font-size: clamp(1.5rem, 3.2vw, 2.1rem);
+  font-weight: 400;
+  letter-spacing: var(--v-display-tracking);
   line-height: 1;
 }
 .masthead h1 .ver {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.42em;
   font-weight: 500;
   letter-spacing: 0;
@@ -241,7 +428,7 @@ header.masthead {
 }
 .now-clock { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
 .now-clock b {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: clamp(1.9rem, 5vw, 2.6rem);
   font-weight: 600;
@@ -253,7 +440,7 @@ header.masthead {
 .now-right { display: flex; align-items: center; gap: 0.7rem; }
 
 .src {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.68rem;
   letter-spacing: 0.06em;
   padding: 0.16rem 0.5rem;
@@ -263,6 +450,9 @@ header.masthead {
 }
 .src.floor { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
 .src.plan  { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+/* Pushed, but nothing it holds covers right now: the rigs are standing
+   still. Wears the warning colour because somebody has to act. */
+.src.dry   { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
 
 .banner {
   background: var(--panel-2);
@@ -309,7 +499,7 @@ header.masthead {
 
 .rig-top { display: flex; align-items: baseline; gap: 0.6rem; }
 .rig-id {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.74rem;
   font-weight: 600;
   color: var(--gc);
@@ -360,7 +550,7 @@ header.masthead {
   font-size: 0.8rem;
 }
 .off-tag {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.64rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -475,7 +665,7 @@ header.masthead {
 }
 .fit[open] > summary::after { content: "Hide"; }
 .fit .v-sub {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.74rem;
   color: var(--muted);
@@ -511,7 +701,7 @@ header.masthead {
 .check.soft i { color: var(--warn); }
 .check b { font-weight: 500; }
 .check span {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.73rem;
   color: var(--ink-2);
@@ -576,7 +766,7 @@ section { display: flex; flex-direction: column; }
 .op-list { display: flex; flex-direction: column; gap: 0.3rem; }
 .op-line { display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 0.4rem; }
 .op-line .idx {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.66rem;
   color: var(--muted);
   text-align: right;
@@ -593,7 +783,7 @@ section { display: flex; flex-direction: column; }
 }
 .rig-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.32rem; margin-top: 0.35rem; }
 .rig-row input {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.74rem !important;
   text-align: center;
 }
@@ -612,7 +802,7 @@ section { display: flex; flex-direction: column; }
 }
 .actions .btn { padding: 0.5rem 1.1rem; }
 .actions-note {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.74rem;
   color: var(--muted);
 }
@@ -671,7 +861,7 @@ th.stub {
 }
 th.stub i {
   font-style: normal;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.6rem;
   letter-spacing: 0.11em;
   text-transform: uppercase;
@@ -681,7 +871,7 @@ th.stub i {
 th.stub b { font-size: 0.84rem; font-weight: 600; letter-spacing: -0.01em; }
 th.stub small {
   float: right;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.66rem;
   color: var(--muted);
@@ -691,7 +881,7 @@ th.stub small {
 thead th.stub {
   z-index: 4;
   background: var(--panel-2);
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.63rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -704,7 +894,7 @@ th.tick {
   min-width: 62px;
   background: var(--panel-2);
   border-bottom: 1px solid var(--line-2);
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.64rem;
   font-weight: 500;
@@ -717,7 +907,7 @@ th.tick.hour { color: var(--ink); font-weight: 600; border-left: 1px solid var(-
 /* a group's title row */
 tr.band th.stub { background: var(--panel-2); }
 tr.band th.stub b {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.67rem;
   font-weight: 600;
   letter-spacing: 0.11em;
@@ -731,7 +921,7 @@ tr.band td {
 }
 tr.band td b { font-size: 0.8rem; font-weight: 600; }
 tr.band td span {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.67rem;
   color: var(--muted);
   margin-left: 0.8rem;
@@ -743,7 +933,7 @@ td.cell {
   height: 30px;
   text-align: center;
   white-space: nowrap;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.7rem;
   font-weight: 500;
@@ -790,14 +980,14 @@ td.idle { background: var(--panel); color: var(--crit); }
   border-bottom: 1px solid var(--line);
   background: var(--panel-2);
 }
-.payload-head b { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.88rem; }
+.payload-head b { font-family: var(--v-mono); font-size: 0.88rem; }
 .payload-head span { font-size: 0.77rem; color: var(--muted); }
 
 pre.json {
   margin: 0;
   padding: 0.9rem 1rem;
   overflow-x: auto;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.72rem;
   line-height: 1.6;
   color: var(--ink-2);
@@ -845,7 +1035,7 @@ pre.json .n { color: var(--accent); }
   align-items: baseline;
   gap: 0.34em;
   flex: none;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.66rem;
   font-weight: 600;
@@ -896,7 +1086,7 @@ pre.json .n { color: var(--accent); }
 .offrow .dest { margin-left: auto; }
 .offrow .left {
   flex: none;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.95rem;
   font-weight: 600;
@@ -945,7 +1135,7 @@ pre.json .n { color: var(--accent); }
 
   <header class="masthead">
     <div class="brand">
-      <p class="eyebrow">Teleop floor</p>
+      <p class="eyebrow"><span class="v-mark" aria-hidden="true"></span>Verlet Robotics</p>
       <h1>Rotation Desk <span class="ver">v1</span></h1>
     </div>
     <div class="modes" role="tablist" id="modes" aria-label="Desk mode">
@@ -1271,12 +1461,28 @@ pre.json .n { color: var(--accent); }
       mode: cfg.mode,
       shift: shiftById(cfg.shift),
       date: cfg.date,
+      tz: cfg.tz || localZone(),
       nBlocks: nBlocks,
       groups: planned,
     };
   }
 
   // --------------------------------------------------------------- time
+
+  /* The floor's own zone, as an IANA name.
+   *
+   * Every "HH:MM" in a payload is wall-clock time on the floor, and a
+   * reader in another zone - a server keeping UTC, say - cannot recover
+   * that from the string. So it travels with the schedule instead of
+   * being assumed at both ends, which is the only way the desk, the rig
+   * and the backend can agree on when a turn starts. */
+  function localZone() {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    } catch (e) {
+      return "UTC";
+    }
+  }
 
   function hhmm(mins) {
     var h = Math.floor(mins / 60) % 24, m = mins % 60;
@@ -1474,6 +1680,7 @@ pre.json .n { color: var(--accent); }
         date: plan.date,
         start: hhmm(plan.shift.start),
         end: hhmm(shiftEnd(plan)),
+        tz: plan.tz || localZone(),
       },
       blockMinutes: plan.blockMin,
       rotation: plan.mode,
@@ -1495,6 +1702,120 @@ pre.json .n { color: var(--accent); }
         var endsIn = (to - t + 1440) % 1440;
         return { turn: turn, minutesLeft: endsIn === 0 ? payload.blockMinutes : endsIn };
       }
+    }
+    return null;
+  }
+
+  /* ------------------------------------------------ which shift is running
+
+     A payload covers ONE shift. A rig that is handed a whole day, or a
+     server holding three payloads per rig, has to answer "which of these
+     is running right now" - and that answer must be a COMPARISON, never a
+     calculation. The desk already wrote the window into the payload:
+     `shift.date`, `start`, `end` and `tz`. This reads it back.
+
+     The distinction is the founding rule of the system. Working out when
+     a shift runs, rather than reading what the desk said, would be a
+     second opinion about the schedule - and the first one able to
+     disagree with the desk that made it. */
+
+  /* Minutes that `tz` is ahead of UTC at a given instant. Uses the
+     formatter to render that instant in the zone, then reads the wall
+     clock back - the standard way to get at the tz database without
+     shipping one. */
+  function zoneOffset(utcMs, tz) {
+    var dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit"
+    });
+    var p = {};
+    dtf.formatToParts(new Date(utcMs)).forEach(function (x) { p[x.type] = x.value; });
+    var asUTC = Date.UTC(+p.year, +p.month - 1, +p.day,
+                         (+p.hour) % 24, +p.minute, +p.second);
+    return asUTC - utcMs;
+  }
+
+  /* A wall-clock time on the floor, as an instant. Guess, then correct -
+     the second pass matters on the two days a year a shift starts inside
+     a daylight-saving jump. */
+  function floorInstant(y, mo, d, hh, mi, tz) {
+    var guess = Date.UTC(y, mo - 1, d, hh, mi);
+    var off = zoneOffset(guess, tz);
+    var ms = guess - off;
+    var again = zoneOffset(ms, tz);
+    return again === off ? ms : guess - again;
+  }
+
+  /* The half-open window [start, end) this payload covers, in real time.
+     Null if the payload does not carry one - malformed rather than
+     malicious, but it must not be treated as covering everything. */
+  function shiftWindow(payload) {
+    var s = payload && payload.shift;
+    if (!s) return null;
+    var d = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s.date || ""));
+    var t = /^(\d{2}):(\d{2})$/.exec(String(s.start || ""));
+    if (!d || !t) return null;
+
+    var startMin = (+t[1]) * 60 + (+t[2]);
+    var mins = SHIFT_MINUTES;
+    var e = /^(\d{2}):(\d{2})$/.exec(String(s.end || ""));
+    if (e) {
+      // The desk is the authority on length, not the constant here.
+      mins = ((((+e[1]) * 60 + (+e[2])) - startMin) + 1440) % 1440;
+      if (mins === 0) mins = 1440;          // a full round trip, not zero
+    }
+
+    var start = floorInstant(+d[1], +d[2], +d[3], +t[1], +t[2], s.tz || "UTC");
+    return { start: start, end: start + mins * 60000 };
+  }
+
+  var asMs = function (at) {
+    if (at == null) return Date.now();
+    if (at instanceof Date) return at.getTime();
+    return typeof at === "number" ? at : Date.parse(at);
+  };
+
+  /* The wall-clock minute on the FLOOR, from a payload and an instant.
+
+     Every "HH:MM" in a payload is wall-clock time where the rigs are, and
+     the desk writes the zone in beside them. Reading them against the
+     machine's own clock is how this system spent a day believing no turn
+     was in progress on any of twelve rigs - the backend was fixed for
+     exactly that, and the rig was left reading `new Date().getHours()`.
+
+     On a properly provisioned floor the two agree and this changes
+     nothing. It matters when they do not: a rig imaged in UTC standing on
+     a floor at UTC+2 is two hours out, and what it gets wrong is which
+     operator is sitting at it. */
+  function minutesOnFloor(payload, at) {
+    var ms = asMs(at);
+    var tz = payload && payload.shift && payload.shift.tz;
+    if (!tz) {
+      // No zone in the payload - older pushes, and the local demo.
+      var here = new Date(ms);
+      return here.getHours() * 60 + here.getMinutes() + here.getSeconds() / 60;
+    }
+    var there = new Date(ms + zoneOffset(ms, tz));
+    return there.getUTCHours() * 60 + there.getUTCMinutes() + there.getUTCSeconds() / 60;
+  }
+
+  function coversAt(payload, at) {
+    var w = shiftWindow(payload);
+    if (!w) return false;
+    var ms = asMs(at);
+    return ms >= w.start && ms < w.end;
+  }
+
+  /* The one of these payloads whose own window contains `at`, or null.
+     Deliberately does not fall back: what to show when no shift is
+     running is the caller's decision, and hiding it here would let a
+     finished schedule look like a live one. */
+  function inForce(payloads, at) {
+    if (!Array.isArray(payloads)) return null;
+    var ms = asMs(at);
+    for (var i = 0; i < payloads.length; i++) {
+      if (coversAt(payloads[i], ms)) return payloads[i];
     }
     return null;
   }
@@ -1522,6 +1843,10 @@ pre.json .n { color: var(--accent); }
 
     rigPayload: rigPayload,
     whoIsOn: whoIsOn,
+    shiftWindow: shiftWindow,
+    coversAt: coversAt,
+    minutesOnFloor: minutesOnFloor,
+    inForce: inForce,
 
     hhmm: hhmm,
     blockStart: blockStart,
@@ -1624,7 +1949,11 @@ const GROUPS = window.DEMO_ROSTER.groups;
 
 const cfg = {
   shift: window.DEMO_ROSTER.defaults.shift,
-  date: new Date().toISOString().slice(0, 10),
+  /* The floor's date, not UTC's. toISOString() is UTC, so on a floor at
+     UTC+2 everything between midnight and 02:00 was dated to yesterday -
+     and a schedule dated yesterday covers a window that has already
+     closed, which puts every rig on Standby. */
+  date: new Date().toLocaleDateString("en-CA"),
   blockMin: FORMAT.blockMin,
   stintBlocks: FORMAT.stintBlocks,
   mode: FORMAT.mode,
@@ -1697,6 +2026,28 @@ function toast(msg) {
 
 /* Every payload the desk would push right now, for when there is no
  * server to ask. Same function the push itself uses. */
+/* Every shift of the day, which is what a push sends.
+ *
+ * A payload covers one shift. Pushing only the one on screen is why a rig
+ * ran until 16:00 and then went quiet: it was still holding a Morning
+ * schedule with no turns left in it, and nothing newer existed to pick
+ * up. Three shifts of twelve rigs is thirty-six payloads, well inside the
+ * sixty-four a push already accepts.
+ *
+ * The sheet is untouched. This is the same rotation drawn three times,
+ * once per shift, not a different format. */
+function dayPayloads() {
+  const out = [];
+  RE.SHIFTS.forEach(shift => {
+    const p = RE.buildPlan(Object.assign({}, cfg, { shift: shift.id }), GROUPS);
+    GROUPS.forEach(g => g.rigs.forEach(r => {
+      const one = RE.rigPayload(p, r);
+      if (one) out.push(one);
+    }));
+  });
+  return out;
+}
+
 function localPayloads() {
   const p = plan();
   const out = [];
@@ -1808,9 +2159,17 @@ function liveState() {
   const first    = floor.payloads[0];
   const startMin = toMin(first.shift.start);
 
-  const d        = new Date();
-  const nowMin   = d.getHours() * 60 + d.getMinutes();
-  const secInMin = d.getSeconds();
+  /* The floor's wall clock, not this browser's.
+   *
+   * Every "HH:MM" on this screen is time where the rigs are, and the
+   * payload carries the zone the desk wrote when it pushed. Reading them
+   * against whatever machine happens to be viewing meant a desk opened
+   * from another zone said "the shift has not started" while the floor
+   * was three hours into it. On a desk sitting in the same building the
+   * two are identical and nothing changes. */
+  const nowFloat = RE.minutesOnFloor(first, Date.now());
+  const nowMin   = Math.floor(nowFloat);
+  const secInMin = Math.floor((nowFloat - nowMin) * 60);
 
   /* Everything is measured from the top of the shift, so the night
    * shift's midnight crossing needs no special case anywhere below. */
@@ -1862,7 +2221,7 @@ function liveState() {
   }
 
   return {
-    clock: pad2(d.getHours()) + ":" + pad2(d.getMinutes()),
+    clock: pad2(Math.floor(nowMin / 60) % 24) + ":" + pad2(nowMin % 60),
     shift: first.shift,
     running: running,
     leftOfShift: RE.SHIFT_MINUTES - nowRel,
@@ -2017,10 +2376,23 @@ function renderLive() {
   $("now-shift").textContent = s.shift.label + " · " + s.shift.start + "-" + s.shift.end
     + (s.running ? " · " + hm(s.leftOfShift) + " left" : "");
 
-  $("now-src").textContent = floor.source === "floor"
-    ? "On the floor · pushed " + new Date(floor.pushedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-    : "Not pushed · showing this screen's plan";
-  $("now-src").className = "src " + floor.source;
+  /* Whether anything the floor is holding actually covers this minute.
+     The badge used to read "On the floor - pushed 4:12 PM" all night,
+     which is true and useless: at 00:05 the sheet it names has expired,
+     every rig is in Standby, and the one screen a manager would check to
+     find that out was quietly reassuring them instead. A rota that has
+     run out has to look different from one that is running. */
+  const covering = floor.payloads.some(p => RE.coversAt(p, Date.now()));
+  const pushedAtText = floor.pushedAt
+    ? new Date(floor.pushedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : "";
+  const state = floor.source !== "floor" ? "plan" : (covering ? "floor" : "dry");
+
+  $("now-src").textContent =
+    state === "plan" ? "Not pushed · showing this screen's plan"
+    : state === "floor" ? "On the floor · pushed " + pushedAtText
+    : "Nothing scheduled for now · last push " + pushedAtText;
+  $("now-src").className = "src " + state;
 
   const banner = $("banner");
   banner.hidden = s.running;
@@ -2349,9 +2721,9 @@ function renderPushPanel(p) {
  * of valid and invalid payloads, so the floor never runs half-updated. */
 async function pushFloor() {
   const btn = $("btn-push");
-  const payloads = localPayloads();
+  const payloads = dayPayloads();
   btn.disabled = true;
-  $("push-note").textContent = "Pushing " + payloads.length + " rigs...";
+  $("push-note").textContent = "Pushing " + RE.SHIFTS.length + " shifts...";
   try {
     const res = await fetch("/api/push", {
       method: "POST",
@@ -2361,8 +2733,10 @@ async function pushFloor() {
     const body = await res.json().catch(() => ({}));
     if (res.ok) {
       const at = new Date(body.pushedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-      $("push-note").textContent = "Pushed " + body.count + " rigs at " + at;
-      toast("Pushed " + body.count + " rigs");
+      const rigs = Math.round(body.count / RE.SHIFTS.length);
+      $("push-note").textContent = "Pushed " + rigs + " rigs, " +
+        RE.SHIFTS.length + " shifts, at " + at;
+      toast("Pushed " + rigs + " rigs for the day");
       await loadFloor(false);          // Live should now show the floor, not the plan
     } else {
       $("push-note").textContent = "Rejected: " + (body.error || res.status);

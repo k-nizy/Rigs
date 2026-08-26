@@ -495,7 +495,7 @@ test("with a server, Live says it is showing the floor",
 
 /* ------------------------------------------------------- the push */
 
-test("Push to floor sends twelve payloads that all validate",
+test("Push to floor sends every rig, for every shift of the day",
   withDesk({
     fetchImpl: (url, init) => {
       if (String(url) === "/api/state") return Promise.reject(new Error("empty"));
@@ -513,15 +513,34 @@ test("Push to floor sends twelve payloads that all validate",
     await new Promise(r => setImmediate(r));
     await new Promise(r => setImmediate(r));
 
-    assert.equal(sent.length, 12, "one payload per rig");
+    /* Twelve rigs across three shifts. A payload covers one shift, so
+       pushing only the one on screen is what left a rig holding a
+       finished Morning schedule at 16:00 with nothing newer to pick up. */
+    assert.equal(sent.length, 36, "twelve rigs, three shifts");
     sent.forEach(p => {
       const v = validate(p);
       assert.ok(v.ok, p.rigId + " failed validation: " + JSON.stringify(v.errors));
     });
-    assert.deepEqual(sent.map(p => p.rigId).sort(),
+
+    const rigs = [...new Set(sent.map(p => p.rigId))].sort();
+    assert.deepEqual(rigs,
       ["RIG-01", "RIG-02", "RIG-03", "RIG-04", "RIG-05", "RIG-06",
        "RIG-07", "RIG-08", "RIG-09", "RIG-10", "RIG-11", "RIG-12"]);
-    assert.match(desk.$("push-note").textContent, /^Pushed 12 rigs at /);
+
+    const shifts = [...new Set(sent.map(p => p.shift.label))].sort();
+    assert.deepEqual(shifts, ["Day", "Morning", "Night"],
+      "the whole day has to go up, or the floor stops at the first boundary");
+
+    // Every rig gets every shift, and no shift twice.
+    for (const r of rigs) {
+      const mine = sent.filter(p => p.rigId === r).map(p => p.shift.label).sort();
+      assert.deepEqual(mine, ["Day", "Morning", "Night"], r + " is missing a shift");
+    }
+
+    // It still fits the contract: the push route accepts at most 64.
+    assert.ok(sent.length <= 64, "a push larger than the route accepts");
+
+    assert.match(desk.$("push-note").textContent, /^Pushed 12 rigs, 3 shifts, at /);
   }));
 
 test("a push the server rejects says so, and does not pretend",
@@ -569,3 +588,148 @@ const PUSHED = (() => {
     { shift: "morning", date: "2026-08-23", blockMin: 15, stintBlocks: 3, mode: "hold" }, groups);
   return groups[0].rigs.map(r => RE.rigPayload(p, r));
 })();
+
+
+/* --------------------------------------------- a rota that has run out
+
+   The badge read "On the floor - pushed 4:12 PM" all night. Every word of
+   that was true and none of it was useful: by 00:05 the sheet it named
+   had expired, all twelve rigs were sitting in Standby, and the one
+   screen a manager would open to find that out was quietly reassuring
+   them that the floor was running. */
+
+const EXPIRED = (() => {
+  global.window = global;
+  require(path.resolve(__dirname, "../packages/engine/rotation-engine.js"));
+  const RE = global.RotationEngine;
+  const groups = [{
+    key: "A", task: "Pushed task",
+    rigs: ["RIG-01", "RIG-02", "RIG-03"],
+    ops: ["Pushed Person 1", "Pushed Person 2", "Pushed Person 3", "Pushed Person 4"],
+  }];
+  const p = RE.buildPlan(
+    { shift: "morning", date: "2026-08-22", blockMin: 15, stintBlocks: 3, mode: "hold" }, groups);
+  return groups[0].rigs.map(r => RE.rigPayload(p, r));
+})();
+
+const servedBy = (payloads, pushedAt) => (url) => {
+  if (String(url) === "/api/state") {
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({
+      pushedAt: pushedAt, rigs: payloads.map(x => x.rigId) }) });
+  }
+  const id = decodeURIComponent(String(url).split("/")[3]);
+  return Promise.resolve({ ok: true, json: () => Promise.resolve(
+    payloads.find(x => x.rigId === id)) });
+};
+
+test("Live says plainly when nothing on the floor covers right now",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(EXPIRED, "2026-08-22T09:58:00.000Z") },
+    async desk => {
+      assert.equal(desk.$("now-src").className, "src dry",
+        "a floor holding a rota that expired yesterday was badged as running");
+      assert.match(desk.$("now-src").textContent, /Nothing scheduled for now/,
+        "the badge did not say the floor had run dry");
+    }));
+
+test("it still names when the last push happened, so it can be judged",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(EXPIRED, "2026-08-22T09:58:00.000Z") },
+    async desk => {
+      assert.match(desk.$("now-src").textContent, /last push/,
+        "a manager needs to know how stale it is, not just that it is stale");
+    }));
+
+test("a floor that is genuinely running is still badged as running",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(PUSHED, "2026-08-23T09:58:00.000Z") },
+    async desk => {
+      /* The control. Without it the test above would pass on a desk that
+         had simply stopped believing in the floor altogether. */
+      assert.equal(desk.$("now-src").className, "src floor");
+      assert.match(desk.$("now-src").textContent, /On the floor/);
+    }));
+
+
+/* ------------------------------------------- whose clock the desk reads
+
+   Every "HH:MM" on this screen is time where the rigs are, and the
+   payload carries the zone the desk wrote when it pushed. The desk was
+   reading them against whatever browser happened to be looking, so a desk
+   opened from another zone announced "the shift has not started" while
+   the floor was hours into it - and the twelve cards showed the opening
+   line-up rather than who was actually on.
+
+   The backend was fixed for this, then the rig, then this. Same mistake,
+   three places, because each one had its own idea of "now". */
+
+function pushedIn(tz) {
+  return PUSHED.map(p => {
+    const copy = JSON.parse(JSON.stringify(p));
+    copy.shift.tz = tz;
+    return copy;
+  });
+}
+
+/* These two zones used to be written down as Etc/GMT-2 and Etc/GMT-3,
+   with a comment saying UTC+2 was "the zone the test machine runs in".
+   That was true of one machine. CI runs in UTC and failed both of them
+   the first time it ran, which is the whole argument for having CI: a
+   test about reading the right clock could only pass on the clock it was
+   written on.
+
+   So the zones are derived from wherever this is running. The harness
+   builds its fixed instant with `new Date(y, m, d, H, M)`, which is local
+   wall time, so "the same building" is this machine's own zone and "one
+   hour east" is the next whole hour beyond it - a real difference in any
+   zone, including the half-hour ones, and never zero. */
+const CLOCK_AT = "10:37:22";
+const FIXED_AT = new Date(2026, 7, 23, 10, 37, 22);
+const LOCAL_MIN = -FIXED_AT.getTimezoneOffset();          // minutes east of UTC
+
+/* Etc/GMT-N is UTC+N and Etc/GMT+N is UTC-N - the sign is inverted, and
+   getting that wrong builds names like "Etc/GMT--4" on any machine west
+   of UTC. The range stops at Etc/GMT-14, so a floor at UTC+14 has no
+   whole hour east of it and takes the one west instead; all that matters
+   is that the two zones differ. */
+const etcGMT = (h) => (h === 0 ? "Etc/GMT" : h > 0 ? "Etc/GMT-" + h : "Etc/GMT+" + -h);
+const OTHER_HOURS = Math.floor(LOCAL_MIN / 60) + 1 <= 14
+  ? Math.floor(LOCAL_MIN / 60) + 1
+  : Math.ceil(LOCAL_MIN / 60) - 1;
+
+const SAME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+const OTHER_ZONE = etcGMT(OTHER_HOURS);
+const OTHER_SHIFT = OTHER_HOURS * 60 - LOCAL_MIN;         // never 0
+
+/* "10:37" plus n minutes, which is all the assertions below need. */
+function clockPlus(minutes) {
+  const local = new Date(FIXED_AT);
+  local.setMinutes(local.getMinutes() + minutes);
+  return String(local.getHours()).padStart(2, "0") + ":"
+       + String(local.getMinutes()).padStart(2, "0");
+}
+
+test("the clock on the desk is the floor's, not the browser's",
+  withDesk({ at: CLOCK_AT, fetchImpl: servedBy(pushedIn(OTHER_ZONE), "2026-08-23T09:58:00.000Z") },
+    async desk => {
+      const onThatFloor = clockPlus(OTHER_SHIFT);
+      assert.notEqual(onThatFloor, clockPlus(0),
+        "the two zones must differ or this test proves nothing");
+      assert.equal(desk.$("now-time").textContent, onThatFloor,
+        "the desk showed its own clock; on that floor it is " + onThatFloor);
+    }));
+
+test("a desk in the same building as the floor is unchanged",
+  withDesk({ at: CLOCK_AT, fetchImpl: servedBy(pushedIn(SAME_ZONE), "2026-08-23T09:58:00.000Z") },
+    async desk => {
+      /* The normal case, and the reason this was never noticed. */
+      assert.equal(desk.$("now-time").textContent, clockPlus(0));
+    }));
+
+test("the board shows who is on now, by the floor's clock",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(pushedIn(OTHER_ZONE), "2026-08-23T09:58:00.000Z") },
+    async desk => {
+      /* The clock is only the visible half. What matters is that the
+         twelve cards name the operators who are actually at the rigs. */
+      const here = desk.board()[0].rigs.map(r => r.op).join(",");
+      assert.ok(here.length, "the board is empty");
+      assert.match(desk.$("now-src").className, /floor/,
+        "a running floor was badged as not running");
+    }));

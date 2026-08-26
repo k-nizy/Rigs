@@ -12,16 +12,19 @@
  * =================================================================== */
 
 :root {
-  /* cool-steel neutrals - aluminium, not paper */
-  --ground:      #f4f6f7;
-  --panel:       #ffffff;
-  --panel-2:     #e9edf0;
+  /* Verlet's neutrals, via packages/brand/brand.css.
+     The desk keeps its own vocabulary - --panel-2 still means what it
+     always meant - so every rule below is untouched and the whole screen
+     restyles from one place. */
+  --ground:      var(--v-ground);
+  --panel:       var(--v-panel);
+  --panel-2:     var(--v-sunk);
   --panel-3:     #dfe4e9;
-  --ink:         #0f1418;
-  --ink-2:       #414c57;
-  --muted:       #6f7b87;
-  --line:        #dbe1e7;
-  --line-2:      #bfc8d1;
+  --ink:         var(--v-ink);
+  --ink-2:       var(--v-ink-2);
+  --muted:       var(--v-muted);
+  --line:        var(--v-line);
+  --line-2:      var(--v-line-2);
 
   --accent:      #b06d00;   /* amber, darkened to stay legible on white */
   --accent-fill: #ffc400;   /* the rig-floor signal yellow */
@@ -38,7 +41,7 @@
   --g2: #4a7c2f;  --g2-soft: #e7f1df;
   --g3: #8e3b52;  --g3-soft: #f7e4ea;
 
-  --radius: 4px;
+  --radius: var(--v-radius-sm);
 }
 
 :root:not([data-theme="light"]) { color-scheme: light; }
@@ -46,15 +49,15 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --ground:      #0c0f12;
-    --panel:       #14181d;
-    --panel-2:     #1b2128;
+    --ground:      var(--v-ground);
+    --panel:       var(--v-panel);
+    --panel-2:     var(--v-sunk);
     --panel-3:     #232a32;
-    --ink:         #e9edf1;
-    --ink-2:       #b0bac4;
-    --muted:       #7c8794;
-    --line:        #242b33;
-    --line-2:      #384250;
+    --ink:         var(--v-ink);
+    --ink-2:       var(--v-ink-2);
+    --muted:       var(--v-muted);
+    --line:        var(--v-line);
+    --line-2:      var(--v-line-2);
 
     --accent:      #ffc400;
     --accent-fill: #ffc400;
@@ -104,7 +107,7 @@
 body {
   background: var(--ground);
   color: var(--ink);
-  font-family: Archivo, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--v-sans);
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -124,16 +127,25 @@ main { display: flex; flex-direction: column; gap: 1.1rem; }
 /* ------------------------------------------------------------ atoms */
 
 .mono {
-  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
 }
 
 .eyebrow {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.66rem;
   letter-spacing: 0.15em;
   text-transform: uppercase;
   color: var(--muted);
+}
+
+/* The mark sits on the eyebrow's baseline rather than above it. Sized in
+   em so it tracks the label it belongs to. */
+.eyebrow .v-mark {
+  width: 1.35em;
+  height: 1.35em;
+  vertical-align: -0.35em;
+  margin-right: 0.45em;
 }
 
 html { scroll-behavior: smooth; }
@@ -167,7 +179,7 @@ button, select, input, summary, .gcard, .grp, .src, .btn {
 .btn.ghost:hover { background: var(--panel-2); opacity: 1; }
 
 .grp-key {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-weight: 600;
   font-size: 0.7rem;
   letter-spacing: 0.1em;
@@ -191,13 +203,16 @@ header.masthead {
 }
 
 .masthead h1 {
-  font-size: clamp(1.35rem, 3vw, 1.9rem);
-  font-weight: 800;
-  letter-spacing: -0.035em;
+  /* The display face, as on the landing page. Only the title takes it -
+     everything below is read across quickly and stays sans. */
+  font-family: var(--v-display);
+  font-size: clamp(1.5rem, 3.2vw, 2.1rem);
+  font-weight: 400;
+  letter-spacing: var(--v-display-tracking);
   line-height: 1;
 }
 .masthead h1 .ver {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.42em;
   font-weight: 500;
   letter-spacing: 0;
@@ -234,7 +249,7 @@ header.masthead {
 }
 .now-clock { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; }
 .now-clock b {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: clamp(1.9rem, 5vw, 2.6rem);
   font-weight: 600;
@@ -246,7 +261,7 @@ header.masthead {
 .now-right { display: flex; align-items: center; gap: 0.7rem; }
 
 .src {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.68rem;
   letter-spacing: 0.06em;
   padding: 0.16rem 0.5rem;
@@ -256,6 +271,9 @@ header.masthead {
 }
 .src.floor { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
 .src.plan  { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+/* Pushed, but nothing it holds covers right now: the rigs are standing
+   still. Wears the warning colour because somebody has to act. */
+.src.dry   { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
 
 .banner {
   background: var(--panel-2);
@@ -302,7 +320,7 @@ header.masthead {
 
 .rig-top { display: flex; align-items: baseline; gap: 0.6rem; }
 .rig-id {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.74rem;
   font-weight: 600;
   color: var(--gc);
@@ -353,7 +371,7 @@ header.masthead {
   font-size: 0.8rem;
 }
 .off-tag {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.64rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -468,7 +486,7 @@ header.masthead {
 }
 .fit[open] > summary::after { content: "Hide"; }
 .fit .v-sub {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.74rem;
   color: var(--muted);
@@ -504,7 +522,7 @@ header.masthead {
 .check.soft i { color: var(--warn); }
 .check b { font-weight: 500; }
 .check span {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.73rem;
   color: var(--ink-2);
@@ -569,7 +587,7 @@ section { display: flex; flex-direction: column; }
 .op-list { display: flex; flex-direction: column; gap: 0.3rem; }
 .op-line { display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 0.4rem; }
 .op-line .idx {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.66rem;
   color: var(--muted);
   text-align: right;
@@ -586,7 +604,7 @@ section { display: flex; flex-direction: column; }
 }
 .rig-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.32rem; margin-top: 0.35rem; }
 .rig-row input {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.74rem !important;
   text-align: center;
 }
@@ -605,7 +623,7 @@ section { display: flex; flex-direction: column; }
 }
 .actions .btn { padding: 0.5rem 1.1rem; }
 .actions-note {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.74rem;
   color: var(--muted);
 }
@@ -664,7 +682,7 @@ th.stub {
 }
 th.stub i {
   font-style: normal;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.6rem;
   letter-spacing: 0.11em;
   text-transform: uppercase;
@@ -674,7 +692,7 @@ th.stub i {
 th.stub b { font-size: 0.84rem; font-weight: 600; letter-spacing: -0.01em; }
 th.stub small {
   float: right;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.66rem;
   color: var(--muted);
@@ -684,7 +702,7 @@ th.stub small {
 thead th.stub {
   z-index: 4;
   background: var(--panel-2);
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.63rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -697,7 +715,7 @@ th.tick {
   min-width: 62px;
   background: var(--panel-2);
   border-bottom: 1px solid var(--line-2);
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.64rem;
   font-weight: 500;
@@ -710,7 +728,7 @@ th.tick.hour { color: var(--ink); font-weight: 600; border-left: 1px solid var(-
 /* a group's title row */
 tr.band th.stub { background: var(--panel-2); }
 tr.band th.stub b {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.67rem;
   font-weight: 600;
   letter-spacing: 0.11em;
@@ -724,7 +742,7 @@ tr.band td {
 }
 tr.band td b { font-size: 0.8rem; font-weight: 600; }
 tr.band td span {
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.67rem;
   color: var(--muted);
   margin-left: 0.8rem;
@@ -736,7 +754,7 @@ td.cell {
   height: 30px;
   text-align: center;
   white-space: nowrap;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.7rem;
   font-weight: 500;
@@ -783,14 +801,14 @@ td.idle { background: var(--panel); color: var(--crit); }
   border-bottom: 1px solid var(--line);
   background: var(--panel-2);
 }
-.payload-head b { font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.88rem; }
+.payload-head b { font-family: var(--v-mono); font-size: 0.88rem; }
 .payload-head span { font-size: 0.77rem; color: var(--muted); }
 
 pre.json {
   margin: 0;
   padding: 0.9rem 1rem;
   overflow-x: auto;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-size: 0.72rem;
   line-height: 1.6;
   color: var(--ink-2);
@@ -838,7 +856,7 @@ pre.json .n { color: var(--accent); }
   align-items: baseline;
   gap: 0.34em;
   flex: none;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.66rem;
   font-weight: 600;
@@ -889,7 +907,7 @@ pre.json .n { color: var(--accent); }
 .offrow .dest { margin-left: auto; }
 .offrow .left {
   flex: none;
-  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-family: var(--v-mono);
   font-variant-numeric: tabular-nums;
   font-size: 0.95rem;
   font-weight: 600;
