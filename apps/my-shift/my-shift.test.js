@@ -33,6 +33,9 @@ const { mountMyShift } = require("./test/dom.js");
 
 const REPO = path.resolve(__dirname, "..", "..");
 
+/* The zone this machine is in. */
+const HERE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
 /* ------------------------------------------------ the day, from the engine */
 
 function meiChensMorning() {
@@ -67,7 +70,11 @@ function meiChensMorning() {
   return {
     operatorId: "op-a2",
     shift: { label: "Morning", date: "2026-08-27", start: "08:00", end: "16:00",
-             tz: "UTC", group: A.key, task: A.task },
+             /* This machine's own zone, so "the floor" and "this device"
+                agree - the ordinary case, and the one every test below
+                is about. The zone mattering at all is proved separately,
+                by pushing a day from somewhere else. */
+             tz: HERE, group: A.key, task: A.task },
     turns: turns,
   };
 }
@@ -221,8 +228,7 @@ test("the day is the engine's, turn for turn",
 test("her morning walks across all three of the group's rigs",
   mounted(AN_OPERATOR, {}, "11:12", async app => {
     /* The thing no rig can answer, and the reason this screen exists. */
-    const rigs = new Set(app.rows().filter(r => r.kind === "work")
-      .map(r => r.what.replace("Work ", "")));
+    const rigs = new Set(app.rows().filter(r => r.kind === "work").map(r => r.rig));
     assert.deepEqual([...rigs].sort(), ["RIG-01", "RIG-02", "RIG-03"]);
   }));
 
@@ -299,16 +305,24 @@ test("during a break the strip says break, not a rig",
     assert.match(now.text, /08:45/);
   }));
 
-test("before the shift starts it says when it starts",
+test("before the shift starts it counts down to the start",
   mounted(AN_OPERATOR, {}, "06:30", async app => {
-    assert.equal(app.now().kind, null);
-    assert.match(app.now().text, /starts at 08:00/);
+    const now = app.now();
+    assert.equal(now.kind, "off");
+    assert.match(now.where, /starts at 08:00/);
+    /* Not a bare time - how long from now, which is the thing being
+       asked at 06:30. 08:00 less 06:30 is an hour and a half. */
+    assert.equal(now.left, "1h 30m");
+    assert.match(now.hand, /RIG-02/, "it should name the rig she starts on");
   }));
 
 test("after the shift ends it says so, rather than counting down to nothing",
   mounted(AN_OPERATOR, {}, "17:20", async app => {
-    assert.equal(app.now().kind, null);
-    assert.match(app.now().text, /finished/i);
+    const now = app.now();
+    assert.equal(now.kind, "off");
+    assert.match(now.text, /finished|done/i);
+    assert.equal(now.left, "", "nothing left to count down to");
+    assert.equal(app.next().hidden, true, "and nothing comes next");
   }));
 
 test("the row happening now is marked, and the ones gone are dimmed",
@@ -421,3 +435,335 @@ test("it only ever asks the service for its own shift",
         "my-shift asked for " + p);
     });
   }));
+
+/* =====================================================================
+ * The redesign: what an operator can answer without reading
+ *
+ * The screen is read in three-second glances by somebody walking
+ * between rigs. Everything below is about that: the countdown is the
+ * page, the next thing is visible without scrolling, the day is drawn
+ * to scale, and the hours already gone are folded away.
+ * ===================================================================== */
+
+/* ------------------------------------------------------- the clock */
+
+test("the floor's clock is on screen, and named",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    /* Times on this page are the floor's. An operator reading it from
+       another zone has no way to know that unless it is said. */
+    const c = app.clock();
+    assert.equal(c.hidden, false);
+    assert.equal(c.time, "11:12");
+    assert.equal(c.zone, HERE);
+  }));
+
+test("the clock goes when the day does",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    app.click(app.$("btn-signout"));
+    await app.settle();
+    assert.equal(app.clock().hidden, true);
+  }));
+
+/* --------------------------------------------------- the countdown */
+
+test("the countdown says what it is counting to",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    /* A bare 18:00 is a number without a question. */
+    const now = app.now();
+    assert.equal(now.left, "18:00");
+    assert.match(now.unit, /until you hand over/i);
+  }));
+
+test("on a break it counts to being back, not to handing over",
+  mounted(AN_OPERATOR, {}, "08:35", async app => {
+    const now = app.now();
+    assert.equal(now.kind, "Break");
+    assert.match(now.unit, /until you are back/i);
+    assert.match(now.where, /break/i);
+  }));
+
+test("the bar shows how far through the turn she is",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    /* 10:45-11:30 is 45 minutes; at 11:12 that is 27 of them. */
+    assert.equal(app.now().barWidth, "60.0%");
+  }));
+
+test("five minutes out, the hero changes state and says hand over",
+  mounted(AN_OPERATOR, {}, "11:27", async app => {
+    /* The rig warns before a handover. This has to as well, or an
+       operator learns about it from the rig they are walking away from. */
+    const now = app.now();
+    assert.equal(now.kind, "soon");
+    assert.match(now.label, /hand over soon/i);
+    assert.equal(now.left, "3:00");
+  }));
+
+test("earlier in the same turn it is not shouting yet",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    assert.equal(app.now().kind, "work");
+    assert.match(app.now().label, /on now/i);
+  }));
+
+test("a break does not get the handover warning",
+  mounted(AN_OPERATOR, {}, "08:43", async app => {
+    /* Two minutes left of a break is not a handover, and dressing it as
+       one would cry wolf four times a shift. */
+    assert.equal(app.now().kind, "Break");
+  }));
+
+/* --------------------------------------------------------- what next */
+
+test("what happens next is on screen without scrolling",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    const next = app.next();
+    assert.equal(next.hidden, false);
+    assert.equal(next.kind, "Think");
+    assert.match(next.sub, /11:30/);
+    assert.match(next.in, /18m/);
+  }));
+
+test("next names the rig she goes back to",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    /* The question at a handover is not "what" but "where". */
+    assert.match(app.next().sub, /RIG-01/);
+  }));
+
+test("during a break, next is the rig she is walking to",
+  mounted(AN_OPERATOR, {}, "08:35", async app => {
+    const next = app.next();
+    assert.equal(next.kind, "work");
+    assert.match(next.what, /RIG-01/);
+  }));
+
+/* ----------------------------------------------------------- progress */
+
+test("she can see how far through the shift she is",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    const p = app.progress();
+    assert.equal(p.hidden, false);
+    assert.match(p.text, /Turn/);
+    assert.match(p.text, /of 9/, "nine turns in her day");
+    assert.match(p.text, /worked/);
+    assert.match(p.text, /to go/);
+  }));
+
+test("progress counts the turn in progress, not just the finished ones",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    /* 30 + 45 + 45 behind her, plus 27 minutes of the current turn. */
+    assert.match(app.progress().text, /2h 27m worked/);
+  }));
+
+/* ------------------------------------------------------ time to scale */
+
+test("a fifteen minute break is drawn shorter than a forty-five minute turn",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    /* Equal-height rows for unequal spans draw the wrong day, and the
+       shape of the day is most of what a timeline is for. */
+    const rows = app.rows();
+    const work45 = rows.find(r => r.kind === "work" && r.mins === "45m");
+    const break15 = rows.find(r => r.kind === "Break");
+    assert.ok(parseInt(work45.height) > parseInt(break15.height),
+      "45m row " + work45.height + " should be taller than 15m " + break15.height);
+  }));
+
+test("even the shortest row stays big enough to read and tap",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    app.rows().forEach(r => {
+      assert.ok(parseInt(r.height) >= 46, r.at + " is only " + r.height);
+    });
+  }));
+
+test("every row says how long it lasts",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    app.rows().forEach(r => assert.ok(r.mins, "no duration on the row at " + r.at));
+  }));
+
+/* -------------------------------------------------- the past, folded */
+
+test("the hours already gone are folded away",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    /* Opening this mid-shift should land on now, not on 08:00. */
+    const rows = app.rows();
+    const past = rows.filter(r => r.isPast);
+    assert.ok(past.length > 0);
+    assert.ok(past.every(r => r.hidden), "past rows should start folded");
+    assert.ok(app.visibleRows().every(r => !r.isPast));
+  }));
+
+test("the fold says how many rows it is hiding, and opens",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    const t = app.pastToggle();
+    assert.equal(t.hidden, false);
+    assert.match(t.text, /already done/);
+    assert.equal(t.expanded, "false");
+
+    app.click(app.$("past-toggle"));
+    await app.settle();
+
+    assert.equal(app.pastToggle().expanded, "true");
+    assert.ok(app.rows().filter(r => r.isPast).every(r => !r.hidden),
+      "the past should be showing once asked for");
+  }));
+
+test("at the start of a shift there is nothing to fold",
+  mounted(AN_OPERATOR, {}, "08:05", async app => {
+    assert.equal(app.pastToggle().hidden, true);
+    assert.ok(app.visibleRows().length > 0);
+  }));
+
+/* ---------------------------------------------------------- freshness */
+
+test("a refresh that fails keeps the day and marks it stale",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    /* A schedule you can still read beats an error message that
+       replaced it. */
+    assert.ok(app.rows().length > 0);
+    assert.equal(app.$("stale").hidden, true);
+
+    global.fetch = () => Promise.reject(new Error("network gone"));
+    await app.reload();
+
+    assert.ok(app.rows().length > 0, "the day should still be on screen");
+    assert.equal(app.$("stale").hidden, false);
+    assert.match(app.$("stale").textContent, /could not reach/i);
+  }));
+
+test("it says when it last heard from the service",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    assert.match(app.$("checked").textContent, /last checked 11:12/i);
+  }));
+
+test("a schedule that changes under her says so",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    /* Swapping somebody's day silently is how they walk to the wrong
+       rig. */
+    const moved = JSON.parse(JSON.stringify(DAY));
+    moved.turns[3].rigId = "RIG-03";
+    global.fetch = (url) => String(url) === "/api/me/shift"
+      ? Promise.resolve({ ok: true, json: () => Promise.resolve(moved) })
+      : Promise.reject(new Error("no"));
+    await app.reload();
+
+    assert.equal(app.$("empty").hidden, false);
+    assert.match(app.$("empty").textContent, /schedule changed/i);
+  }));
+
+/* ------------------------------------------- whose clock is this, anyway
+ *
+ * Every time on this page is floor wall-clock, written into the payload
+ * by the desk. An operator reading their shift from somewhere else - on
+ * a train, at home the night before, on a floor whose machines were
+ * imaged in a different zone - must be shown the floor's clock and not
+ * their own. The desk had this exact bug and it is fixed in one place,
+ * `minutesOnFloor()` in the shared engine; this proves this screen uses
+ * it rather than reaching for `new Date()`.
+ */
+
+/* A zone some hours from this machine's, whichever machine that is. */
+function elsewhere() {
+  const offsetOf = tz => {
+    const p = {};
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hour12: false, hour: "2-digit", minute: "2-digit",
+    }).formatToParts(new Date()).forEach(x => { p[x.type] = x.value; });
+    return (+p.hour % 24) * 60 + (+p.minute);
+  };
+  const here = offsetOf(HERE);
+  const candidates = ["Pacific/Auckland", "Asia/Tokyo", "Europe/Lisbon",
+                      "America/Chicago", "Pacific/Honolulu", "UTC"];
+  return candidates.find(tz => Math.abs(offsetOf(tz) - here) > 90) || null;
+}
+
+const AWAY = elsewhere();
+
+test("the clock is the floor's, not this device's", async () => {
+  if (!AWAY) return;                       // no zone far enough to tell
+  const away = JSON.parse(JSON.stringify(DAY));
+  away.shift.tz = AWAY;
+
+  const app = await mountMyShift({ fetchImpl: service(AN_OPERATOR, { body: away }),
+                                   at: "11:12" });
+  try {
+    assert.notEqual(app.clock().time, "11:12",
+      "this device says 11:12; on that floor it does not, so the page "
+      + "showed its own clock instead of the floor's");
+    assert.equal(app.clock().zone, AWAY,
+      "and it should say which floor's clock it is showing");
+  } finally { app.stop(); }
+});
+
+test("a phone in the same building as the floor is unchanged", async () => {
+  /* The normal case, and the reason a zone bug goes unnoticed. */
+  const app = await mountMyShift({ fetchImpl: service(AN_OPERATOR, {}), at: "11:12" });
+  try {
+    assert.equal(app.clock().time, "11:12");
+  } finally { app.stop(); }
+});
+
+test("which turn is 'now' follows the floor's clock too", async () => {
+  if (!AWAY) return;
+  const away = JSON.parse(JSON.stringify(DAY));
+  away.shift.tz = AWAY;
+
+  const here = await mountMyShift({ fetchImpl: service(AN_OPERATOR, {}), at: "11:12" });
+  const hereNow = here.rows().find(r => r.isNow);
+  here.stop();
+
+  const there = await mountMyShift({ fetchImpl: service(AN_OPERATOR, { body: away }),
+                                     at: "11:12" });
+  const thereNow = there.rows().find(r => r.isNow);
+  there.stop();
+
+  /* Being told you are mid-turn when the floor has not started is worse
+     than a wrong clock - it is a wrong answer to "am I late". */
+  assert.notDeepEqual(
+    hereNow ? hereNow.at : null,
+    thereNow ? thereNow.at : null,
+    "the same instant picked the same turn in two different zones");
+});
+
+/* ------------------------------------------- the one thing headless misses
+ *
+ * `hidden` is a property to a DOM stub and a stylesheet rule to a
+ * browser. Every class on this page that sets `display: flex` outranks
+ * the browser's built-in `[hidden] { display: none }`, so an element
+ * told to hide draws anyway - as an empty sliver, or worse, as a whole
+ * second screen stacked under the first.
+ *
+ * The desk hit this and wrote it down; this page reintroduced it and it
+ * took a browser to see. No stub can catch it, so what is asserted here
+ * is that the rule which fixes it is still in the stylesheet.
+ */
+
+test("the stylesheet makes `hidden` actually hide", () => {
+  const fs = require("node:fs");
+  const css = fs.readFileSync(
+    path.join(__dirname, "assets/my-shift.css"), "utf8");
+
+  assert.match(css, /\[hidden\]\s*\{[^}]*display:\s*none\s*!important/,
+    "without this rule every element hidden by attribute still paints, "
+    + "and no test in this file can tell");
+});
+
+test("every element this page hides by attribute is covered by that rule", () => {
+  const fs = require("node:fs");
+  const js = fs.readFileSync(path.join(__dirname, "assets/my-shift.js"), "utf8");
+  const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
+
+  /* Anything the script toggles, plus anything shipped hidden. */
+  const toggled = new Set();
+  (js.match(/\$\("([a-z-]+)"\)\.hidden\s*=/g) || [])
+    .forEach(m => toggled.add(m.match(/\$\("([a-z-]+)"\)/)[1]));
+  (html.match(/id="([a-z-]+)"[^>]*\shidden/g) || [])
+    .forEach(m => toggled.add(m.match(/id="([a-z-]+)"/)[1]));
+
+  assert.ok(toggled.size >= 6,
+    "expected several hidden-toggled elements, found " + [...toggled].join(", "));
+
+  /* The global rule covers all of them by construction - this asserts
+     nobody has since narrowed it to a specific selector. */
+  const css = fs.readFileSync(path.join(__dirname, "assets/my-shift.css"), "utf8");
+  const rule = css.match(/^\[hidden\]\s*\{[^}]*\}/m);
+  assert.ok(rule, "the rule is no longer global; " + toggled.size
+    + " elements rely on it: " + [...toggled].sort().join(", "));
+});
