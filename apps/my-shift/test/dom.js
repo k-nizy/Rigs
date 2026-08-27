@@ -29,6 +29,7 @@ class El {
     this.hidden = false;
     this.disabled = false;
     this.value = "";
+    this.style = { _p: {}, setProperty(k, v) { this._p[k] = v; }, width: "" };
     this._on = {};
     const self = this;
     this.classList = {
@@ -38,6 +39,16 @@ class El {
     };
   }
   appendChild(n) { this.children.push(n); return n; }
+  /* The DOM's own name for the same list. The render code asks whether
+     it appended anything before showing a line; without this it reads
+     undefined and throws. */
+  get childNodes() { return this.children; }
+  /* The perch asks whether the hero has scrolled away. Headlessly
+     nothing scrolls, so the hero is always on screen and the perch
+     always hidden - which is the state the tests care about. */
+  getBoundingClientRect() { return { top: 0, bottom: 100, height: 100 }; }
+  scrollIntoView() { this._scrolledTo = true; }
+  querySelector() { return null; }
   setAttribute(k, v) { this.attrs[k] = String(v); }
   getAttribute(k) { return this.attrs[k]; }
   removeAttribute(k) { delete this.attrs[k]; }
@@ -77,23 +88,39 @@ async function mountMyShift(opts) {
   (html.match(/id="([^"]+)"/g) || []).forEach(m => mk(m.slice(4, -1)));
 
   const intervals = [];
+  const timerFns = [];
   const realSetInterval = global.setInterval;
 
   global.Date = FakeDate;
-  global.setInterval = (fn, ms) => { const id = realSetInterval(fn, ms); intervals.push(id); return id; };
+  global.setInterval = (fn, ms) => {
+    /* Kept so a test can make time pass on purpose rather than waiting
+       sixty seconds for the page to re-read its own shift. */
+    timerFns.push(fn);
+    const id = realSetInterval(fn, ms);
+    intervals.push(id);
+    return id;
+  };
   global.document = {
+    querySelector: () => null,
     createElement: t => new El(t),
     createTextNode: t => { const n = new El("#text"); n.textContent = String(t); return n; },
     getElementById: id => byId[id] || (missingIds.push(id), mk(id)),
     body: new El("body"),
   };
   global.window = global;
+  /* The page listens for scroll to keep the perch in step. Nothing
+     scrolls headlessly, so this only has to exist. */
+  const listeners = {};
+  global.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
+  global.removeEventListener = () => {};
+  global.scrollTo = () => {};
   global.fetch = opts.fetchImpl || (() => Promise.reject(new Error("no server")));
 
   // A fresh session module per mount - its state is a singleton, and one
   // test's sign-in must not reach the next.
   delete require.cache[require.resolve(path.join(REPO, "packages/session/session.js"))];
   require(path.join(REPO, "packages/session/session.js"));
+  require(path.join(REPO, "packages/engine/rotation-engine.js"));
 
   const src = fs.readFileSync(path.join(ROOT, "assets/my-shift.js"), "utf8");
   new Function(src)();
@@ -122,14 +149,22 @@ async function mountMyShift(opts) {
 
     /* The timeline, read back as plain rows. */
     rows() {
-      return byId["timeline"].children.map(li => ({
-        kind: li.attrs["data-kind"],
-        at: li.children[0].textContent,
-        what: find(li, "tl-what")[0].textContent,
-        sub: find(li, "tl-sub")[0].textContent,
-        isNow: li.classList.contains("is-now"),
-        isPast: li.classList.contains("is-past"),
-      }));
+      return byId["timeline"].children.map(li => {
+        const body = find(li, "tl-b")[0];
+        const sub = find(li, "tl-sub")[0];
+        return {
+          kind: li.attrs["data-kind"],
+          at: li.children[0].textContent,
+          what: find(li, "tl-what")[0].textContent,
+          rig: (find(li, "mono")[0] || {}).textContent || null,
+          mins: (find(li, "tl-mins")[0] || {}).textContent || null,
+          sub: sub ? sub.textContent : "",
+          height: body && body.style ? body.style._p["--h"] : null,
+          hidden: !!li.hidden,
+          isNow: li.classList.contains("is-now"),
+          isPast: li.classList.contains("is-past"),
+        };
+      });
     },
 
     now() {
@@ -137,9 +172,52 @@ async function mountMyShift(opts) {
       return {
         kind: box.attrs["data-kind"] || null,
         text: box.textContent,
+        label: find(box, "now-k").map(n => n.textContent)[0] || "",
+        where: find(box, "now-where").map(n => n.textContent)[0] || "",
         left: find(box, "now-left").map(n => n.textContent)[0] || "",
+        unit: find(box, "now-unit").map(n => n.textContent)[0] || "",
+        hand: find(box, "now-hand").map(n => n.textContent)[0] || "",
+        barWidth: (() => {
+          const bar = find(box, "bar")[0];
+          const fill = bar && bar.children[0];
+          return fill && fill.style ? fill.style.width : null;
+        })(),
       };
     },
+
+    next() {
+      const box = byId["next"];
+      return {
+        hidden: box.hidden,
+        kind: box.attrs["data-kind"] || null,
+        text: box.textContent,
+        what: find(box, "next-what").map(n => n.textContent)[0] || "",
+        sub: find(box, "next-sub").map(n => n.textContent)[0] || "",
+        in: find(box, "next-in").map(n => n.textContent)[0] || "",
+      };
+    },
+
+    progress() {
+      const box = byId["progress"];
+      return { hidden: box.hidden, text: box.textContent };
+    },
+
+    clock() {
+      return {
+        hidden: byId["clock"].hidden,
+        time: byId["clock-time"].textContent,
+        zone: byId["clock-zone"].textContent,
+      };
+    },
+
+    pastToggle() {
+      const b = byId["past-toggle"];
+      return { hidden: b.hidden, text: b.textContent,
+               expanded: b.attrs["aria-expanded"] };
+    },
+
+    /* Only the rows an operator can actually see. */
+    visibleRows() { return this.rows().filter(r => !r.hidden); },
 
     budget() {
       return {
@@ -152,6 +230,15 @@ async function mountMyShift(opts) {
     },
 
     async settle() { for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r)); },
+
+    /* Make time pass: run the page's own timers once, which is how it
+       re-reads its shift and redraws. Reaching into the script's
+       internals would test something the browser never does. */
+    async tick() {
+      timerFns.forEach(fn => fn());
+      await this.settle();
+    },
+    async reload() { await this.tick(); },
 
     stop() {
       intervals.forEach(clearInterval);

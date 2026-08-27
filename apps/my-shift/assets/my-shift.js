@@ -21,11 +21,16 @@
  * Scoping is not done here either. The route sends one operator's turns
  * because a page can hide a row and only a route can decline to send it.
  * This screen never sees anybody else's day to hide.
+ *
+ * It is built for a three-second glance on a phone, so the order it
+ * answers questions in is fixed: how long have I got, where do I go
+ * next, then the shape of the day. See the stylesheet for why.
  * ===================================================================== */
 
 "use strict";
 
 const S = window.Session;
+const RE = window.RotationEngine;
 
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -34,10 +39,23 @@ const el = (tag, cls, text) => {
   if (text != null) n.textContent = text;
   return n;
 };
+const txt = t => document.createTextNode(t);
 
 /* What the service last told us. */
-const day = { shift: null, turns: [], rows: [] };
+const day = {
+  shift: null, turns: [], rows: [],
+  checkedAt: null,     // when the last successful read landed
+  stale: false,        // a read failed and we are showing the old one
+  signature: "",       // to notice the desk re-pushing under us
+};
 let ticker = null;
+let showPast = false;
+let scrolledToNow = false;
+
+/* How close to a handover counts as "soon". Long enough to finish a
+ * take and walk, short enough that it is not shouting for half the
+ * turn. */
+const SOON_MINS = 5;
 
 /* ===================================================================
  * Clock arithmetic
@@ -52,7 +70,20 @@ const toMin = hhmm => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
 const endMin = hhmm => (toMin(hhmm) === 0 ? 1440 : toMin(hhmm));
 const pad2 = n => (n < 10 ? "0" : "") + n;
 
+/* The minute it is *on the floor*, not on this device.
+ *
+ * Every time on this page is floor wall-clock, written by the desk. An
+ * operator reading their shift from a phone in another zone - on a
+ * train, at home the night before - would otherwise be told they are
+ * mid-turn when the floor has not started. The desk had exactly this
+ * bug and it is fixed in one place: minutesOnFloor() in the engine,
+ * which reads the zone the desk wrote into the payload. Computing it a
+ * second time here would be a second answer, and the first one able to
+ * disagree. */
 function nowMin() {
+  if (RE && RE.minutesOnFloor && day.shift) {
+    return RE.minutesOnFloor({ shift: day.shift }, Date.now());
+  }
   const d = new Date();
   return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
 }
@@ -63,13 +94,19 @@ function covers(from, to, at) {
   return t > f ? (at >= f && at < t) : (at >= f || at < t);
 }
 
+/* Minutes from `at` until `to`, across midnight if need be. */
+function minsUntil(to, at) {
+  const t = endMin(to);
+  return (t > at ? t : t + 1440) - at;
+}
+
 /* "1h 05m" / "45m", for a span of whole minutes. */
 function hm(mins) {
   const h = Math.floor(mins / 60), m = Math.round(mins % 60);
-  return (h ? h + "h " + pad2(m) + "m" : m + "m");
+  return h ? h + "h " + pad2(m) + "m" : m + "m";
 }
 
-/* "18:32" - minutes and seconds to a moment, the way the desk counts. */
+/* "18:32" - minutes and seconds, the way the desk counts down. */
 function mmss(minsLeft) {
   const total = Math.max(0, Math.round(minsLeft * 60));
   return Math.floor(total / 60) + ":" + pad2(total % 60);
@@ -106,9 +143,56 @@ function buildRows(turns) {
   return rows;
 }
 
+/* Row height, proportional to how long the row lasts.
+ *
+ * A fifteen-minute break drawn the same height as a forty-five-minute
+ * turn misdraws the day, and the shape of the day is most of what a
+ * timeline is for. Floored so the shortest row is still comfortably
+ * tappable and readable. */
+function rowHeight(mins) {
+  return Math.max(46, Math.round(mins * 1.5));
+}
+
+/* Where we are in the day: the row happening now, the one after it,
+ * and how much work is behind us. */
+function whereWeAre(at) {
+  const i = day.rows.findIndex(r => covers(r.from, r.to, at));
+  const worked = day.rows
+    .filter(r => r.kind === "work")
+    .reduce((sum, r) => {
+      if (endMin(r.to) <= at) return sum + r.minutes;
+      if (covers(r.from, r.to, at)) return sum + (r.minutes - minsUntil(r.to, at));
+      return sum;
+    }, 0);
+  const turns = day.rows.filter(r => r.kind === "work");
+  const turnNo = i < 0 ? 0
+    : day.rows.slice(0, i + 1).filter(r => r.kind === "work").length;
+  return {
+    i: i,
+    row: i < 0 ? null : day.rows[i],
+    next: i < 0 ? null : day.rows[i + 1] || null,
+    workedMins: Math.max(0, Math.round(worked)),
+    turnNo: turnNo,
+    turnsTotal: turns.length,
+  };
+}
+
 /* ===================================================================
  * Drawing
  * =================================================================== */
+
+function renderClock() {
+  const c = $("clock");
+  if (!day.shift) { c.hidden = true; return; }
+  c.hidden = false;
+  const at = nowMin();
+  $("clock-time").textContent =
+    pad2(Math.floor(at / 60) % 24) + ":" + pad2(Math.floor(at % 60));
+  /* The floor's zone, named once. Times on this page are the floor's,
+     and an operator reading it from somewhere else has no way to know
+     that unless it is said. */
+  $("clock-zone").textContent = day.shift.tz || "floor time";
+}
 
 function renderShiftLine() {
   const line = $("shiftline");
@@ -119,115 +203,243 @@ function renderShiftLine() {
     ? new Date(day.shift.date + "T00:00:00").toLocaleDateString(
         [], { weekday: "short", day: "numeric", month: "short" })
     : "";
-  const bits = [
-    el("b", null, day.shift.label || "Shift"),
-    el("span", null, when),
-  ];
-  if (day.shift.group) bits.push(el("span", null, "Group " + day.shift.group));
-  if (day.shift.task) bits.push(el("b", null, day.shift.task));
+  const parts = [el("b", null, day.shift.label || "Shift")];
+  if (when) parts.push(el("span", null, when));
+  if (day.shift.group) parts.push(el("span", null, "Group " + day.shift.group));
+  if (day.shift.task) parts.push(el("b", null, day.shift.task));
 
-  bits.forEach((b, i) => {
-    if (i) line.appendChild(document.createTextNode(" · "));
-    line.appendChild(b);
+  parts.forEach((p, i) => {
+    if (i) line.appendChild(el("span", "sep", "·"));
+    line.appendChild(p);
   });
 }
 
-function renderNow() {
+/* The hero. Four states, and the wording changes with each - a colour
+ * alone would not survive a phone in sunlight. */
+function renderNow(at) {
   const box = $("now");
   box.textContent = "";
-  const at = nowMin();
-  const row = day.rows.find(r => covers(r.from, r.to, at));
+  const here = whereWeAre(at);
 
-  if (!row) {
-    /* Before the first turn or after the last. Both are true answers and
-       neither is an error, so neither gets an error's colour. */
-    box.removeAttribute("data-kind");
-    const first = day.rows[0], last = day.rows[day.rows.length - 1];
-    const left = el("div");
-    left.appendChild(el("div", "now-k", "Not on shift"));
-    if (first && at < toMin(first.from)) {
-      left.appendChild(el("div", "now-v", "Your shift starts at " + first.from));
-    } else if (last) {
-      left.appendChild(el("div", "now-v", "Your shift has finished"));
-    } else {
-      left.appendChild(el("div", "now-v", "Nothing scheduled"));
-    }
-    box.appendChild(left);
+  if (!here.row) return renderOffShift(box, at);
+
+  const row = here.row;
+  const left = minsUntil(row.to, at);
+  const soon = row.kind === "work" && left <= SOON_MINS;
+
+  box.setAttribute("data-kind", soon ? "soon" : row.kind);
+  box.setAttribute("data-state", "");
+
+  box.appendChild(el("p", "now-k",
+    soon ? "Hand over soon" : row.kind === "work" ? "On now" : row.kind));
+
+  const where = el("p", "now-where");
+  if (row.kind === "work") {
+    where.appendChild(el("span", "mono", row.rigId));
+  } else {
+    where.appendChild(txt(row.kind === "Break" ? "On your break" : "Thinking time"));
+  }
+  box.appendChild(where);
+  box.appendChild(el("p", "now-when",
+    row.from + " – " + row.to + " · " + hm(row.minutes)));
+
+  const count = el("div", "now-count");
+  count.appendChild(el("b", "now-left", mmss(left)));
+  const unit = el("div", "now-unit");
+  unit.appendChild(txt(row.kind === "work" ? "until you hand over" : "until you are back"));
+  count.appendChild(unit);
+  box.appendChild(count);
+
+  const bar = el("div", "bar");
+  const fill = el("i");
+  const done = Math.max(0, Math.min(1, (row.minutes - left) / row.minutes));
+  fill.style.width = (done * 100).toFixed(1) + "%";
+  bar.appendChild(fill);
+  box.appendChild(bar);
+
+  const hand = el("p", "now-hand");
+  if (row.kind === "work" && row.relievedBy) {
+    hand.appendChild(el("b", null, row.relievedBy));
+    hand.appendChild(txt(" takes over · you go to "));
+    hand.appendChild(el("b", null, String(row.goesTo).toLowerCase()));
+  } else if (row.backTo) {
+    hand.appendChild(txt("Back on "));
+    hand.appendChild(el("b", null, row.backTo));
+    hand.appendChild(txt(" at " + row.to));
+  } else if (row.kind === "work") {
+    hand.appendChild(txt("Last turn of the shift"));
+  }
+  if (hand.childNodes.length) box.appendChild(hand);
+}
+
+/* Before the first turn, or after the last. Both are true answers and
+ * neither is an error, so neither gets an error's colour. */
+function renderOffShift(box, at) {
+  box.setAttribute("data-kind", "off");
+  box.setAttribute("data-state", "");
+  const first = day.rows[0], last = day.rows[day.rows.length - 1];
+
+  if (!first) {
+    box.appendChild(el("p", "now-k", "Nothing scheduled"));
+    box.appendChild(el("p", "now-where", "No shift for you right now"));
     return;
   }
 
-  box.setAttribute("data-kind", row.kind);
+  if (at < toMin(first.from)) {
+    box.appendChild(el("p", "now-k", "Not started"));
+    const w = el("p", "now-where");
+    w.appendChild(txt("Your shift starts at "));
+    w.appendChild(el("span", "mono", first.from));
+    box.appendChild(w);
 
-  const left = el("div");
-  left.appendChild(el("div", "now-k", row.kind === "work" ? "On now" : row.kind));
-  const v = el("div", "now-v");
-  if (row.kind === "work") {
-    v.appendChild(el("span", "mono", row.rigId));
-    v.appendChild(document.createTextNode(" until "));
-    v.appendChild(el("span", "mono", row.to));
-  } else {
-    v.appendChild(document.createTextNode("Until "));
-    v.appendChild(el("span", "mono", row.to));
-  }
-  left.appendChild(v);
-  box.appendChild(left);
+    const count = el("div", "now-count");
+    count.appendChild(el("b", "now-left", hm(toMin(first.from) - at)));
+    count.appendChild(el("div", "now-unit", "from now"));
+    box.appendChild(count);
 
-  const right = el("div", "now-r");
-  const t = endMin(row.to);
-  const left_mins = (t > at ? t : t + 1440) - at;
-  right.appendChild(el("div", "now-left", mmss(left_mins)));
-  if (row.kind === "work" && row.relievedBy) {
-    right.appendChild(el("div", "now-sub",
-      row.relievedBy + " takes over · you go to " + String(row.goesTo).toLowerCase()));
-  } else if (row.backTo) {
-    right.appendChild(el("div", "now-sub", "then " + row.backTo));
+    const hand = el("p", "now-hand");
+    hand.appendChild(txt("You start on "));
+    hand.appendChild(el("b", null, first.rigId || "your first rig"));
+    box.appendChild(hand);
+    return;
   }
-  box.appendChild(right);
+
+  box.appendChild(el("p", "now-k", "Finished"));
+  box.appendChild(el("p", "now-where", "Your shift is done"));
+  box.appendChild(el("p", "now-when",
+    "It ran " + first.from + " – " + last.to));
 }
 
-function renderTimeline() {
+function renderNext(at) {
+  const box = $("next");
+  box.textContent = "";
+  const here = whereWeAre(at);
+  const next = here.next;
+
+  if (!here.row || !next) {
+    /* No next row is either "not started" or "finished", and the hero
+       has already said which. A second card repeating it is noise. */
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  box.setAttribute("data-kind", next.kind);
+
+  box.appendChild(el("span", "next-k", "Next"));
+
+  const body = el("div", "next-body");
+  const what = el("p", "next-what");
+  if (next.kind === "work") {
+    what.appendChild(txt("Work "));
+    what.appendChild(el("span", "mono", next.rigId));
+  } else {
+    what.appendChild(txt(next.kind));
+  }
+  body.appendChild(what);
+
+  const sub = el("p", "next-sub");
+  sub.appendChild(txt(next.from + " – " + next.to + " · " + hm(next.minutes)));
+  if (next.backTo) sub.appendChild(txt(" · then back on " + next.backTo));
+  body.appendChild(sub);
+  box.appendChild(body);
+
+  box.appendChild(el("span", "next-in", "in " + hm(minsUntil(here.row.to, at))));
+}
+
+function renderProgress(at) {
+  const box = $("progress");
+  box.textContent = "";
+  const here = whereWeAre(at);
+  if (!day.rows.length || !here.row) { box.hidden = true; return; }
+  box.hidden = false;
+
+  const totalWork = day.rows.filter(r => r.kind === "work")
+    .reduce((s, r) => s + r.minutes, 0);
+
+  const line = el("div", "progress-line");
+  const l = el("span");
+  l.appendChild(txt("Turn "));
+  l.appendChild(el("b", null, String(here.turnNo || 1)));
+  l.appendChild(txt(" of " + here.turnsTotal));
+  line.appendChild(l);
+
+  const r = el("span");
+  r.appendChild(el("b", null, hm(here.workedMins)));
+  r.appendChild(txt(" worked · " + hm(Math.max(0, totalWork - here.workedMins)) + " to go"));
+  line.appendChild(r);
+  box.appendChild(line);
+
+  const bar = el("div", "bar");
+  const fill = el("i");
+  fill.style.width = ((here.workedMins / (totalWork || 1)) * 100).toFixed(1) + "%";
+  bar.appendChild(fill);
+  box.appendChild(bar);
+}
+
+function renderTimeline(at) {
   const list = $("timeline");
   list.textContent = "";
-  const at = nowMin();
+  let pastCount = 0;
 
   day.rows.forEach(row => {
+    const isNow = covers(row.from, row.to, at);
+    const isPast = !isNow && endMin(row.to) <= at;
+    if (isPast) pastCount += 1;
+
     const li = el("li", "tl");
     li.setAttribute("data-kind", row.kind);
-    if (covers(row.from, row.to, at)) li.classList.add("is-now");
-    else if (endMin(row.to) <= at) li.classList.add("is-past");
+    if (isNow) li.classList.add("is-now");
+    if (isPast) {
+      li.classList.add("is-past");
+      li.hidden = !showPast;
+    }
 
     li.appendChild(el("div", "tl-t", row.from));
 
     const body = el("div", "tl-b");
+    body.style.setProperty("--h", rowHeight(row.minutes) + "px");
+
     const what = el("div", "tl-what");
     if (row.kind === "work") {
-      what.appendChild(document.createTextNode("Work "));
+      what.appendChild(txt("Work "));
       what.appendChild(el("span", "mono", row.rigId));
     } else {
-      what.appendChild(document.createTextNode(row.kind));
+      what.appendChild(txt(row.kind));
     }
+    what.appendChild(el("span", "tl-mins", hm(row.minutes)));
     body.appendChild(what);
 
     const sub = el("div", "tl-sub");
-    sub.appendChild(document.createTextNode(hm(row.minutes)));
     if (row.kind === "work" && row.goesTo) {
-      sub.appendChild(document.createTextNode(" · then "));
+      sub.appendChild(txt("then "));
       sub.appendChild(el("b", null, row.goesTo));
     }
     if (row.kind === "work" && row.relievedBy) {
-      sub.appendChild(document.createTextNode(" · "));
+      sub.appendChild(txt(sub.childNodes.length ? " · " : ""));
       sub.appendChild(el("b", null, row.relievedBy));
-      sub.appendChild(document.createTextNode(" relieves you"));
+      sub.appendChild(txt(" relieves you"));
     }
     if (row.backTo) {
-      sub.appendChild(document.createTextNode(" · back on "));
+      sub.appendChild(txt(sub.childNodes.length ? " · " : ""));
+      sub.appendChild(txt("back on "));
       sub.appendChild(el("b", null, row.backTo));
     }
-    body.appendChild(sub);
+    if (sub.childNodes.length) body.appendChild(sub);
 
     li.appendChild(body);
     list.appendChild(li);
   });
+
+  const toggle = $("past-toggle");
+  if (!pastCount) {
+    toggle.hidden = true;
+  } else {
+    toggle.hidden = false;
+    toggle.setAttribute("aria-expanded", String(showPast));
+    toggle.textContent = showPast
+      ? "Hide the " + pastCount + " row" + (pastCount === 1 ? "" : "s") + " already done"
+      : pastCount + " row" + (pastCount === 1 ? "" : "s") + " already done — show";
+  }
 }
 
 function renderBudget() {
@@ -247,46 +459,146 @@ function renderBudget() {
   /* The budget CLAUDE.md holds the floor to. Said plainly rather than
      scored, because a shift that is short is usually the schedule's
      doing and not the operator's. */
-  const right = work === 360 && brk === 60 && think === 60;
-  $("budget-note").textContent = right
+  $("budget-note").textContent = (work === 360 && brk === 60 && think === 60)
     ? "Six hours of work, an hour of break and an hour to think - the full shift."
     : "The full shift is 6h of work, 1h break and 1h think.";
 }
 
+/* The countdown, kept on screen once the hero has scrolled away. */
+function renderPerch(at) {
+  const perch = $("perch");
+  const here = whereWeAre(at);
+  const hero = $("now");
+  const heroGone = hero.getBoundingClientRect
+    ? hero.getBoundingClientRect().bottom < 8
+    : false;
+
+  if (!here.row || !heroGone || $("view-day").hidden) {
+    perch.hidden = true;
+    return;
+  }
+  perch.hidden = false;
+  const row = here.row;
+  const left = minsUntil(row.to, at);
+  perch.setAttribute("data-kind",
+    row.kind === "work" && left <= SOON_MINS ? "soon" : row.kind);
+  perch.style.setProperty("--state",
+    row.kind === "work" ? "var(--work)"
+      : row.kind === "Break" ? "var(--break)" : "var(--think)");
+  $("perch-what").textContent = row.kind === "work"
+    ? row.rigId + " until " + row.to
+    : row.kind + " until " + row.to;
+  $("perch-left").textContent = mmss(left);
+}
+
+function renderFreshness() {
+  $("stale").hidden = !day.stale;
+  if (day.stale) {
+    $("stale").textContent =
+      "Could not reach the server. This is the schedule as it was at "
+      + (day.checkedAt || "the last check") + " - it may have changed since.";
+  }
+  $("checked").textContent = day.checkedAt
+    ? "Last checked " + day.checkedAt
+    : "";
+}
+
+/* What the timeline is currently drawing. The list is only rebuilt when
+ * this changes - see below. */
+let drawn = "";
+
 function renderDay() {
+  const at = nowMin();
+
+  /* Every second: the clock and the things that count down. All of them
+     are above the timeline and none changes the page's height. */
+  renderClock();
+  renderNow(at);
+  renderNext(at);
+  renderProgress(at);
+  renderPerch(at);
+
+  /* The timeline, only when it would actually differ.
+   *
+   * Rebuilding seventeen rows every second looked harmless and was not:
+   * emptying the list collapses the document, the browser clamps the
+   * scroll offset to the shorter page, and an operator who had scrolled
+   * to look at the end of their day was thrown back to the top a second
+   * later. Every second. The list changes when the schedule changes,
+   * when the current row moves on, or when the past is folded away -
+   * which is at most once a minute and usually far less. */
+  const sig = [day.signature, whereWeAre(at).i, showPast, day.stale,
+               day.checkedAt].join("|");
+  if (sig === drawn) return;
+  drawn = sig;
+
   renderShiftLine();
-  renderNow();
-  renderTimeline();
+  renderTimeline(at);
   renderBudget();
+  renderFreshness();
+
+  /* Land on now, once. Mid-shift an operator opening this should not
+     have to scroll past hours that are already over. */
+  if (!scrolledToNow && day.rows.length) {
+    scrolledToNow = true;
+    const row = document.querySelector(".tl.is-now");
+    if (row && row.scrollIntoView) {
+      setTimeout(() => row.scrollIntoView({ block: "center" }), 0);
+    }
+  }
 }
 
 /* ===================================================================
  * Loading
  * =================================================================== */
 
+function clockString() {
+  const at = nowMin();
+  return pad2(Math.floor(at / 60) % 24) + ":" + pad2(Math.floor(at % 60));
+}
+
 async function loadShift() {
   try {
     const r = await S.api("/api/me/shift");
     if (!r.ok) throw new Error("no shift");
     const body = await r.json();
+
+    const before = day.signature;
     day.shift = body.shift || null;
     day.turns = body.turns || [];
     day.rows = buildRows(day.turns);
-    $("empty").hidden = day.rows.length > 0;
-    if (!day.rows.length) {
-      /* Nothing pushed that covers now. The rig says Standby for the
-         same reason and it is the same honest answer: this is a floor
-         waiting on a schedule, not an operator with no work. */
+    day.signature = JSON.stringify(day.turns.map(t => [t.from, t.to, t.rigId]));
+    day.checkedAt = clockString();
+    day.stale = false;
+
+    if (before && before !== day.signature) {
+      /* The desk re-pushed under us. Swapping the day silently is how
+         somebody walks to the wrong rig. */
+      $("empty").hidden = false;
       $("empty").textContent =
-        "Nothing is scheduled for you right now. If a shift should be "
-        + "running, the floor has not been pushed a schedule for it yet.";
+        "Your schedule changed just now - the desk pushed a new one. "
+        + "This is the current version.";
+    } else {
+      $("empty").hidden = day.rows.length > 0;
+      if (!day.rows.length) {
+        /* Nothing pushed that covers now. The rig says Standby for the
+           same reason and it is the same honest answer: this is a floor
+           waiting on a schedule, not an operator with no work. */
+        $("empty").textContent =
+          "Nothing is scheduled for you right now. If a shift should be "
+          + "running, the floor has not been pushed a schedule for it yet.";
+      }
     }
   } catch (ignored) {
-    day.shift = null;
-    day.turns = [];
-    day.rows = [];
-    $("empty").hidden = false;
-    $("empty").textContent = "Could not reach the server.";
+    if (day.rows.length) {
+      /* Keep what we have and mark it. A schedule you can still read
+         beats an error message that replaced it. */
+      day.stale = true;
+    } else {
+      day.shift = null; day.turns = []; day.rows = [];
+      $("empty").hidden = false;
+      $("empty").textContent = "Could not reach the server.";
+    }
   }
   renderDay();
 }
@@ -326,10 +638,19 @@ function applyGate() {
        screen holds one person's whole day. */
     clearInterval(ticker);
     day.shift = null; day.turns = []; day.rows = [];
+    day.checkedAt = null; day.stale = false; day.signature = "";
+    scrolledToNow = false;
+    drawn = "";
     $("timeline").textContent = "";
     $("now").textContent = "";
     $("shiftline").textContent = "";
+    $("next").hidden = true;
+    $("progress").hidden = true;
     $("budget").hidden = true;
+    $("past-toggle").hidden = true;
+    $("clock").hidden = true;
+    $("perch").hidden = true;
+    $("checked").textContent = "";
   }
 }
 
@@ -381,6 +702,15 @@ async function signOut() {
 $("signin-form").addEventListener("submit", signIn);
 $("btn-signout").addEventListener("click", signOut);
 $("btn-denied-out").addEventListener("click", signOut);
+$("past-toggle").addEventListener("click", () => {
+  showPast = !showPast;
+  renderDay();
+});
+
+/* The perch follows the scroll, not the one-second tick - a sticky bar
+   that appears a second after you scroll past the thing it replaces
+   reads as a glitch. */
+window.addEventListener("scroll", () => renderPerch(nowMin()), { passive: true });
 
 (async function boot() {
   await S.probe();

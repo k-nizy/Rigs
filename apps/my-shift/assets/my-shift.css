@@ -1,14 +1,34 @@
 /* ===================================================================
  * My Shift - one operator's day, and nobody else's.
  *
- * Read from a phone in a corridor as often as from a screen, so it is
- * one column and the type does not get small. The three colours are the
- * desk's own - work, break, think - because an operator who has seen
- * the printed sheet should not have to learn a second vocabulary for
- * the same three things.
+ * This is an instrument, not a record. It is read in three-second
+ * glances, on a phone, by somebody walking between rigs with their
+ * hands full, and often at three in the morning. Every decision below
+ * comes from that.
  *
- * Everything comes from packages/brand/brand.css. This screen introduces
- * no colour of its own.
+ * **One thing dominates: the countdown.** "How long have I got" is the
+ * question asked every few minutes; everything else is asked once or
+ * twice a shift. So the countdown is the largest type on the page by a
+ * wide margin, in tabular mono so the digits do not jitter as it ticks.
+ *
+ * **The state is the colour.** Working is green, break amber, think
+ * blue - the desk's own three, so an operator who has seen the printed
+ * sheet does not learn a second vocabulary. The whole hero takes the
+ * colour of what you are doing, which means the answer to "am I on or
+ * off right now" arrives before you have read a word.
+ *
+ * **Colour is never the only signal.** Every state also has a word and
+ * a shape, because a floor has colour-blind operators on it and a phone
+ * in sunlight washes out.
+ *
+ * **Time is drawn to scale.** A fifteen-minute break is a third of the
+ * height of a forty-five-minute turn. Rows of equal height for unequal
+ * spans misdraw the shape of the day, which is most of what a timeline
+ * is for.
+ *
+ * Everything comes from packages/brand/brand.css. This screen adds no
+ * colour of its own; dark comes free with the tokens, and is checked
+ * rather than assumed.
  * =================================================================== */
 
 :root {
@@ -26,10 +46,41 @@
   --think:    var(--v-think);
   --crit:     var(--v-down);
   --mono:     var(--v-mono);
-  --radius:   6px;
+
+  /* One rhythm, so nothing is spaced by eye. */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px;
+  --s5: 24px; --s6: 32px; --s7: 48px;
+  --radius: 10px;
+  --radius-sm: 6px;
+
+  /* The state colour, rewritten per card. Declared here so nothing
+     depends on a value that only exists inside a modifier. */
+  --state: var(--ink-2);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* `hidden` has to actually hide.
+ *
+ * The attribute's default is `display: none` from the user-agent sheet,
+ * which any class here that sets `display: flex` silently outranks. Six
+ * elements on this page are shown and hidden by that attribute, and each
+ * one rendered as an empty sliver instead of disappearing. Nothing
+ * headless can catch it - a DOM stub reports `hidden` as true while the
+ * browser draws it anyway - so the rule is stated once, loudly, here. */
+[hidden] { display: none !important; }
+
+/* No global smooth scrolling.
+ *
+ * It reads well and it broke two things. Opening mid-shift should put an
+ * operator *at* their current turn, not show them a half-second journey
+ * to it from the top of a day that is over. And a smooth scroll is
+ * animated rather than immediate, so anything that scrolls the page
+ * programmatically is easy to cancel and hard to trust - the page held a
+ * scroll offset of zero while reporting it had moved. */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
 
 body {
   background: var(--ground);
@@ -37,26 +88,65 @@ body {
   font-family: var(--v-sans);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  /* Tabular by default: this screen is mostly numbers in columns. */
+  font-variant-numeric: tabular-nums;
 }
 
 .wrap {
-  max-width: 620px;
+  max-width: 560px;
   margin: 0 auto;
-  padding: clamp(1.1rem, 4vw, 2.2rem) clamp(0.9rem, 4vw, 1.4rem) 4rem;
-  display: flex; flex-direction: column; gap: 1.2rem;
+  padding: var(--s5) var(--s4) var(--s7);
+  padding-bottom: max(var(--s7), env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; gap: var(--s4);
 }
 
-/* ------------------------------------------------------- masthead */
+.mono { font-family: var(--mono); }
+
+/* ===================================================================
+ * The perch - the countdown, kept while the timeline scrolls
+ * =================================================================== */
+
+.perch {
+  position: fixed; inset: 0 0 auto 0; z-index: 20;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line-2);
+  box-shadow: 0 1px 12px rgba(0, 0, 0, 0.06);
+  /* The bar spans the window - it is a header - but its content lines up
+     with the column underneath it, or the countdown ends up marooned in
+     the far corner of a wide screen while the day it belongs to sits in
+     the middle. */
+  padding-block: var(--s2);
+  padding-top: max(var(--s2), env(safe-area-inset-top));
+  padding-inline: max(var(--s4), calc((100vw - 560px) / 2 + var(--s4)));
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--s3);
+}
+.perch::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 4px;
+  background: var(--state);
+}
+.perch-what {
+  font-size: 0.92rem; font-weight: 600; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.perch-left {
+  font-size: 1.15rem; font-weight: 700; color: var(--state);
+  flex: none;
+}
+
+/* ===================================================================
+ * Masthead
+ * =================================================================== */
 
 .masthead {
   display: flex; align-items: flex-end; justify-content: space-between;
-  gap: 1rem; flex-wrap: wrap;
-  padding-bottom: 0.8rem; border-bottom: 2px solid var(--ink);
+  gap: var(--s3); flex-wrap: wrap;
+  padding-bottom: var(--s3); border-bottom: 2px solid var(--ink);
 }
 .eyebrow {
-  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.13em;
+  font-size: 0.6rem; font-weight: 700; letter-spacing: 0.14em;
   text-transform: uppercase; color: var(--ink-2);
-  display: flex; align-items: center; gap: 7px; margin-bottom: 2px;
+  display: flex; align-items: center; gap: 7px; margin-bottom: var(--s1);
 }
 .v-mark {
   width: 8px; height: 8px; background: var(--accent);
@@ -64,40 +154,50 @@ body {
 }
 .masthead h1 {
   font-family: var(--v-display); font-weight: 400;
-  font-size: clamp(1.5rem, 5vw, 2rem);
+  font-size: clamp(1.6rem, 6vw, 2.1rem);
   letter-spacing: var(--v-display-tracking); line-height: 1;
+}
+.head-right {
+  display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
+}
+
+.clock { text-align: right; line-height: 1.1; }
+.clock b { font-size: 1.05rem; font-weight: 700; letter-spacing: 0.01em; }
+.clock span {
+  display: block; font-size: 0.58rem; font-weight: 600;
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
 }
 
 .who {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: var(--s2);
   border: 1px solid var(--line-2); border-radius: 999px;
   padding: 3px 4px 3px 11px; background: var(--panel);
 }
-.who-name { font-size: 0.82rem; font-weight: 600; }
-/* The same two colours the desk uses for the same two roles. A badge
-   that reads green on one screen and blue on the other for the same
-   word is a small thing that teaches people the wrong lesson. */
+.who-name { font-size: 0.8rem; font-weight: 600; }
+/* The same two colours the desk uses for the same two roles. */
 .who-role {
-  font-family: var(--mono); font-size: 0.58rem; font-weight: 600;
+  font-family: var(--mono); font-size: 0.56rem; font-weight: 700;
   letter-spacing: 0.08em; text-transform: uppercase;
   padding: 2px 7px; border-radius: 999px;
-  color: var(--work); background: color-mix(in srgb, var(--work) 12%, transparent);
+  color: var(--work); background: color-mix(in srgb, var(--work) 14%, transparent);
 }
 .who-role[data-role="operator"] {
-  color: var(--think); background: color-mix(in srgb, var(--think) 12%, transparent);
+  color: var(--think); background: color-mix(in srgb, var(--think) 14%, transparent);
 }
 .who-out {
-  font: inherit; font-size: 0.74rem; color: var(--ink-2);
+  font: inherit; font-size: 0.72rem; color: var(--ink-2);
   background: none; border: 0; border-left: 1px solid var(--line);
   padding: 2px 8px; margin-left: 2px; cursor: pointer;
 }
 .who-out:hover { color: var(--ink); }
 
-/* ----------------------------------------------------- sign in */
+/* ===================================================================
+ * Sign in / refused
+ * =================================================================== */
 
 .card {
   background: var(--panel); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: 26px 24px;
+  border-radius: var(--radius); padding: var(--s5) var(--s5);
   margin: 6vh auto 0; max-width: 340px; width: 100%;
   display: flex; flex-direction: column;
 }
@@ -105,15 +205,15 @@ body {
   font-size: 1.2rem; font-weight: 700; margin-bottom: 3px;
   text-wrap: balance;
 }
-.card-sub { font-size: 0.84rem; color: var(--muted); margin-bottom: 18px; }
+.card-sub { font-size: 0.84rem; color: var(--muted); margin-bottom: var(--s4); }
 .field-label {
-  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.09em;
-  text-transform: uppercase; color: var(--ink-2); margin-bottom: 4px;
+  font-size: 0.6rem; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--ink-2); margin-bottom: var(--s1);
 }
 .card input {
-  font: inherit; font-size: 0.9rem; color: var(--ink); width: 100%;
+  font: inherit; font-size: 1rem; color: var(--ink); width: 100%;
   background: var(--ground); border: 1px solid var(--line-2);
-  border-radius: 3px; padding: 8px 10px; margin-bottom: 13px;
+  border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: var(--s3);
 }
 .card input:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
@@ -121,119 +221,265 @@ body {
 }
 .btn {
   display: block; text-align: center; text-decoration: none;
-  font: inherit; font-size: 0.9rem; font-weight: 700;
+  font: inherit; font-size: 0.95rem; font-weight: 700;
   background: var(--ink); color: var(--ground);
-  border: 1px solid var(--ink); border-radius: 3px;
-  padding: 9px 14px; margin-top: 5px; cursor: pointer;
+  border: 1px solid var(--ink); border-radius: var(--radius-sm);
+  padding: 11px 16px; margin-top: var(--s1); cursor: pointer;
 }
 .btn:hover { opacity: 0.88; }
 .btn:disabled { opacity: 0.45; cursor: default; }
-.btn.ghost {
-  background: transparent; color: var(--ink); border-color: var(--line-2);
-}
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--line-2); }
 .card-error {
   font-size: 0.82rem; color: var(--crit);
   background: color-mix(in srgb, var(--crit) 10%, transparent);
-  border: 1px solid var(--crit); border-radius: 3px;
-  padding: 8px 10px; margin-bottom: 14px;
+  border: 1px solid var(--crit); border-radius: var(--radius-sm);
+  padding: 9px 11px; margin-bottom: var(--s3);
 }
 .card-foot {
   font-size: 0.72rem; color: var(--muted); text-align: center;
-  margin-top: 14px; line-height: 1.45;
+  margin-top: var(--s3); line-height: 1.45;
 }
 .card.denied { border-top: 3px solid var(--break); text-align: center; max-width: 400px; }
-.denied-who { font-size: 0.9rem; margin-bottom: 6px; }
-.denied-sub { font-size: 0.82rem; color: var(--ink-2); margin-bottom: 4px; }
-.card.denied .btn { margin-top: 12px; }
+.denied-who { font-size: 0.9rem; margin-bottom: var(--s1); }
+.denied-sub { font-size: 0.82rem; color: var(--ink-2); margin-bottom: var(--s1); }
+.card.denied .btn { margin-top: var(--s3); }
 
-/* --------------------------------------------------------- the day */
+/* ===================================================================
+ * The day
+ * =================================================================== */
 
-.shiftline { font-size: 0.86rem; color: var(--ink-2); }
-.shiftline b { color: var(--ink); font-weight: 600; }
-.shiftline .mono { font-family: var(--mono); }
-
-/* What is happening this minute, in the largest type on the page. */
-.now {
-  border-radius: var(--radius); padding: 15px 17px;
-  border: 1px solid var(--line-2); background: var(--panel);
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 14px; flex-wrap: wrap;
+.shiftline {
+  font-size: 0.84rem; color: var(--ink-2);
+  display: flex; flex-wrap: wrap; gap: 0 var(--s2); align-items: baseline;
 }
-.now[data-kind="work"]  { border-color: var(--work);  background: color-mix(in srgb, var(--work) 9%, var(--panel)); }
-.now[data-kind="Break"] { border-color: var(--break); background: color-mix(in srgb, var(--break) 9%, var(--panel)); }
-.now[data-kind="Think"] { border-color: var(--think); background: color-mix(in srgb, var(--think) 9%, var(--panel)); }
+.shiftline b { color: var(--ink); font-weight: 600; }
+.shiftline .sep { color: var(--line-2); }
+
+/* A schedule you can still read beats an error message. */
+.stale {
+  font-size: 0.78rem; color: var(--break);
+  background: color-mix(in srgb, var(--break) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--break) 45%, transparent);
+  border-radius: var(--radius-sm); padding: 8px 11px;
+}
+
+/* ------------------------------------------------------- the hero */
+
+.now {
+  position: relative; overflow: hidden;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-2);
+  background: var(--panel);
+  padding: var(--s5) var(--s5) var(--s4);
+  --state: var(--ink-2);
+}
+/* The state, as a band down the side as well as a tint - so it survives
+   a washed-out screen and a colour-blind reader. */
+.now::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 6px;
+  background: var(--state);
+}
+.now[data-kind="work"]  { --state: var(--work); }
+.now[data-kind="Break"] { --state: var(--break); }
+.now[data-kind="Think"] { --state: var(--think); }
+.now[data-kind="soon"]  { --state: var(--break); }
+.now[data-kind="off"]   { --state: var(--muted); }
+.now[data-state] { background: color-mix(in srgb, var(--state) 7%, var(--panel)); }
+.now[data-state] { border-color: color-mix(in srgb, var(--state) 40%, var(--line-2)); }
 
 .now-k {
-  font-family: var(--mono); font-size: 0.6rem; font-weight: 700;
-  letter-spacing: 0.11em; text-transform: uppercase;
-  color: var(--ink-2); margin-bottom: 2px;
+  font-family: var(--mono); font-size: 0.62rem; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--state); margin-bottom: var(--s2);
+  display: flex; align-items: center; gap: var(--s2);
 }
-.now[data-kind="work"]  .now-k { color: var(--work); }
-.now[data-kind="Break"] .now-k { color: var(--break); }
-.now[data-kind="Think"] .now-k { color: var(--think); }
-.now-v { font-size: 1.2rem; font-weight: 700; letter-spacing: -0.01em; }
-.now-v .mono { font-family: var(--mono); }
-.now-r { text-align: right; }
-.now-left {
-  font-family: var(--mono); font-size: 1.25rem; font-weight: 700; line-height: 1;
+/* A filled dot, so the label carries the state without relying on hue. */
+.now-k::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--state); flex: none;
 }
-.now-sub { font-size: 0.72rem; color: var(--ink-2); margin-top: 3px; }
+.now[data-kind="soon"] .now-k::before { animation: beat 1.4s ease-in-out infinite; }
+@keyframes beat { 50% { opacity: 0.25; } }
 
-.empty {
-  border-left: 3px solid var(--break); background: var(--panel);
-  border-radius: 0 var(--radius) var(--radius) 0;
-  padding: 12px 15px; font-size: 0.88rem; color: var(--ink-2);
+.now-where {
+  font-size: clamp(1.35rem, 6.5vw, 1.7rem); font-weight: 700;
+  letter-spacing: -0.015em; line-height: 1.15; margin-bottom: var(--s1);
+  text-wrap: balance;
 }
+.now-where .mono { font-family: var(--mono); letter-spacing: -0.01em; }
+.now-when { font-size: 0.85rem; color: var(--ink-2); }
+
+/* The number. Everything above is context for this. */
+.now-count {
+  display: flex; align-items: baseline; gap: var(--s3);
+  margin: var(--s4) 0 var(--s3);
+}
+.now-left {
+  font-family: var(--mono);
+  font-size: clamp(3rem, 17vw, 4.2rem);
+  font-weight: 700; line-height: 0.9; letter-spacing: -0.03em;
+  color: var(--state);
+}
+.now-unit {
+  font-size: 0.78rem; color: var(--ink-2); line-height: 1.25;
+  text-transform: none; letter-spacing: 0;
+}
+
+/* How far through this turn - the shape of the countdown, not a second
+   copy of the number. */
+.bar {
+  height: 6px; border-radius: 999px; overflow: hidden;
+  background: color-mix(in srgb, var(--state) 16%, transparent);
+}
+.bar i {
+  display: block; height: 100%; border-radius: 999px;
+  background: var(--state); transition: width 1s linear;
+}
+.now-hand {
+  font-size: 0.82rem; color: var(--ink-2); margin-top: var(--s3);
+}
+.now-hand b { color: var(--ink); font-weight: 600; }
+
+/* ------------------------------------------------------- what next */
+
+.next {
+  display: flex; align-items: center; gap: var(--s4);
+  border: 1px solid var(--line); border-left: 4px solid var(--state);
+  border-radius: var(--radius-sm); background: var(--panel);
+  padding: var(--s3) var(--s4);
+  --state: var(--ink-2);
+}
+.next[data-kind="work"]  { --state: var(--work); }
+.next[data-kind="Break"] { --state: var(--break); }
+.next[data-kind="Think"] { --state: var(--think); }
+.next-k {
+  font-family: var(--mono); font-size: 0.58rem; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);
+  flex: none; width: 34px;
+}
+.next-body { flex: 1; min-width: 0; }
+.next-what { font-size: 0.98rem; font-weight: 600; }
+.next-what .mono { font-family: var(--mono); }
+.next-sub { font-size: 0.76rem; color: var(--ink-2); margin-top: 1px; }
+.next-in {
+  font-family: var(--mono); font-size: 0.86rem; font-weight: 600;
+  color: var(--ink-2); flex: none;
+}
+
+/* --------------------------------------------------- through the shift */
+
+.progress { display: flex; flex-direction: column; gap: var(--s2); }
+.progress-line {
+  display: flex; justify-content: space-between; gap: var(--s3);
+  font-size: 0.76rem; color: var(--ink-2); flex-wrap: wrap;
+}
+.progress-line b { color: var(--ink); font-weight: 600; }
+.progress .bar { --state: var(--ink-2); height: 8px; }
+.progress .bar i { background: var(--ink); }
 
 /* ------------------------------------------------------- timeline */
 
-.timeline { list-style: none; display: grid; }
-.tl {
-  display: grid; grid-template-columns: 58px 1fr; gap: 12px;
-  align-items: stretch;
+.past-toggle {
+  font: inherit; font-size: 0.78rem; font-weight: 600;
+  color: var(--ink-2); background: var(--sunk);
+  border: 1px dashed var(--line-2); border-radius: var(--radius-sm);
+  padding: 9px var(--s4); cursor: pointer; text-align: left;
+  display: flex; align-items: center; gap: var(--s2);
 }
+.past-toggle:hover { color: var(--ink); border-color: var(--ink-2); }
+.past-toggle::before { content: "▾"; font-size: 0.7em; }
+.past-toggle[aria-expanded="true"]::before { content: "▴"; }
+
+.timeline { list-style: none; display: flex; flex-direction: column; }
+
+.tl {
+  display: grid; grid-template-columns: 52px 1fr; gap: var(--s3);
+  --state: var(--line-2);
+}
+.tl[data-kind="work"]  { --state: var(--work); }
+.tl[data-kind="Break"] { --state: var(--break); }
+.tl[data-kind="Think"] { --state: var(--think); }
+
 .tl-t {
-  font-family: var(--mono); font-size: 0.72rem; color: var(--muted);
-  padding-top: 8px; text-align: right;
-  font-variant-numeric: tabular-nums;
+  font-family: var(--mono); font-size: 0.74rem; color: var(--muted);
+  padding-top: 9px; text-align: right; font-weight: 500;
 }
 .tl-b {
-  border-left: 2px solid var(--line-2);
-  padding: 7px 0 7px 14px; position: relative; min-height: 34px;
+  border-left: 3px solid var(--state);
+  padding: 8px 0 8px var(--s4); position: relative;
+  display: flex; flex-direction: column; justify-content: center;
+  /* Set inline from the row's own minutes - see rowHeight() in the JS.
+     A fifteen-minute break has to look like a third of a forty-five
+     minute turn or the timeline is drawing the wrong day. */
+  min-height: var(--h, 46px);
 }
-.tl[data-kind="work"]  .tl-b { border-left-color: var(--work); }
-.tl[data-kind="Break"] .tl-b { border-left-color: var(--break); }
-.tl[data-kind="Think"] .tl-b { border-left-color: var(--think); }
-.tl.is-now .tl-b {
-  border-left-width: 4px;
-  background: color-mix(in srgb, var(--ink) 4%, transparent);
+.tl-what {
+  font-size: 0.95rem; font-weight: 600;
+  display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap;
 }
-.tl.is-past .tl-t, .tl.is-past .tl-what, .tl.is-past .tl-sub { opacity: 0.5; }
-
-.tl-what { font-size: 0.92rem; font-weight: 600; }
 .tl-what .mono { font-family: var(--mono); }
 .tl[data-kind="Break"] .tl-what { color: var(--break); }
 .tl[data-kind="Think"] .tl-what { color: var(--think); }
-.tl-sub { font-size: 0.74rem; color: var(--ink-2); margin-top: 1px; }
+.tl-mins {
+  font-family: var(--mono); font-size: 0.72rem; font-weight: 500;
+  color: var(--muted);
+}
+.tl-sub { font-size: 0.76rem; color: var(--ink-2); margin-top: 2px; }
 .tl-sub b { color: var(--ink); font-weight: 600; }
+
+/* Now: a filled block and a word, not a tint you have to look for. */
+.tl.is-now .tl-b {
+  background: color-mix(in srgb, var(--state) 10%, transparent);
+  border-left-width: 6px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.tl.is-now .tl-what::after {
+  content: "NOW";
+  font-family: var(--mono); font-size: 0.56rem; font-weight: 700;
+  letter-spacing: 0.12em; color: var(--ground); background: var(--state);
+  padding: 2px 6px; border-radius: 999px;
+}
+.tl.is-past .tl-t,
+.tl.is-past .tl-what,
+.tl.is-past .tl-sub { opacity: 0.42; }
+.tl.is-past .tl-b { border-left-color: var(--line-2); }
 
 /* --------------------------------------------------------- budget */
 
 .budget {
-  border-top: 1px solid var(--line); padding-top: 14px;
+  border-top: 1px solid var(--line); padding-top: var(--s4);
   display: flex; align-items: flex-end; justify-content: space-between;
-  gap: 14px; flex-wrap: wrap;
+  gap: var(--s4); flex-wrap: wrap;
 }
-.budget-nums { display: flex; gap: 18px; font-size: 0.78rem; color: var(--ink-2); }
+.budget-nums { display: flex; gap: var(--s5); font-size: 0.72rem; color: var(--ink-2); }
 .budget-nums b {
-  display: block; font-family: var(--mono); font-size: 1.1rem;
-  font-weight: 700; color: var(--ink); line-height: 1.1;
+  display: block; font-family: var(--mono); font-size: 1.15rem;
+  font-weight: 700; color: var(--ink); line-height: 1.15;
 }
 .budget-nums .b-work b  { color: var(--work); }
 .budget-nums .b-break b { color: var(--break); }
 .budget-nums .b-think b { color: var(--think); }
-.budget-note { font-size: 0.72rem; color: var(--muted); max-width: 32ch; text-align: right; }
+.budget-note { font-size: 0.72rem; color: var(--muted); max-width: 30ch; text-align: right; }
+
+.empty {
+  border-left: 3px solid var(--break); background: var(--panel);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: var(--s3) var(--s4); font-size: 0.88rem; color: var(--ink-2);
+}
+.checked { font-size: 0.68rem; color: var(--muted); text-align: center; }
+
+/* ===================================================================
+ * Print - an operator screenshots or prints this and carries it.
+ * =================================================================== */
 
 @media print {
-  .who, #view-signin, #view-denied { display: none !important; }
+  .perch, .who, .clock, #view-signin, #view-denied,
+  .past-toggle, .checked, .stale { display: none !important; }
+  body { background: #fff; color: #000; }
+  .wrap { max-width: none; padding: 0; }
+  /* Everything, including what was folded away. */
+  .tl[hidden] { display: grid !important; }
+  .tl.is-past .tl-t, .tl.is-past .tl-what, .tl.is-past .tl-sub { opacity: 1; }
+  .now, .next, .tl-b { break-inside: avoid; }
+  .now-left { font-size: 2rem; }
 }

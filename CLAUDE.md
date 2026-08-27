@@ -6,9 +6,11 @@ language the README uses so the two cannot drift.
 
 ## The system in one sentence
 
-Two static web apps — **Desk** (the manager's) and **Rig** (one per
-physical rig) — sharing one engine, so the schedule the desk hands out and
-the one the rig enforces are literally the same code.
+Three static web apps — **Desk** (the manager's), **My Shift** (the
+operator's own day) and **Rig** (one per physical rig). Desk and Rig share
+one engine, so the schedule the desk hands out and the one the rig
+enforces are literally the same code. My Shift computes no rotation; it
+reads back what the desk already decided.
 
 ## The floor
 
@@ -24,11 +26,14 @@ the budget the audit checks against.
 ```
 packages/           imported, not deployed
   engine/               the schedule algorithm + headless tests
-  demo-roster/          the example floor both apps open with
+  demo-roster/          the example floor the apps open with
   schema/               payload shape, validated on every push
+  session/              who is signed in - desk and my-shift share it
+  brand/                the mark and the palette, inlined at build
 
 rotation-desk-v1/   deployed - manager's screen. the name is the version
 apps/               deployed
+  my-shift/             operator's own day, read only
   rig/                  operator's per-rig screen
   server/               push transport
 ```
@@ -47,11 +52,19 @@ one. That name does not get refactored away.
 > scheduled it.
 
 That is why `packages/engine/rotation-engine.js` exists as one file with
-no DOM and no globals — both apps load it, and it runs under node so the
-tests in `packages/engine/engine.test.js` can pin its behaviour. If you
-change the engine, the tests are the guardrail; if you change something
-that affects the schedule and *don't* touch the engine, you have
-introduced drift.
+no DOM and no globals — the desk and the rig both load it, and it runs
+under node so the tests in `packages/engine/engine.test.js` can pin its
+behaviour. If you change the engine, the tests are the guardrail; if you
+change something that affects the schedule and *don't* touch the engine,
+you have introduced drift.
+
+**My Shift is not a third answer, and must not become one.** It loads the
+engine too, but for one call — `minutesOnFloor()`, a clock helper — and
+takes its turns from `/api/me/shift`, which hands back what the desk
+pushed and derives nothing. It draws the gaps between turns rather than
+being sent them, because each turn already carries `theyGoTo`. A screen
+that recomputed the rotation in order to show it would be exactly the
+third answer this invariant exists to prevent.
 
 ## The sheet is the format
 
@@ -180,6 +193,50 @@ checklist → handover → recording → review → resetting → (loop)
   an expired sheet: idle time is loud, cheap and recoverable, and work
   filed under the wrong rig is silent, permanent, and uncorrectable.
 
+## Who signs in, and who does not
+
+Three screens, three different answers, and the differences are the
+design rather than an inconsistency.
+
+**The rig authenticates as a machine.** A token names one rig, the
+operator standing at it types nothing, and that is settled. It is the
+same instinct as the rig not choosing its own id: if the system knows, do
+not ask.
+
+**The desk and My Shift authenticate a person.** They have to, because
+the question they answer is *whose*. A manager may push a schedule to
+twelve rigs; an operator may read their own day and nothing else. The
+desk boots locked, asks `/api/auth/session`, and shows one of four
+things: the sign-in card, a refusal naming the operator, the desk, or -
+with no accounts or no service - the desk exactly as it was before any of
+this existed.
+
+An operator who reaches the desk is shown a refusal, **not** a sign-in
+box. They are already signed in; their password is not the problem, and
+offering it invites them to think they typed it wrong.
+
+**Sessions are rows, not signed tokens.** A row can be revoked; a JWT
+cannot be withdrawn before it expires. Being able to end somebody's
+access on the day they leave is the whole argument for having people here
+instead of one shared secret.
+
+**There is no sign-up page and there should not be.** A floor has two or
+three managers and sixteen operators on a roster somebody already
+maintains. Accounts are minted with `python -m tools.mint_account`, which
+is also how the first manager exists at all - a seeded default would be a
+known password on every deployment.
+
+**Off until configured, like everything else here.** With no accounts in
+the database the desk opens exactly as it always did. The one switch that
+defaults the other way is `SESSION_COOKIE_SECURE`, because a security
+control whose default is the unsafe setting is one that ships unsafe.
+
+Two failures in this area are the same shape and worth naming, because
+the code has made both: reading a 401 as "this deployment has no
+accounts", and reading a 500 as the same. Either one opens the door at
+the moment nothing can be verified. Only an explicitly recognised signal
+opens it; everything else keeps it shut.
+
 ## The return arrow (built)
 
 `backend/` is the other half: a FastAPI service on Postgres, laid out in
@@ -299,9 +356,9 @@ The sheet defines the scope. It does not speak to:
 - **Crew changeover at shift boundaries.** The engine hard-codes three
   8-hour shifts; the rig treats each boot as the start of a shift. No
   handover-window vs. cold-takeover decision has been made.
-- **Accounts and permissions for people.** The rig authenticates as a
-  machine and that is settled; who may read the desk, and whether anyone
-  reviews the scores an operator gives their own takes, is not.
+- **Whether anyone reviews the scores an operator gives their own
+  takes.** Who may read which screen is now settled and built - see "Who
+  signs in, and who does not" above - but nobody checks the marking.
 
 These are open questions to answer when the product is ready, not
 implicit requirements to fill in.
@@ -312,8 +369,14 @@ implicit requirements to fill in.
 - Static-only fallback (no push): `./serve.sh` (python)
 - Rebuild the two single-file dists: `./build.sh` (or `npm run build`)
 - Run the tests: `npm test`  (engine + the reference sheet + rotate +
-  schema + server end-to-end + both screens, headless)
-- The desk is at `/rotation-desk-v1/`, the rig at `/apps/rig/`
+  schema + server end-to-end + all three screens, headless)
+- The desk is at `/rotation-desk-v1/`, My Shift at `/apps/my-shift/`, the
+  rig at `/apps/rig/`
+
+`npm run serve` is the static tree and the push, and has no `/api/auth/*`
+routes - so the desk and My Shift open unlocked there, which is the
+deliberate "a server too old for this route" path rather than a fault. To
+see a sign-in you need `local_gateway` and an account in the database.
 
 `npm test` is the JavaScript half and nothing else. The rest has to be
 run where it lives:
