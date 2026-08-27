@@ -19,11 +19,59 @@
       <p class="eyebrow"><span class="v-mark" aria-hidden="true"></span>Verlet Robotics</p>
       <h1>Rotation Desk <span class="ver">v1</span></h1>
     </div>
-    <div class="modes" role="tablist" id="modes" aria-label="Desk mode">
-      <button type="button" role="tab" data-mode="live" aria-selected="true">Live</button>
-      <button type="button" role="tab" data-mode="plan" aria-selected="false">Plan</button>
+    <div class="head-right">
+      <div class="modes" role="tablist" id="modes" aria-label="Desk mode">
+        <button type="button" role="tab" data-mode="live" aria-selected="true">Live</button>
+        <button type="button" role="tab" data-mode="plan" aria-selected="false">Plan</button>
+      </div>
+      <!-- Who is signed in. Hidden entirely on a deployment with no
+           accounts, so the demo looks exactly as it did. -->
+      <div class="who" id="who" hidden>
+        <span class="who-name" id="who-name"></span>
+        <span class="who-role" id="who-role"></span>
+        <button type="button" class="who-out" id="btn-signout">Sign out</button>
+      </div>
     </div>
   </header>
+
+  <!-- =============================================================
+       SIGN IN - the desk asks who is at it before it draws anything.
+       The gate that counts is on the service; this is the one that
+       stops somebody wandering into a screen they cannot use.
+       ============================================================= -->
+  <main id="view-signin" hidden>
+    <form class="card" id="signin-form" autocomplete="on">
+      <h2 class="card-title">Sign in</h2>
+      <p class="card-sub">The desk plans and pushes the floor.</p>
+
+      <p class="card-error" id="signin-error" hidden></p>
+
+      <label class="field-label" for="in-email">Email</label>
+      <input type="email" id="in-email" name="email" autocomplete="username"
+             required autofocus>
+
+      <label class="field-label" for="in-password">Password</label>
+      <input type="password" id="in-password" name="password"
+             autocomplete="current-password" required>
+
+      <button type="submit" class="btn" id="btn-signin">Sign in</button>
+      <p class="card-foot">Rigs do not sign in. A rig authenticates as a machine.</p>
+    </form>
+  </main>
+
+  <!-- =============================================================
+       SIGNED IN, WRONG ROLE - not a 403 page. It names who you are,
+       says why this is not your screen, and does not pretend the
+       password was wrong.
+       ============================================================= -->
+  <main id="view-denied" hidden>
+    <div class="card denied">
+      <h2 class="card-title">The desk is for managers</h2>
+      <p class="denied-who">You are signed in as <b id="denied-name"></b>, an operator.</p>
+      <p class="denied-sub">Your turns, your breaks and your own numbers are on My Shift.</p>
+      <button type="button" class="btn" id="btn-denied-out">Sign out</button>
+    </div>
+  </main>
 
   <!-- =============================================================
        LIVE - what the floor is doing right now. Nothing to fill in.

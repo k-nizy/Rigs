@@ -570,3 +570,84 @@ class TestHealthSaysWhatIsOpen:
         for key in ("rigAuth", "rigIdentity", "deskAuth", "floorReads",
                     "rigRateLimit"):
             assert key in body, key
+
+
+# --------------------------------------- what a screen asks before drawing
+
+
+class TestTheBootProbe:
+    """`/auth/me` answers 401 both for "you are not signed in" and for
+    "this deployment has no accounts", and a screen that cannot tell
+    those apart either shows a login box nobody has a password for, or
+    opens the desk on a deployment nobody has configured yet."""
+
+    async def test_it_says_off_where_nobody_can_sign_in(self, engine, session):
+        async with serving() as c:
+            r = await c.get("/api/auth/session")
+        assert r.status_code == 200
+        assert r.json()["personAuth"] == "off"
+        assert r.json()["account"] is None
+
+    async def test_it_says_on_but_nobody_when_accounts_exist(
+            self, engine, session):
+        await people(session)
+        async with serving() as c:
+            r = await c.get("/api/auth/session")
+        assert r.status_code == 200
+        assert r.json()["personAuth"] == "on"
+        assert r.json()["account"] is None
+
+    async def test_it_names_whoever_is_signed_in(self, engine, session):
+        await people(session)
+        async with serving() as c:
+            await c.post("/api/auth/login",
+                         json={"email": MANAGER, "password": PASSWORD})
+            r = await c.get("/api/auth/session")
+        body = r.json()
+        assert body["personAuth"] == "on"
+        assert body["account"]["name"] == "Ruth Osei"
+        assert body["account"]["role"] == "manager"
+
+    async def test_it_names_an_operator_as_an_operator(self, engine, session):
+        await people(session, manager=False, operator=True)
+        async with serving() as c:
+            await c.post("/api/auth/login",
+                         json={"email": OPERATOR, "password": PASSWORD})
+            body = (await c.get("/api/auth/session")).json()
+        assert body["account"]["role"] == "operator"
+        assert body["account"]["operatorId"] == "op-a2"
+
+    async def test_it_hands_back_the_csrf_token_after_a_reload(
+            self, engine, session):
+        """A page that has just been reloaded has to be able to write
+        without re-reading its own cookies."""
+        await people(session)
+        async with serving() as c:
+            login = await c.post("/api/auth/login",
+                                 json={"email": MANAGER, "password": PASSWORD})
+            probe = await c.get("/api/auth/session")
+        assert probe.json()["csrfToken"] == login.json()["csrfToken"]
+
+    async def test_it_never_answers_401(self, engine, session):
+        """It is the question asked before there is a credential to
+        present, so refusing it would make the screen unable to ask."""
+        await people(session)
+        async with serving() as c:
+            assert (await c.get("/api/auth/session")).status_code == 200
+            c.cookies.set(SESSION_COOKIE, "a-token-nobody-issued")
+            assert (await c.get("/api/auth/session")).status_code == 200
+
+    async def test_it_gives_nothing_away_to_a_stranger(self, engine, session):
+        """Only whether the door is locked, which anyone standing at a
+        door can already see."""
+        await people(session)
+        async with serving() as c:
+            body = (await c.get("/api/auth/session")).json()
+        assert set(body) == {"personAuth", "account", "csrfToken"}
+        assert body["account"] is None and body["csrfToken"] is None
+        assert MANAGER not in r_text(body)
+
+
+def r_text(body) -> str:
+    import json
+    return json.dumps(body)

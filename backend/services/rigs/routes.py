@@ -32,9 +32,9 @@ from services.rigs.auth import (
     desk_auth, desk_read_auth, rig_auth, rig_auth_for_key, rig_rate_limit,
 )
 from services.rigs.people import (
-    REFUSED, SESSION_COOKIE, clear_session_cookies, issue_session_cookies,
-    login_key, login_limiter, require_account, require_csrf, require_manager,
-    require_operator, sign_in,
+    REFUSED, SESSION_COOKIE, clear_session_cookies, current_account,
+    issue_session_cookies, login_key, login_limiter, require_account,
+    require_csrf, require_manager, require_operator, sign_in,
 )
 from services.rigs.identity import caller_address, config_js, rig_at
 from core.infrastructure.storage import Storage, get_storage
@@ -744,4 +744,43 @@ async def my_efficiency(
         # would read as "you recorded nothing" rather than "you were not
         # here".
         "operators": mine,
+    }
+
+
+@router.get("/auth/session", tags=["people"],
+            summary="What a screen needs to know before it draws anything")
+async def auth_session(
+    request: Request,
+    account=Depends(current_account),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Whether anybody can sign in here, and whether anybody has.
+
+    `/auth/me` cannot answer this. It says 401 both for "you are not
+    signed in" and for "this deployment has no accounts at all", and a
+    screen that cannot tell those apart either shows a login box nobody
+    has a password for, or opens the desk to anyone the moment a
+    deployment has not been configured yet.
+
+    Unauthenticated and always 200, because it is the question asked
+    *before* there is a credential to present. It gives away only whether
+    the door is locked, which is a thing anyone standing at a door can
+    already see.
+
+    The CSRF token comes back here so a page that has just been reloaded
+    can make a write without re-reading its own cookies. It is the value
+    of the cookie the browser already holds, so this hands out nothing
+    the caller did not arrive with.
+    """
+    from services.rigs.people import CSRF_COOKIE
+
+    on = await AccountRepository(session).count() > 0
+    return {
+        "personAuth": "on" if on else "off",
+        "account": (
+            {"name": account.name, "role": account.role,
+             "operatorId": account.operator_id}
+            if account else None
+        ),
+        "csrfToken": request.cookies.get(CSRF_COOKIE) if account else None,
     }
