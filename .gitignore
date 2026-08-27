@@ -8,8 +8,11 @@ Thumbs.db
 node_modules/
 __pycache__/
 
-# server state - regenerated on every push, not source
+# server state - what this floor was pushed, not source. pushes.jsonl is
+# the record and state.json the cache derived from its last line.
 apps/server/state.json
+apps/server/state.json.tmp
+apps/server/pushes.jsonl
 
 # Backend secrets and local state. The database URL carries a password;
 # it must never reach the repo.

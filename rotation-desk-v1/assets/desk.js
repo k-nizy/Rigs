@@ -917,89 +917,20 @@ function onPlanChanged() {
  * use; `require_manager` is what stops them using it.
  * =================================================================== */
 
-const gate = {
-  personAuth: "off",     // "on" once the service says accounts exist
-  account: null,         // { name, role, operatorId }
-  csrf: null,
-  reachable: true,
-  broken: false,       // the service answered, and badly
-};
+const S = window.Session;
 
 /* Signed in as somebody who may use this screen - or a deployment that
- * never asked. */
-function mayUseTheDesk() {
-  if (gate.broken) return false;
-  return gate.personAuth === "off"
-    || (gate.account && gate.account.role === "manager");
-}
+ * never asked. The desk is a manager's screen. */
+function mayUseTheDesk() { return S.mayUse("manager"); }
 
-/* Every call this screen makes to the service.
- *
- * `same-origin` credentials so the session cookie travels, and the CSRF
- * token echoed on writes - the header has to equal the cookie, which is
- * a thing only a page on this origin can arrange. */
-function api(path, init) {
-  const opts = Object.assign({ credentials: "same-origin" }, init || {});
-  const method = (opts.method || "GET").toUpperCase();
-  if (method !== "GET" && method !== "HEAD" && gate.csrf) {
-    opts.headers = Object.assign({}, opts.headers, { "x-csrf-token": gate.csrf });
-  }
-  return fetch(path, opts);
-}
-
-async function probeSession() {
-  gate.broken = false;
-  try {
-    const r = await api("/api/auth/session");
-
-    if (r.status === 404) {
-      /* A server too old to know this route. There is nothing here that
-         can be gated, so the desk behaves as it did before the route
-         existed. */
-      return notServed();
-    }
-    if (!r.ok) {
-      /* The service is there and is not well - a 500 from a database it
-         cannot reach, a 502 from a proxy in front of it.
-         
-         This must NOT be read as "no accounts configured", which is the
-         mistake this whole function exists to avoid making in the other
-         direction. A 401 is a service that said no; a 500 is a service
-         that could not answer; only silence means there is no service.
-         Treating a broken one as an unconfigured one opens the desk
-         precisely when nothing can be verified. */
-      gate.broken = true;
-      gate.reachable = true;
-      gate.personAuth = "on";
-      gate.account = null;
-      gate.csrf = null;
-      return;
-    }
-
-    const body = await r.json();
-    gate.reachable = true;
-    gate.personAuth = body.personAuth === "on" ? "on" : "off";
-    gate.account = body.account || null;
-    gate.csrf = body.csrfToken || null;
-  } catch (e) {
-    /* Nothing answered at all: no server behind this page. That is the
-       static deploy, and it is the one case that opens the desk. */
-    notServed();
-  }
-}
-
-/* No service behind the page - see the note at the top of this block. */
-function notServed() {
-  gate.reachable = false;
-  gate.personAuth = "off";
-  gate.account = null;
-  gate.csrf = null;
-}
+/* Kept as local names so the rest of this file reads as it did. */
+function api(path, init) { return S.api(path, init); }
+function probeSession() { return S.probe(); }
 
 /* Show the door, or the desk. Called after every change of who is at it. */
 function applyGate() {
   const open = mayUseTheDesk();
-  const denied = !open && gate.account;      // signed in, wrong role
+  const denied = !open && S.wrongRole("manager");   // signed in, wrong role
 
   $("view-signin").hidden = open || !!denied;
   $("view-denied").hidden = !denied;
@@ -1008,17 +939,17 @@ function applyGate() {
   /* The chip is hidden entirely where nobody signs in, so a floor that
      has not configured accounts sees the screen it always saw. */
   const chip = $("who");
-  chip.hidden = !gate.account;
-  if (gate.account) {
-    $("who-name").textContent = gate.account.name;
-    $("who-role").textContent = gate.account.role;
-    $("who-role").setAttribute("data-role", gate.account.role);
+  chip.hidden = !S.state.account;
+  if (S.state.account) {
+    $("who-name").textContent = S.state.account.name;
+    $("who-role").textContent = S.state.account.role;
+    $("who-role").setAttribute("data-role", S.state.account.role);
   }
-  if (denied) $("denied-name").textContent = gate.account.name;
+  if (denied) $("denied-name").textContent = S.state.account.name;
 
   /* A password will not fix a service that cannot answer, so say what is
      actually wrong instead of letting somebody retype it three times. */
-  if (gate.broken) {
+  if (S.state.broken) {
     $("signin-error").textContent =
       "The service is not answering. Signing in will not work until it does.";
     $("signin-error").hidden = false;
@@ -1047,44 +978,21 @@ async function signIn(e) {
   err.hidden = true;
   btn.disabled = true;
   try {
-    const r = await api("/api/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        email: $("in-email").value, password: $("in-password").value,
-      }),
-    });
-    const body = await r.json().catch(() => ({}));
-
-    if (!r.ok) {
-      /* One message for every way of failing, because the service gives
-         one. Saying which half was wrong answers "does this person work
-         here" for anybody who asks. 429 is the exception - it is not a
-         wrong password and telling somebody to wait is useful. */
-      err.textContent = r.status === 429
-        ? "Too many attempts. Wait a minute and try again."
-        : (body.detail || "Email or password is not right.");
+    const out = await S.signIn($("in-email").value, $("in-password").value);
+    if (!out.ok) {
+      err.textContent = out.message;
       err.hidden = false;
       return;
     }
-
     $("in-password").value = "";
-    gate.account = { name: body.name, role: body.role, operatorId: body.operatorId };
-    gate.csrf = body.csrfToken || null;
-    gate.personAuth = "on";
     openTheDesk();
-  } catch (ignored) {
-    err.textContent = "Could not reach the server.";
-    err.hidden = false;
   } finally {
     btn.disabled = false;
   }
 }
 
 async function signOut() {
-  try { await api("/api/auth/logout", { method: "POST" }); } catch (ignored) {}
-  gate.account = null;
-  gate.csrf = null;
+  await S.signOut();
   floor.payloads = [];
   floor.pushedAt = null;
   floor.source = "plan";

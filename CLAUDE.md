@@ -219,8 +219,25 @@ GET  /api/state                      -> { pushedAt, rigs: [...] }
 The desk's "Push to floor" button sends all twelve payloads in one shot.
 The server validates each against `packages/schema/payload.js` and stores
 them atomically — a bad push is rejected in full so the floor never runs
-half-updated. State is a plain JSON file (`apps/server/state.json`,
-gitignored) so a restart survives.
+half-updated.
+
+What the floor was pushed is kept the way the backend keeps everything
+else: `apps/server/pushes.jsonl` is appended to, one line per accepted
+push, and `apps/server/state.json` is a cache derived from its last line
+(both gitignored). So a restart survives, losing the cache costs
+nothing, and a push that replaced the wrong day can still be read back —
+`store = next` used to overwrite the only copy. The cache is written
+beside itself and renamed over, because truncating it in place is what
+left a half-written file to be found at the next boot; and a state the
+log cannot account for makes the server refuse to start rather than come
+up empty, since twelve rigs in Standby look exactly like a manager who
+forgot to push.
+
+The log is history, for people and for recovery. It is deliberately not
+an input to `pick()`: which schedule a rig runs is decided by the window
+the desk wrote against the current time and by nothing else, so a push
+never acquires an identity a rig could pin to. That would be a second
+answer to which schedule is real.
 
 The rig's `loadPayload()` fetches `/api/rigs/:rigId/schedule.json` first,
 falls back to a co-located `schedule.json` (still supported for a plain

@@ -141,6 +141,7 @@ async function mountDesk(opts) {
   global.location = { search: opts.search || "", hash: "" };
   global.fetch = opts.fetchImpl || (() => Promise.reject(new Error("no server")));
 
+  require(path.join(REPO, "packages/session/session.js"));
   require(path.join(REPO, "packages/engine/rotation-engine.js"));
   const roster = require(path.join(REPO, "packages/demo-roster/demo-roster.js"));
   global.DEMO_ROSTER = structuredClone(roster);   // never let one test's edits reach the next
