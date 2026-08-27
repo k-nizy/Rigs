@@ -699,10 +699,31 @@ async function signOut() {
 
 /* ------------------------------------------------------------ wiring */
 
-$("signin-form").addEventListener("submit", signIn);
-$("btn-signout").addEventListener("click", signOut);
-$("btn-denied-out").addEventListener("click", signOut);
-$("past-toggle").addEventListener("click", () => {
+/* Wire a handler, and survive the element not being there.
+ *
+ * This is top-level code: one `null.addEventListener` throws before
+ * boot() ever runs, and the whole screen is blank with nothing on it to
+ * say why. That is exactly what happened - a browser holding a cached
+ * copy of an older index.html loaded new script against old markup, and
+ * an operator would have seen a masthead and an empty page.
+ *
+ * A missing id is still a real fault and still loud: the headless test
+ * asserts `missingIds` is empty, so it cannot reach a floor unnoticed.
+ * What it must not do is take the rest of the screen down with it. */
+function on(id, type, fn) {
+  const node = $(id);
+  if (!node) {
+    console.warn("my-shift: no #" + id + " on this page - " + type
+                 + " not wired. The page is older than this script.");
+    return;
+  }
+  node.addEventListener(type, fn);
+}
+
+on("signin-form", "submit", signIn);
+on("btn-signout", "click", signOut);
+on("btn-denied-out", "click", signOut);
+on("past-toggle", "click", () => {
   showPast = !showPast;
   renderDay();
 });
@@ -712,7 +733,41 @@ $("past-toggle").addEventListener("click", () => {
    reads as a glitch. */
 window.addEventListener("scroll", () => renderPerch(nowMin()), { passive: true });
 
+/* Everything the render layer assumes is on the page.
+ *
+ * A browser holding a cached index.html from before this script was
+ * written runs new code against old markup, and the failure is silent
+ * and ugly: half a screen, or none, with an exception nobody sees. It
+ * happened twice while this was being built.
+ *
+ * Guarding every single lookup would spread the problem thinly across
+ * the file and still leave a screen that is quietly missing things. One
+ * check, once, and an answer somebody can act on. */
+const NEEDED = ["view-signin", "view-denied", "view-day", "clock", "clock-time",
+                "clock-zone", "who", "who-name", "who-role", "shiftline",
+                "stale", "now", "next", "progress", "empty", "past-toggle",
+                "timeline", "budget", "b-work", "b-break", "b-think",
+                "budget-note", "checked", "perch", "perch-what", "perch-left"];
+
+function pageIsCurrent() {
+  const missing = NEEDED.filter(id => !document.getElementById(id));
+  if (!missing.length) return true;
+
+  console.error("my-shift: this page is older than this script; missing "
+                + missing.join(", "));
+  const box = $("view-day") || document.body;
+  box.hidden = false;
+  box.textContent = "";
+  const p = document.createElement("p");
+  p.className = "empty";
+  p.textContent = "This page is out of date - your browser is showing an "
+    + "older copy than the one on the server. Reload to get your shift.";
+  box.appendChild(p);
+  return false;
+}
+
 (async function boot() {
+  if (!pageIsCurrent()) return;
   await S.probe();
   await openTheDay();
 })();
