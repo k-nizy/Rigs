@@ -357,7 +357,7 @@ test("signing in opens the day without a reload",
   mounted(NOBODY, {}, "11:12", async app => {
     assert.equal(app.showing(), "signin");
     app.$("in-email").value = "m.chen@verlet.co";
-    app.$("in-password").value = "a-real-password-12";
+    app.$("in-password").value = "not-a-real-password-12";
     app.fire(app.$("signin-form"), "submit");
     await app.settle();
 
@@ -369,7 +369,7 @@ test("a manager who signs in here lands on the refusal",
   mounted(NOBODY, { loginAs: { name: "Ruth Osei", role: "manager", operatorId: null } },
     "11:12", async app => {
       app.$("in-email").value = "r.osei@verlet.co";
-      app.$("in-password").value = "a-real-password-12";
+      app.$("in-password").value = "not-a-real-password-12";
       app.fire(app.$("signin-form"), "submit");
       await app.settle();
       assert.equal(app.showing(), "denied");

@@ -32,7 +32,7 @@ from services.rigs.people import (
     CSRF_COOKIE, SESSION_COOKIE, require_csrf, reset_login_limiter,
 )
 
-PASSWORD = "a-real-password-12"
+PASSWORD = "not-a-real-password-12"
 MANAGER = "r.osei@verlet.co"
 OPERATOR = "m.chen@verlet.co"
 

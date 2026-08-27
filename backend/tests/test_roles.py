@@ -37,7 +37,7 @@ from core.domains.schedules.model import Schedule
 from core.infrastructure.config import Settings, get_settings
 from services.rigs.people import CSRF_COOKIE, CSRF_HEADER, reset_login_limiter
 
-PASSWORD = "a-real-password-12"
+PASSWORD = "not-a-real-password-12"
 MANAGER = "r.osei@verlet.co"
 OPERATOR = "m.chen@verlet.co"
 OTHER_OPERATOR = "t.rivera@verlet.co"

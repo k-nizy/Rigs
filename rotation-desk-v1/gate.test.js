@@ -198,7 +198,7 @@ test("signing in opens the desk without a reload",
     assert.equal(showing(desk), "signin");
 
     desk.$("in-email").value = "r.osei@verlet.co";
-    desk.$("in-password").value = "a-real-password-12";
+    desk.$("in-password").value = "not-a-real-password-12";
     desk.fire(desk.$("signin-form"), "submit");
     await settle();
 
@@ -209,7 +209,7 @@ test("signing in opens the desk without a reload",
 test("the password is cleared out of the form once it has been used",
   withGate(NOBODY, {}, async desk => {
     desk.$("in-email").value = "r.osei@verlet.co";
-    desk.$("in-password").value = "a-real-password-12";
+    desk.$("in-password").value = "not-a-real-password-12";
     desk.fire(desk.$("signin-form"), "submit");
     await settle();
     assert.equal(desk.$("in-password").value, "");
@@ -220,7 +220,7 @@ test("signing in as an operator lands on the refusal, not the desk",
                                 operatorId: "op-a2" } },
     async desk => {
       desk.$("in-email").value = "m.chen@verlet.co";
-      desk.$("in-password").value = "a-real-password-12";
+      desk.$("in-password").value = "not-a-real-password-12";
       desk.fire(desk.$("signin-form"), "submit");
       await settle();
       assert.equal(showing(desk), "denied");
@@ -335,7 +335,7 @@ test("a read does not carry the CSRF token - it is for writes",
 test("after signing in, the push uses the token that sign-in returned",
   withGate(NOBODY, {}, async (desk, impl) => {
     desk.$("in-email").value = "r.osei@verlet.co";
-    desk.$("in-password").value = "a-real-password-12";
+    desk.$("in-password").value = "not-a-real-password-12";
     desk.fire(desk.$("signin-form"), "submit");
     await settle();
 
