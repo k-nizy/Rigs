@@ -383,3 +383,74 @@ test("a session that expired while the tab sat open sends you back to the card",
       assert.equal(showing(desk), "signin",
         "an expired session should put the sign-in card back up");
     }));
+
+/* ------------------------------- a service that answers, and answers badly
+ *
+ * The distinction this file exists to protect. Three different things
+ * can go wrong with the probe and they do not mean the same:
+ *
+ *   nothing answers    there is no service - the static deploy. Open.
+ *   404                a service too old to have the route. Open.
+ *   500 / 502 / 503    a service that is there and cannot answer. Shut.
+ *
+ * The third was originally read as the first, so a database outage
+ * opened the desk - exactly when nothing could be verified. It is the
+ * same category error as treating a 401 as "no accounts configured",
+ * which this code was already careful about in the other direction.
+ */
+
+function answering(status) {
+  const impl = (url) => {
+    if (String(url) === "/api/auth/session") {
+      return Promise.resolve({
+        ok: false, status,
+        json: () => Promise.resolve({ detail: "internal error" }),
+      });
+    }
+    return Promise.reject(new Error("no"));
+  };
+  impl.calls = [];
+  impl.pathsHit = () => [];
+  return impl;
+}
+
+function withProbe(status, fn) {
+  return async () => {
+    const desk = await mountDesk({ fetchImpl: answering(status) });
+    await settle();
+    try { await fn(desk); } finally { desk.stop(); }
+  };
+}
+
+[500, 502, 503].forEach(status => {
+  test("a " + status + " from the service does not open the desk",
+    withProbe(status, async desk => {
+      assert.notEqual(showing(desk), "live",
+        "a broken service opened the desk - a 500 is not 'no accounts here'");
+      assert.equal(desk.$("view-live").hidden, true);
+      assert.equal(desk.$("modes").hidden, true);
+    }));
+});
+
+test("a broken service says what is wrong, not that the password is",
+  withProbe(500, async desk => {
+    assert.equal(showing(desk), "signin");
+    assert.equal(desk.$("signin-error").hidden, false);
+    assert.match(desk.$("signin-error").textContent, /not answering/i);
+    assert.doesNotMatch(desk.$("signin-error").textContent, /password is not right/i);
+  }));
+
+test("a 404 is a server too old for the route, and still opens the desk",
+  withProbe(404, async desk => {
+    /* Nothing there to gate, so the desk behaves as it did before the
+       route existed. This is what keeps an older deployment working. */
+    assert.equal(showing(desk), "live");
+    assert.equal(desk.$("who").hidden, true);
+  }));
+
+test("a broken service is not mistaken for a floor with no accounts",
+  withProbe(503, async desk => {
+    /* The specific confusion: "off" means nobody signs in here, and a
+       service that could not answer has said no such thing. */
+    assert.equal(desk.$("view-live").hidden, true);
+  }));

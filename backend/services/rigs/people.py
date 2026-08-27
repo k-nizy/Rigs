@@ -191,11 +191,18 @@ async def current_account(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> Account | None:
-    """The signed-in person, or None. Never raises.
+    """The signed-in person, or None.
 
-    A dependency that answers None rather than 401 so a route can be open
-    to everyone and still know who is reading it - which is what
-    `/api/health` and, later, the desk's own boot check need.
+    Answers None rather than 401 so a route can be open to everyone and
+    still know who is reading it - which is what `/auth/session` and the
+    desk's own boot check need.
+
+    None means "nobody is signed in" and nothing else. A database that
+    cannot be reached raises from `live()` and surfaces as a 500, and
+    that distinction is deliberate: a service which quietly reported
+    "not signed in" whenever its database blinked would sign people out
+    during an outage and give whoever was debugging it entirely the
+    wrong thing to look at.
     """
     token = request.cookies.get(SESSION_COOKIE)
     if not token:

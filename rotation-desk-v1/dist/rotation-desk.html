@@ -2951,11 +2951,13 @@ const gate = {
   account: null,         // { name, role, operatorId }
   csrf: null,
   reachable: true,
+  broken: false,       // the service answered, and badly
 };
 
 /* Signed in as somebody who may use this screen - or a deployment that
  * never asked. */
 function mayUseTheDesk() {
+  if (gate.broken) return false;
   return gate.personAuth === "off"
     || (gate.account && gate.account.role === "manager");
 }
@@ -2975,22 +2977,52 @@ function api(path, init) {
 }
 
 async function probeSession() {
+  gate.broken = false;
   try {
     const r = await api("/api/auth/session");
-    if (!r.ok) throw new Error("no session route");
+
+    if (r.status === 404) {
+      /* A server too old to know this route. There is nothing here that
+         can be gated, so the desk behaves as it did before the route
+         existed. */
+      return notServed();
+    }
+    if (!r.ok) {
+      /* The service is there and is not well - a 500 from a database it
+         cannot reach, a 502 from a proxy in front of it.
+         
+         This must NOT be read as "no accounts configured", which is the
+         mistake this whole function exists to avoid making in the other
+         direction. A 401 is a service that said no; a 500 is a service
+         that could not answer; only silence means there is no service.
+         Treating a broken one as an unconfigured one opens the desk
+         precisely when nothing can be verified. */
+      gate.broken = true;
+      gate.reachable = true;
+      gate.personAuth = "on";
+      gate.account = null;
+      gate.csrf = null;
+      return;
+    }
+
     const body = await r.json();
     gate.reachable = true;
     gate.personAuth = body.personAuth === "on" ? "on" : "off";
     gate.account = body.account || null;
     gate.csrf = body.csrfToken || null;
   } catch (e) {
-    /* No service, or one too old to know the route. Either way there is
-       nothing here to protect - see the note at the top of this block. */
-    gate.reachable = false;
-    gate.personAuth = "off";
-    gate.account = null;
-    gate.csrf = null;
+    /* Nothing answered at all: no server behind this page. That is the
+       static deploy, and it is the one case that opens the desk. */
+    notServed();
   }
+}
+
+/* No service behind the page - see the note at the top of this block. */
+function notServed() {
+  gate.reachable = false;
+  gate.personAuth = "off";
+  gate.account = null;
+  gate.csrf = null;
 }
 
 /* Show the door, or the desk. Called after every change of who is at it. */
@@ -3012,6 +3044,14 @@ function applyGate() {
     $("who-role").setAttribute("data-role", gate.account.role);
   }
   if (denied) $("denied-name").textContent = gate.account.name;
+
+  /* A password will not fix a service that cannot answer, so say what is
+     actually wrong instead of letting somebody retype it three times. */
+  if (gate.broken) {
+    $("signin-error").textContent =
+      "The service is not answering. Signing in will not work until it does.";
+    $("signin-error").hidden = false;
+  }
 
   if (!open) {
     /* Nothing of the desk while the door is shut - not hidden panels
