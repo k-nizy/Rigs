@@ -5,12 +5,15 @@ a test run cannot leave a half-migrated database behind. The migration
 itself is checked separately, by applying it to rigs_dev.
 """
 
+import os
+import secrets
 import sys
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,15 +52,58 @@ def _test_url() -> str:
     return s.test_database_url
 
 
+# This run's own schema inside rigs_test, so two suites running at once
+# cannot demolish each other's tables.
+#
+# The suite drops and recreates every table it can see, which is fine
+# until a second run is doing the same thing in the same place. That has
+# now cost real time twice: the failures wander between files, look
+# exactly like product bugs, and are not - a gate that "refuses with no
+# accounts" turned out to be another run inserting accounts mid-test.
+#
+# A database each would be tidier, but this role cannot create databases.
+# It owns rigs_test and may create schemas in it, so that is the isolation
+# actually on offer. The pid keeps concurrent runs apart; the random tail
+# keeps a reused pid from inheriting a schema a killed run left behind.
+RUN_SCHEMA = f"run_{os.getpid()}_{secrets.token_hex(3)}"
+
+
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def _run_schema():
+    """Create this run's schema up front and take it away afterwards.
+
+    Session-scoped: one schema for the whole run, not one per test. The
+    per-test cleanliness below is unchanged - it still drops and recreates
+    the tables - it just does it somewhere no other run is looking.
+    """
+    eng = create_async_engine(_test_url(), future=True)
+    async with eng.begin() as conn:
+        await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{RUN_SCHEMA}"'))
+    await eng.dispose()
+
+    yield RUN_SCHEMA
+
+    # CASCADE because the tables are in it. A run that dies without
+    # reaching here leaves one behind; they are cheap, and `run_` plus a
+    # dead pid says plainly what it was.
+    eng = create_async_engine(_test_url(), future=True)
+    async with eng.begin() as conn:
+        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{RUN_SCHEMA}" CASCADE'))
+    await eng.dispose()
+
+
 @pytest_asyncio.fixture
-async def engine():
+async def engine(_run_schema):
     """A clean schema per test. Dropping and recreating is fast at this
     size and means no test can inherit another's rows."""
-    eng = create_async_engine(_test_url(), future=True)
+    eng = create_async_engine(
+        _test_url(), future=True,
+        connect_args={"server_settings": {"search_path": f"{RUN_SCHEMA},public"}},
+    )
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
-    database.configure(_test_url())
+    database.configure(_test_url(), schema=RUN_SCHEMA)
     yield eng
     # Both of them. `eng` is this fixture's own engine; `database` holds a
     # second one that `configure` just built for the app under test, and

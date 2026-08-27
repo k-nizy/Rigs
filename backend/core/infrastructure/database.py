@@ -47,11 +47,29 @@ def sessionmaker() -> async_sessionmaker[AsyncSession]:
     return _sessionmaker
 
 
-def configure(url: str) -> None:
+def configure(url: str, schema: str | None = None) -> None:
     """Point every future session at a different database. Tests call this;
-    nothing in the request path does."""
+    nothing in the request path does.
+
+    `schema` puts every unqualified table in one named schema rather than
+    `public`, which is how a test run gets a database to itself without
+    needing a database of its own. The role here owns `rigs_test` and may
+    create schemas in it; it may not create databases, so per-run schemas
+    are the isolation that is actually available.
+
+    It matters because the suite drops and recreates every table it can
+    see. Two runs sharing `public` demolish each other's fixtures
+    mid-test, and the failures that produces are the worst kind - they
+    move around, they look like real bugs, and they are not.
+    """
     global _engine, _sessionmaker
-    _engine = create_async_engine(url, future=True)
+    kw = {}
+    if schema:
+        # Set on the connection rather than per statement: SQLAlchemy
+        # emits unqualified names, so the search path is what decides
+        # where CREATE TABLE and every later query land.
+        kw["connect_args"] = {"server_settings": {"search_path": f"{schema},public"}}
+    _engine = create_async_engine(url, future=True, **kw)
     _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
 
 
