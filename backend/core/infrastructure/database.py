@@ -58,3 +58,25 @@ def configure(url: str) -> None:
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with sessionmaker()() as session:
         yield session
+
+
+async def dispose() -> None:
+    """Close the pool this module is holding, and forget it.
+
+    The pair to `configure`. Without it every call to `configure` leaves
+    the previous engine - and its pooled connections - open, because
+    nothing else holds a reference and closing a connection is not
+    something garbage collection does promptly or predictably.
+
+    One process configuring once does not care. A test suite configures
+    once per test, so a few hundred tests leave a few hundred pools
+    behind, and Postgres has a `max_connections`. The failure that
+    produces is the worst kind: it lands on whichever test happens to be
+    running when the ceiling is reached, so it looks like a bug in
+    something unrelated and moves each time the suite grows.
+    """
+    global _engine, _sessionmaker
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
+    _sessionmaker = None

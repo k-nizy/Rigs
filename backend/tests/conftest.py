@@ -59,6 +59,11 @@ async def engine():
         await conn.run_sync(Base.metadata.create_all)
     database.configure(_test_url())
     yield eng
+    # Both of them. `eng` is this fixture's own engine; `database` holds a
+    # second one that `configure` just built for the app under test, and
+    # leaving that one open every test is how a suite runs out of
+    # connections somewhere unrelated.
+    await database.dispose()
     await eng.dispose()
 
 
