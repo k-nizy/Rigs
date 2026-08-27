@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 
 from core.base.repository import BaseRepository
 from core.domains.accounts.model import Account, AccountSession
@@ -45,8 +45,8 @@ class AccountRepository(BaseRepository[Account]):
         such a thing, which is the same off-until-configured rule rig auth
         and the rate limiter already follow.
         """
-        rows = await self.session.execute(select(Account.id))
-        return len(rows.scalars().all())
+        rows = await self.session.execute(select(func.count()).select_from(Account))
+        return int(rows.scalar_one())
 
 
 class AccountSessionRepository(BaseRepository[AccountSession]):

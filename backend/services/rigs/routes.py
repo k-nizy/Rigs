@@ -24,8 +24,15 @@ from core.infrastructure.config import Settings, get_settings
 from core.infrastructure.database import get_session
 from core.workflows.floor import floor_state, operator_efficiency
 from core.workflows.schedules import in_force as schedules_in_force
+from core.domains.accounts.repository import (
+    AccountRepository, AccountSessionRepository,
+)
 from services.rigs.auth import (
     desk_auth, desk_read_auth, rig_auth, rig_auth_for_key, rig_rate_limit,
+)
+from services.rigs.people import (
+    REFUSED, SESSION_COOKIE, clear_session_cookies, issue_session_cookies,
+    login_key, login_limiter, require_account, sign_in,
 )
 from services.rigs.identity import caller_address, config_js, rig_at
 from core.infrastructure.storage import Storage, get_storage
@@ -392,9 +399,23 @@ async def health(
         "rigRateLimit": (
             f"{s.rig_rate_limit_per_min}/min" if s.rig_rate_limit_per_min else "off"
         ),
+        # Whether the session cookie is HTTPS-only, and how fast a
+        # password may be guessed. Both are things a deploy check should
+        # be able to fail on rather than things to remember.
+        "sessionCookie": "secure" if s.session_cookie_secure else "INSECURE",
+        "loginRateLimit": (
+            f"{s.login_rate_limit_per_min}/min"
+            if s.login_rate_limit_per_min else "off"
+        ),
     }
     try:
         await session.execute(text("SELECT 1"))
+        # Person auth is on when there is somebody to sign in as. It
+        # cannot be read from a setting - the accounts are in the
+        # database - which is why this is here and not in `announce`.
+        body["personAuth"] = (
+            "on" if await AccountRepository(session).count() else "off"
+        )
     except Exception as e:
         raise HTTPException(
             status_code=503,
@@ -563,3 +584,109 @@ async def efficiency_for_shift(
         "shiftLabel": shift_label,
         "operators": await operator_efficiency(session, shift_date, shift_label),
     }
+
+
+# --------------------------------------------------------------- people
+#
+# Signing in is about a *person* using the desk. It is deliberately
+# unrelated to the rig routes above, which authenticate a machine and
+# never a person - a rig has no login and is not getting one.
+
+
+class LoginIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class WhoOut(BaseModel):
+    """What a signed-in caller is told about themselves.
+
+    No id, and no more of the account than a screen needs to greet
+    somebody and decide what to draw. A reply that carries more than that
+    is a reply that leaks more than that from a page left open.
+    """
+
+    name: str
+    role: str
+    operatorId: str | None = None
+    csrfToken: str | None = None
+
+
+def _who(account, csrf: str | None = None) -> "WhoOut":
+    return WhoOut(name=account.name, role=account.role,
+                  operatorId=account.operator_id, csrfToken=csrf)
+
+
+@router.post("/auth/login", response_model=WhoOut, tags=["people"],
+             summary="Sign in a manager or an operator")
+async def login(
+    body: LoginIn, request: Request, response: Response,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> WhoOut:
+    """Exchange an email and password for a session cookie.
+
+    Every way of failing gives the same 401 with the same wording, and
+    takes the same time: the wrong-email path is verified against a dummy
+    hash rather than returning early, because a route that answers faster
+    for unknown addresses tells anyone who asks which addresses are real.
+
+    Throttled per calling address, and on by default - unlike the rig
+    limiter, for the reason written beside `login_rate_limit_per_min`.
+    """
+    wait = login_limiter(settings).allow(login_key(request))
+    if wait > 0:
+        raise HTTPException(
+            status_code=429, detail="too many sign-in attempts",
+            headers={"Retry-After": str(max(1, int(wait + 0.5)))},
+        )
+
+    signed = await sign_in(session, body.email, body.password, settings)
+    if signed is None:
+        raise HTTPException(status_code=401, detail=REFUSED)
+
+    account, token = signed
+    await session.commit()
+    csrf = issue_session_cookies(response, token, settings)
+    log.info("signed in: %s (%s)", account.email, account.role)
+    return _who(account, csrf)
+
+
+@router.post("/auth/logout", tags=["people"],
+             summary="End this session. Safe to call when not signed in")
+async def logout(
+    request: Request, response: Response,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """End the session this cookie names, and clear it.
+
+    Always 200, including with no cookie or a stale one. A sign-out that
+    can fail is one somebody gives up on, and there is nothing here to
+    protect: the only thing it does is end a session, and being asked to
+    end one that is already over is not an error.
+
+    No CSRF requirement, deliberately. Forcing a sign-out on somebody is
+    a nuisance, not a compromise, and refusing a logout because a token
+    did not travel leaves a live session open - which is the worse of
+    the two.
+    """
+    token = request.cookies.get(SESSION_COOKIE)
+    ended = 0
+    if token:
+        ended = await AccountSessionRepository(session).revoke(token)
+        await session.commit()
+    clear_session_cookies(response, settings)
+    return {"signedOut": bool(ended)}
+
+
+@router.get("/auth/me", response_model=WhoOut, tags=["people"],
+            summary="Who this browser is signed in as")
+async def me(account=Depends(require_account)) -> WhoOut:
+    """The identity behind the cookie, or 401.
+
+    This is what the desk asks before it renders anything: the screen a
+    manager sees and the screen an operator sees are different screens,
+    and this is the only thing that decides which.
+    """
+    return _who(account)

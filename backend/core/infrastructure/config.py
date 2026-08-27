@@ -135,6 +135,38 @@ class Settings(BaseSettings):
     # keeps the events, backs off, and ingest dedupes the retry.
     rig_rate_limit_per_min: int = 0
 
+    # ------------------------------------------------------------ people
+    #
+    # The desk is a screen a person uses, and until now nothing knew which
+    # person. These settle how long they stay signed in and how the cookie
+    # that says so is protected.
+
+    # A shift is eight hours. Twelve covers one plus the handover either
+    # side, so signing in at the top of a shift cannot throw somebody out
+    # in the middle of it.
+    session_lifetime_hours: int = 12
+
+    # Whether the session cookie is marked Secure - HTTPS only.
+    #
+    # True by default, and deliberately the opposite way round from every
+    # other switch in this file. The others are off until configured
+    # because a laptop demo should not need setup; this one protects a
+    # credential, and a security control whose default is the unsafe
+    # setting is one that ships unsafe. Local development over plain http
+    # sets SESSION_COOKIE_SECURE=false and startup says so out loud.
+    session_cookie_secure: bool = True
+
+    # Attempts per minute per calling address on the login route.
+    #
+    # On by default, unlike rig_rate_limit_per_min, and the difference is
+    # not an inconsistency. That one is off because the platform team's
+    # gateway may already own it and two limiters disagreeing is worse
+    # than one. This guards a password: unthrottled, it is a brute-force
+    # target whoever is in front of it. Being wrong in that direction
+    # costs a floor its schedule; being wrong in this one costs a manager
+    # a sixty-second wait, once.
+    login_rate_limit_per_min: int = 10
+
     # Whether reading the floor needs the desk token as well as writing to
     # it. Off by default: /floor/state is what a wall display shows and
     # what the desk polls, and making it need a secret is a product

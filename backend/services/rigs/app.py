@@ -9,6 +9,7 @@ from fastapi import FastAPI
 
 from core.infrastructure.config import get_settings
 from services.rigs.auth import announce
+from services.rigs.people import announce as announce_people
 from services.rigs.observability import install
 from services.rigs.routes import router
 
@@ -52,6 +53,9 @@ TAGS = [
     {"name": "video", "description":
      "Where the bytes go. The rule that matters: a rig may delete its own "
      "copy only after this service has verified what landed."},
+    {"name": "people", "description":
+     "Who is *using* the desk. Unrelated to the rig routes, which "
+     "authenticate a machine and never a person."},
     {"name": "service", "description": "Liveness."},
 ]
 
@@ -68,6 +72,7 @@ def create_app() -> FastAPI:
     app.include_router(router, prefix="/api")
     # Before the first request, not after the first incident.
     announce(get_settings())
+    announce_people(get_settings())
     return app
 
 
