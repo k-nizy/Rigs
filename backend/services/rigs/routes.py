@@ -24,6 +24,7 @@ from core.infrastructure.config import Settings, get_settings
 from core.infrastructure.database import get_session
 from core.workflows.floor import floor_state, operator_efficiency
 from core.workflows.schedules import in_force as schedules_in_force
+from core.workflows.schedules import turns_for_operator
 from core.domains.accounts.repository import (
     AccountRepository, AccountSessionRepository,
 )
@@ -32,7 +33,8 @@ from services.rigs.auth import (
 )
 from services.rigs.people import (
     REFUSED, SESSION_COOKIE, clear_session_cookies, issue_session_cookies,
-    login_key, login_limiter, require_account, sign_in,
+    login_key, login_limiter, require_account, require_csrf, require_manager,
+    require_operator, sign_in,
 )
 from services.rigs.identity import caller_address, config_js, rig_at
 from core.infrastructure.storage import Storage, get_storage
@@ -350,7 +352,7 @@ async def storage_put(
 
 
 @router.get("/floor/video", tags=["video"],
-            dependencies=[Depends(desk_read_auth)],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
             summary="What video is waiting, and what a real episode actually costs")
 async def video_backlog(session: AsyncSession = Depends(get_session)) -> dict:
     """What is waiting to reach the archive, and what a video actually
@@ -440,7 +442,8 @@ class PushOut(BaseModel):
 
 
 @router.post("/schedules/push", response_model=PushOut, tags=["schedules"],
-             dependencies=[Depends(desk_auth)],
+             dependencies=[Depends(desk_auth), Depends(require_manager),
+                           Depends(require_csrf)],
              summary="Push the desk's payloads to the floor, all or none")
 async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
     """Store what the desk pushed, whole and unexamined.
@@ -502,7 +505,8 @@ async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> Pu
 
 
 @router.post("/push", response_model=PushOut, tags=["schedules"],
-             dependencies=[Depends(desk_auth)],
+             dependencies=[Depends(desk_auth), Depends(require_manager),
+                           Depends(require_csrf)],
              summary="Push, at the path the deployed desk already posts to")
 async def push_alias(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
     """What the desk's "Push to floor" button already posts to.
@@ -515,7 +519,7 @@ async def push_alias(body: PushIn, session: AsyncSession = Depends(get_session))
 
 
 @router.get("/state", tags=["schedules"],
-            dependencies=[Depends(desk_read_auth)],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
             summary="What the floor is currently running, as the desk asks for it")
 async def state(session: AsyncSession = Depends(get_session)) -> dict:
     """What the floor is currently running, as the desk asks for it.
@@ -543,7 +547,7 @@ async def state(session: AsyncSession = Depends(get_session)) -> dict:
 
 
 @router.get("/floor/state", tags=["floor"],
-            dependencies=[Depends(desk_read_auth)],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
             summary="The desk's live board: who is on, what is open, what is quiet")
 async def floor(session: AsyncSession = Depends(get_session)) -> dict:
     """The Live board: every rig, who is on it, when it was last heard
@@ -552,7 +556,7 @@ async def floor(session: AsyncSession = Depends(get_session)) -> dict:
 
 
 @router.get("/floor/alerts", tags=["floor"],
-            dependencies=[Depends(desk_read_auth)],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
             summary="What is open against the floor")
 async def alerts(session: AsyncSession = Depends(get_session)) -> dict:
     """Everything currently wrong on the floor.
@@ -573,7 +577,7 @@ async def alerts(session: AsyncSession = Depends(get_session)) -> dict:
 
 
 @router.get("/floor/efficiency", tags=["floor"],
-            dependencies=[Depends(desk_read_auth)],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
             summary="Efficiency per operator for one shift, computed at read time")
 async def efficiency_for_shift(
     shift_date: date, shift_label: str, session: AsyncSession = Depends(get_session)
@@ -690,3 +694,54 @@ async def me(account=Depends(require_account)) -> WhoOut:
     and this is the only thing that decides which.
     """
     return _who(account)
+
+
+# ------------------------------------------------------- an operator's own
+
+
+@router.get("/me/shift", tags=["people"],
+            summary="My turns in the shift running now, across every rig")
+async def my_shift(
+    account=Depends(require_operator),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """One operator's own day, and nobody else's.
+
+    Scoped here rather than in the screen that draws it. A page can hide
+    a row; only the route can decline to send it, and the difference
+    between those two is the whole of the role split.
+
+    A rig cannot answer this - it knows only its own turns, and this
+    person's day walks across all three rigs in their group. That is the
+    same fact that put `theyGoTo` in the payload.
+    """
+    return await turns_for_operator(session, account.operator_id)
+
+
+@router.get("/me/efficiency", tags=["people"],
+            summary="My own efficiency for one shift")
+async def my_efficiency(
+    shift_date: date, shift_label: str,
+    account=Depends(require_operator),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """The same numbers `/floor/efficiency` computes, filtered to one
+    person - and filtered *before* they are sent.
+
+    The floor-wide route stays manager-only. Whether an operator should
+    see how they compare to the person next to them is a question about
+    how this floor is run, and CLAUDE.md already records it as open;
+    answering it by accident, in an API that returns everyone, is the one
+    way it must not be settled.
+    """
+    everyone = await operator_efficiency(session, shift_date, shift_label)
+    mine = [row for row in everyone if row["operatorId"] == account.operator_id]
+    return {
+        "shiftDate": shift_date.isoformat(),
+        "shiftLabel": shift_label,
+        # A list of nought or one, not a bare object: an operator who has
+        # not worked that shift has no row, and inventing a zeroed one
+        # would read as "you recorded nothing" rather than "you were not
+        # here".
+        "operators": mine,
+    }

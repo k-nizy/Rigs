@@ -44,7 +44,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.domains.accounts.model import Account
+from core.domains.accounts.model import MANAGER, OPERATOR, Account
 from core.domains.accounts.passwords import hash_password, verify_password
 from core.domains.accounts.repository import (
     AccountRepository, AccountSessionRepository,
@@ -255,3 +255,67 @@ def announce(settings: Settings) -> None:
     else:
         log.warning("login rate limit: OFF - passwords may be guessed at "
                     "whatever rate the network allows.")
+
+
+# ------------------------------------------------------------- the gate
+
+
+async def _person_auth_is_on(session: AsyncSession) -> bool:
+    """Whether this deployment has anybody to sign in as.
+
+    Read from the database rather than a setting, because that is where
+    accounts are, and only on the path where nobody is signed in - a
+    request that already resolved to a person never runs this query.
+    """
+    return await AccountRepository(session).count() > 0
+
+
+async def require_manager(
+    account: Account | None = Depends(current_account),
+    session: AsyncSession = Depends(get_session),
+) -> Account | None:
+    """A manager - or nobody at all, on a deployment with no accounts.
+
+    The fallback is the same off-until-configured rule rig auth and the
+    rate limiter already follow, and it is what keeps `npm run serve` and
+    the laptop demo working with no setup. The moment one account exists
+    the fallback is gone and this is a real gate.
+
+    It is asymmetric with `require_operator` below on purpose. This one
+    guards routes that already existed and must keep working; that one
+    guards routes that are meaningless without a person.
+    """
+    if account is not None:
+        if account.role != MANAGER:
+            # 403, not 401: signing in again will not help, and telling
+            # somebody to re-authenticate when the answer is "not you" is
+            # how people end up trying three passwords.
+            raise HTTPException(
+                status_code=403,
+                detail="the desk is for managers; your shift is on My Shift",
+            )
+        return account
+
+    if await _person_auth_is_on(session):
+        raise HTTPException(status_code=401, detail="not signed in")
+    return None
+
+
+async def require_operator(
+    account: Account | None = Depends(current_account),
+) -> Account:
+    """An operator, always, with no off-until-configured fallback.
+
+    These routes answer "what is *my* day" and "how did *I* do". Without
+    somebody signed in there is no my, so there is nothing to fall back
+    to - unlike the manager gate, where falling back means behaving as
+    the service did before accounts existed.
+    """
+    if account is None:
+        raise HTTPException(status_code=401, detail="not signed in")
+    if account.role != OPERATOR:
+        raise HTTPException(
+            status_code=403,
+            detail="this shows one operator's own shift, and you are not one",
+        )
+    return account
