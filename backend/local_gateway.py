@@ -155,6 +155,7 @@ async def rig_config(request: Request):
 # server and its state.json - the whole floor's pushed schedules - and
 # serving those was how this tree turned into a web root by accident.
 for url, folder in (("/apps/rig", "apps/rig"),
+                    ("/apps/my-shift", "apps/my-shift"),
                     ("/packages", "packages"),
                     ("/rotation-desk-v1", "rotation-desk-v1")):
     app.mount(

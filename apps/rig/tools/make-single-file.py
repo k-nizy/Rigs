@@ -84,5 +84,39 @@ leftovers = [m for m in re.findall(r'(?:href|src)="([^"]+)"', out)
              if not m.startswith(("http", "#"))]
 assert not leftovers, f"single file still references local assets: {leftovers}"
 
+# Every script the page loads has to end up in the dist, or be named here
+# as deliberately left out.
+#
+# The two halves of this build do not know about each other: the regex
+# above strips *every* local <script src> generically, and the template
+# adds back a list written by hand. A module added to index.html is
+# therefore removed and never replaced - and `leftovers` cannot catch it,
+# because the reference it would look for is exactly what was stripped.
+# The build would print "no local asset references" and ship an app
+# missing a dependency. That is not a hypothetical: the desk's build did
+# it to packages/session/session.js.
+SUBSTITUTED = {
+    # Asks the service which rig this machine is. The dist is the review
+    # build with no service behind it, so the block above stands in:
+    # demo clock on, schedule baked at build time.
+    "rig-config.js",
+}
+
+for src in re.findall(r'<script src="([^"]+)"', html):
+    if src.startswith("http"):
+        continue
+    if src.rsplit("/", 1)[-1] in SUBSTITUTED:
+        continue
+    text = (root / src).read_text(encoding="utf-8")
+    # From the middle, not the first line. Two of these modules open with
+    # the same `(function (root) {` wrapper, so a probe taken from the top
+    # still passes when the wrong one has been dropped.
+    at = len(text) // 2
+    probe = text[at:at + 120]
+    assert probe and probe in out, (
+        f"{src} was stripped from the page but never inlined - the dist "
+        f"is missing it. Inline it above, or add it to SUBSTITUTED."
+    )
+
 (root / "dist/rig.html").write_text(out, encoding="utf-8")
 print(f"rig/dist/rig.html  {len(out):,} bytes, no local asset references")

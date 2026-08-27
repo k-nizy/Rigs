@@ -949,3 +949,86 @@ pre.json .n { color: var(--accent); }
   td.cell { width: auto; min-width: 0; height: auto; font-size: 7px; padding: 1px 0; }
   tr.band td span { display: none; }
 }
+
+/* ===================================================================
+ * SIGN IN, and who is signed in
+ *
+ * The desk asks who is at it before it draws anything. Everything here
+ * is deliberately quiet: it is a door, not a screen, and on a floor
+ * with no accounts configured none of it is ever shown at all.
+ *
+ * Every colour is an existing token. A login box is not the place to
+ * introduce a new one.
+ * =================================================================== */
+
+.head-right { display: flex; align-items: center; gap: 12px; }
+
+/* --- the identity chip ------------------------------------------- */
+
+.who {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line-2); border-radius: 999px;
+  padding: 3px 4px 3px 11px; background: var(--panel);
+}
+.who-name { font-size: 0.82rem; font-weight: 600; color: var(--ink); }
+.who-role {
+  font-family: var(--mono); font-size: 0.6rem; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 999px;
+  color: var(--ok); background: var(--ok-soft);
+}
+.who-role[data-role="operator"] { color: var(--g0); background: var(--g0-soft); }
+.who-out {
+  font: inherit; font-size: 0.74rem; color: var(--ink-2);
+  background: none; border: 0; border-left: 1px solid var(--line);
+  padding: 2px 8px; margin-left: 2px; cursor: pointer;
+}
+.who-out:hover { color: var(--ink); }
+
+/* --- the card ----------------------------------------------------- */
+
+.card {
+  max-width: 340px; margin: 8vh auto 0;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 26px 24px;
+  display: flex; flex-direction: column;
+}
+.card-title {
+  font-size: 1.2rem; font-weight: 700; letter-spacing: -0.01em;
+  margin: 0 0 3px; color: var(--ink);
+}
+.card-sub { font-size: 0.84rem; color: var(--muted); margin: 0 0 18px; }
+
+.card .field-label {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--ink-2); margin-bottom: 4px;
+}
+.card input {
+  font: inherit; font-size: 0.9rem; color: var(--ink);
+  background: var(--ground); border: 1px solid var(--line-2);
+  border-radius: 3px; padding: 8px 10px; margin-bottom: 13px;
+  width: 100%;
+}
+.card input:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+  border-color: var(--accent);
+}
+.card .btn { margin-top: 4px; justify-content: center; text-align: center; }
+
+/* One message for every way of failing, because the service gives one.
+   Saying which half was wrong would answer "does this person work here". */
+.card-error {
+  font-size: 0.82rem; color: var(--crit); background: var(--crit-soft);
+  border: 1px solid var(--crit); border-radius: 3px;
+  padding: 8px 10px; margin: 0 0 14px;
+}
+.card-foot {
+  font-size: 0.72rem; color: var(--muted); text-align: center;
+  margin: 14px 0 0; line-height: 1.45;
+}
+
+.card.denied { border-top: 3px solid var(--warn); text-align: center; }
+.denied-who { font-size: 0.9rem; color: var(--ink); margin: 0 0 6px; }
+.denied-sub { font-size: 0.82rem; color: var(--ink-2); margin: 0 0 4px; }
+
+@media print { .who, #view-signin, #view-denied { display: none !important; } }

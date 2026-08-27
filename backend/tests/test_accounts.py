@@ -317,3 +317,47 @@ class TestASignedInBrowser:
         assert await sessions.purge_expired() == 1
         await session.commit()
         assert await sessions.live("new") is not None
+
+
+# ------------------------------------------------ housekeeping that runs
+
+
+class TestExpiredSessionsAreActuallyCleared:
+    """`purge_expired` was written, tested, and called by nothing. A
+    tested function with no caller is the kind that rots - it keeps
+    passing while the rows it was meant to remove pile up."""
+
+    async def test_the_sweep_worker_clears_them(self, engine, session):
+        from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from workers.sweep_floor import clear_dead_sessions
+
+        account = manager()
+        session.add(account)
+        await session.commit()
+
+        sessions = AccountSessionRepository(session)
+        long_ago = datetime.now(timezone.utc) - timedelta(days=2)
+        await sessions.open(account.id, "dead", timedelta(hours=1), now=long_ago)
+        await sessions.open(account.id, "alive", timedelta(hours=12))
+        await session.commit()
+
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        assert await clear_dead_sessions(maker) == 1
+
+        assert await sessions.live("alive") is not None, "it took a live one"
+
+    async def test_a_failure_to_tidy_up_does_not_raise(self, engine, session):
+        """It rides on the worker that watches the floor. Housekeeping
+        must not be able to stop absence detection."""
+        import logging
+
+        from workers.sweep_floor import clear_dead_sessions
+
+        class Broken:
+            async def __aenter__(self): raise RuntimeError("database gone")
+            async def __aexit__(self, *a): return False
+
+        quiet = logging.getLogger("test.quiet")
+        quiet.disabled = True
+        assert await clear_dead_sessions(lambda: Broken(), log_to=quiet) == 0

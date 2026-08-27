@@ -42,6 +42,7 @@ css    = (root / "assets/desk.css").read_text(encoding="utf-8")
 js     = (root / "assets/desk.js").read_text(encoding="utf-8")
 title  = re.search(r"<title>(.*?)</title>", html, re.S).group(1)
 repo   = root.parent
+session = (repo / "packages/session/session.js").read_text(encoding="utf-8")
 engine = (repo / "packages/engine/rotation-engine.js").read_text(encoding="utf-8")
 roster = (repo / "packages/demo-roster/demo-roster.js").read_text(encoding="utf-8")
 
@@ -64,6 +65,8 @@ out = f"""<meta charset="utf-8">
 {body}
 
 <script>
+{session}</script>
+<script>
 {engine}</script>
 <script>
 {roster}</script>
@@ -74,6 +77,22 @@ out = f"""<meta charset="utf-8">
 leftovers = [m for m in re.findall(r'(?:href|src)="([^"]+)"', out)
              if not m.startswith(("http", "#"))]
 assert not leftovers, f"single file still references local assets: {leftovers}"
+
+# Every source that was read has to end up in the output.
+#
+# The check above only finds references that were left dangling. Adding a
+# module to this script and forgetting to put it in the template passes
+# it cleanly - the script tag is stripped, nothing dangles, and the build
+# reports success while shipping a page whose first line is a TypeError.
+# That happened once; this is so it cannot happen quietly again.
+for name, source in (("session", session), ("engine", engine),
+                     ("roster", roster), ("desk.js", js), ("desk.css", css)):
+    # A slice from the middle, not the first line of code: session.js and
+    # demo-roster.js both open with the same IIFE wrapper, so a marker
+    # taken from the top of one is satisfied by the other and the check
+    # passes while the module is missing. It did.
+    middle = len(source) // 2
+    assert source[middle:middle + 160] in out, f"{name} was read but never inlined"
 
 (root / "dist/rotation-desk.html").write_text(out, encoding="utf-8")
 print(f"desk/dist/rotation-desk.html  {len(out):,} bytes, no local asset references")

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My Shift &mdash; Verlet Robotics</title>
+<meta name="description" content="Your turns, your breaks, your own numbers.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="../../packages/brand/brand.css">
+<link rel="stylesheet" href="assets/my-shift.css">
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="brand">
+      <p class="eyebrow"><span class="v-mark" aria-hidden="true"></span>Verlet Robotics</p>
+      <h1>My Shift</h1>
+    </div>
+    <div class="who" id="who" hidden>
+      <span class="who-name" id="who-name"></span>
+      <span class="who-role" id="who-role"></span>
+      <button type="button" class="who-out" id="btn-signout">Sign out</button>
+    </div>
+  </header>
+
+  <!-- =============================================================
+       SIGN IN. The same four answers the desk asks for, from the
+       same shared module - see packages/session/session.js.
+       ============================================================= -->
+  <main id="view-signin" hidden>
+    <form class="card" id="signin-form" autocomplete="on">
+      <h2 class="card-title">Sign in</h2>
+      <p class="card-sub">Your turns, your breaks and your own numbers.</p>
+
+      <p class="card-error" id="signin-error" hidden></p>
+
+      <label class="field-label" for="in-email">Email</label>
+      <input type="email" id="in-email" name="email" autocomplete="username"
+             required autofocus>
+
+      <label class="field-label" for="in-password">Password</label>
+      <input type="password" id="in-password" name="password"
+             autocomplete="current-password" required>
+
+      <button type="submit" class="btn" id="btn-signin">Sign in</button>
+      <p class="card-foot">Rigs do not sign in. A rig authenticates as a machine.</p>
+    </form>
+  </main>
+
+  <!-- =============================================================
+       A MANAGER. They are not on the sheet, so there is no day to
+       show them - the service refuses this with 403 for the same
+       reason. Point them at the screen that is theirs.
+       ============================================================= -->
+  <main id="view-denied" hidden>
+    <div class="card denied">
+      <h2 class="card-title">This screen shows one operator&rsquo;s day</h2>
+      <p class="denied-who">You are signed in as <b id="denied-name"></b>, a manager.</p>
+      <p class="denied-sub">Managers are not on the sheet, so there is no shift here to show. The whole floor is on the Rotation Desk.</p>
+      <a class="btn" id="link-desk" href="../../rotation-desk-v1/">Go to the desk</a>
+      <button type="button" class="btn ghost" id="btn-denied-out">Sign out</button>
+    </div>
+  </main>
+
+  <!-- =============================================================
+       THE DAY. Read only. There is no control on this screen that
+       changes anything on the floor.
+       ============================================================= -->
+  <main id="view-day" hidden>
+
+    <p class="shiftline" id="shiftline"></p>
+
+    <div class="now" id="now"></div>
+
+    <p class="empty" id="empty" hidden></p>
+
+    <ol class="timeline" id="timeline"></ol>
+
+    <div class="budget" id="budget" hidden>
+      <div class="budget-nums">
+        <span class="b-work"><b id="b-work">-</b> work</span>
+        <span class="b-break"><b id="b-break">-</b> break</span>
+        <span class="b-think"><b id="b-think">-</b> think</span>
+      </div>
+      <p class="budget-note" id="budget-note"></p>
+    </div>
+  </main>
+</div>
+
+<script src="../../packages/session/session.js"></script>
+<script src="assets/my-shift.js"></script>
+</body>
+</html>

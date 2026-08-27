@@ -1,0 +1,239 @@
+/* ===================================================================
+ * My Shift - one operator's day, and nobody else's.
+ *
+ * Read from a phone in a corridor as often as from a screen, so it is
+ * one column and the type does not get small. The three colours are the
+ * desk's own - work, break, think - because an operator who has seen
+ * the printed sheet should not have to learn a second vocabulary for
+ * the same three things.
+ *
+ * Everything comes from packages/brand/brand.css. This screen introduces
+ * no colour of its own.
+ * =================================================================== */
+
+:root {
+  --ground:   var(--v-ground);
+  --panel:    var(--v-panel);
+  --sunk:     var(--v-sunk);
+  --ink:      var(--v-ink);
+  --ink-2:    var(--v-ink-2);
+  --muted:    var(--v-muted);
+  --line:     var(--v-line);
+  --line-2:   var(--v-line-2);
+  --accent:   var(--v-accent);
+  --work:     var(--v-work);
+  --break:    var(--v-break);
+  --think:    var(--v-think);
+  --crit:     var(--v-down);
+  --mono:     var(--v-mono);
+  --radius:   6px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--v-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: clamp(1.1rem, 4vw, 2.2rem) clamp(0.9rem, 4vw, 1.4rem) 4rem;
+  display: flex; flex-direction: column; gap: 1.2rem;
+}
+
+/* ------------------------------------------------------- masthead */
+
+.masthead {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap;
+  padding-bottom: 0.8rem; border-bottom: 2px solid var(--ink);
+}
+.eyebrow {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.13em;
+  text-transform: uppercase; color: var(--ink-2);
+  display: flex; align-items: center; gap: 7px; margin-bottom: 2px;
+}
+.v-mark {
+  width: 8px; height: 8px; background: var(--accent);
+  transform: rotate(45deg); display: inline-block; flex: none;
+}
+.masthead h1 {
+  font-family: var(--v-display); font-weight: 400;
+  font-size: clamp(1.5rem, 5vw, 2rem);
+  letter-spacing: var(--v-display-tracking); line-height: 1;
+}
+
+.who {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line-2); border-radius: 999px;
+  padding: 3px 4px 3px 11px; background: var(--panel);
+}
+.who-name { font-size: 0.82rem; font-weight: 600; }
+/* The same two colours the desk uses for the same two roles. A badge
+   that reads green on one screen and blue on the other for the same
+   word is a small thing that teaches people the wrong lesson. */
+.who-role {
+  font-family: var(--mono); font-size: 0.58rem; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 999px;
+  color: var(--work); background: color-mix(in srgb, var(--work) 12%, transparent);
+}
+.who-role[data-role="operator"] {
+  color: var(--think); background: color-mix(in srgb, var(--think) 12%, transparent);
+}
+.who-out {
+  font: inherit; font-size: 0.74rem; color: var(--ink-2);
+  background: none; border: 0; border-left: 1px solid var(--line);
+  padding: 2px 8px; margin-left: 2px; cursor: pointer;
+}
+.who-out:hover { color: var(--ink); }
+
+/* ----------------------------------------------------- sign in */
+
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 26px 24px;
+  margin: 6vh auto 0; max-width: 340px; width: 100%;
+  display: flex; flex-direction: column;
+}
+.card-title {
+  font-size: 1.2rem; font-weight: 700; margin-bottom: 3px;
+  text-wrap: balance;
+}
+.card-sub { font-size: 0.84rem; color: var(--muted); margin-bottom: 18px; }
+.field-label {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--ink-2); margin-bottom: 4px;
+}
+.card input {
+  font: inherit; font-size: 0.9rem; color: var(--ink); width: 100%;
+  background: var(--ground); border: 1px solid var(--line-2);
+  border-radius: 3px; padding: 8px 10px; margin-bottom: 13px;
+}
+.card input:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+  border-color: var(--accent);
+}
+.btn {
+  display: block; text-align: center; text-decoration: none;
+  font: inherit; font-size: 0.9rem; font-weight: 700;
+  background: var(--ink); color: var(--ground);
+  border: 1px solid var(--ink); border-radius: 3px;
+  padding: 9px 14px; margin-top: 5px; cursor: pointer;
+}
+.btn:hover { opacity: 0.88; }
+.btn:disabled { opacity: 0.45; cursor: default; }
+.btn.ghost {
+  background: transparent; color: var(--ink); border-color: var(--line-2);
+}
+.card-error {
+  font-size: 0.82rem; color: var(--crit);
+  background: color-mix(in srgb, var(--crit) 10%, transparent);
+  border: 1px solid var(--crit); border-radius: 3px;
+  padding: 8px 10px; margin-bottom: 14px;
+}
+.card-foot {
+  font-size: 0.72rem; color: var(--muted); text-align: center;
+  margin-top: 14px; line-height: 1.45;
+}
+.card.denied { border-top: 3px solid var(--break); text-align: center; max-width: 400px; }
+.denied-who { font-size: 0.9rem; margin-bottom: 6px; }
+.denied-sub { font-size: 0.82rem; color: var(--ink-2); margin-bottom: 4px; }
+.card.denied .btn { margin-top: 12px; }
+
+/* --------------------------------------------------------- the day */
+
+.shiftline { font-size: 0.86rem; color: var(--ink-2); }
+.shiftline b { color: var(--ink); font-weight: 600; }
+.shiftline .mono { font-family: var(--mono); }
+
+/* What is happening this minute, in the largest type on the page. */
+.now {
+  border-radius: var(--radius); padding: 15px 17px;
+  border: 1px solid var(--line-2); background: var(--panel);
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap;
+}
+.now[data-kind="work"]  { border-color: var(--work);  background: color-mix(in srgb, var(--work) 9%, var(--panel)); }
+.now[data-kind="Break"] { border-color: var(--break); background: color-mix(in srgb, var(--break) 9%, var(--panel)); }
+.now[data-kind="Think"] { border-color: var(--think); background: color-mix(in srgb, var(--think) 9%, var(--panel)); }
+
+.now-k {
+  font-family: var(--mono); font-size: 0.6rem; font-weight: 700;
+  letter-spacing: 0.11em; text-transform: uppercase;
+  color: var(--ink-2); margin-bottom: 2px;
+}
+.now[data-kind="work"]  .now-k { color: var(--work); }
+.now[data-kind="Break"] .now-k { color: var(--break); }
+.now[data-kind="Think"] .now-k { color: var(--think); }
+.now-v { font-size: 1.2rem; font-weight: 700; letter-spacing: -0.01em; }
+.now-v .mono { font-family: var(--mono); }
+.now-r { text-align: right; }
+.now-left {
+  font-family: var(--mono); font-size: 1.25rem; font-weight: 700; line-height: 1;
+}
+.now-sub { font-size: 0.72rem; color: var(--ink-2); margin-top: 3px; }
+
+.empty {
+  border-left: 3px solid var(--break); background: var(--panel);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 12px 15px; font-size: 0.88rem; color: var(--ink-2);
+}
+
+/* ------------------------------------------------------- timeline */
+
+.timeline { list-style: none; display: grid; }
+.tl {
+  display: grid; grid-template-columns: 58px 1fr; gap: 12px;
+  align-items: stretch;
+}
+.tl-t {
+  font-family: var(--mono); font-size: 0.72rem; color: var(--muted);
+  padding-top: 8px; text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.tl-b {
+  border-left: 2px solid var(--line-2);
+  padding: 7px 0 7px 14px; position: relative; min-height: 34px;
+}
+.tl[data-kind="work"]  .tl-b { border-left-color: var(--work); }
+.tl[data-kind="Break"] .tl-b { border-left-color: var(--break); }
+.tl[data-kind="Think"] .tl-b { border-left-color: var(--think); }
+.tl.is-now .tl-b {
+  border-left-width: 4px;
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+.tl.is-past .tl-t, .tl.is-past .tl-what, .tl.is-past .tl-sub { opacity: 0.5; }
+
+.tl-what { font-size: 0.92rem; font-weight: 600; }
+.tl-what .mono { font-family: var(--mono); }
+.tl[data-kind="Break"] .tl-what { color: var(--break); }
+.tl[data-kind="Think"] .tl-what { color: var(--think); }
+.tl-sub { font-size: 0.74rem; color: var(--ink-2); margin-top: 1px; }
+.tl-sub b { color: var(--ink); font-weight: 600; }
+
+/* --------------------------------------------------------- budget */
+
+.budget {
+  border-top: 1px solid var(--line); padding-top: 14px;
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 14px; flex-wrap: wrap;
+}
+.budget-nums { display: flex; gap: 18px; font-size: 0.78rem; color: var(--ink-2); }
+.budget-nums b {
+  display: block; font-family: var(--mono); font-size: 1.1rem;
+  font-weight: 700; color: var(--ink); line-height: 1.1;
+}
+.budget-nums .b-work b  { color: var(--work); }
+.budget-nums .b-break b { color: var(--break); }
+.budget-nums .b-think b { color: var(--think); }
+.budget-note { font-size: 0.72rem; color: var(--muted); max-width: 32ch; text-align: right; }
+
+@media print {
+  .who, #view-signin, #view-denied { display: none !important; }
+}

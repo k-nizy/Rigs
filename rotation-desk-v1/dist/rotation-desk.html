@@ -1128,6 +1128,89 @@ pre.json .n { color: var(--accent); }
   td.cell { width: auto; min-width: 0; height: auto; font-size: 7px; padding: 1px 0; }
   tr.band td span { display: none; }
 }
+
+/* ===================================================================
+ * SIGN IN, and who is signed in
+ *
+ * The desk asks who is at it before it draws anything. Everything here
+ * is deliberately quiet: it is a door, not a screen, and on a floor
+ * with no accounts configured none of it is ever shown at all.
+ *
+ * Every colour is an existing token. A login box is not the place to
+ * introduce a new one.
+ * =================================================================== */
+
+.head-right { display: flex; align-items: center; gap: 12px; }
+
+/* --- the identity chip ------------------------------------------- */
+
+.who {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--line-2); border-radius: 999px;
+  padding: 3px 4px 3px 11px; background: var(--panel);
+}
+.who-name { font-size: 0.82rem; font-weight: 600; color: var(--ink); }
+.who-role {
+  font-family: var(--mono); font-size: 0.6rem; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 999px;
+  color: var(--ok); background: var(--ok-soft);
+}
+.who-role[data-role="operator"] { color: var(--g0); background: var(--g0-soft); }
+.who-out {
+  font: inherit; font-size: 0.74rem; color: var(--ink-2);
+  background: none; border: 0; border-left: 1px solid var(--line);
+  padding: 2px 8px; margin-left: 2px; cursor: pointer;
+}
+.who-out:hover { color: var(--ink); }
+
+/* --- the card ----------------------------------------------------- */
+
+.card {
+  max-width: 340px; margin: 8vh auto 0;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 26px 24px;
+  display: flex; flex-direction: column;
+}
+.card-title {
+  font-size: 1.2rem; font-weight: 700; letter-spacing: -0.01em;
+  margin: 0 0 3px; color: var(--ink);
+}
+.card-sub { font-size: 0.84rem; color: var(--muted); margin: 0 0 18px; }
+
+.card .field-label {
+  font-size: 0.62rem; font-weight: 700; letter-spacing: 0.09em;
+  text-transform: uppercase; color: var(--ink-2); margin-bottom: 4px;
+}
+.card input {
+  font: inherit; font-size: 0.9rem; color: var(--ink);
+  background: var(--ground); border: 1px solid var(--line-2);
+  border-radius: 3px; padding: 8px 10px; margin-bottom: 13px;
+  width: 100%;
+}
+.card input:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+  border-color: var(--accent);
+}
+.card .btn { margin-top: 4px; justify-content: center; text-align: center; }
+
+/* One message for every way of failing, because the service gives one.
+   Saying which half was wrong would answer "does this person work here". */
+.card-error {
+  font-size: 0.82rem; color: var(--crit); background: var(--crit-soft);
+  border: 1px solid var(--crit); border-radius: 3px;
+  padding: 8px 10px; margin: 0 0 14px;
+}
+.card-foot {
+  font-size: 0.72rem; color: var(--muted); text-align: center;
+  margin: 14px 0 0; line-height: 1.45;
+}
+
+.card.denied { border-top: 3px solid var(--warn); text-align: center; }
+.denied-who { font-size: 0.9rem; color: var(--ink); margin: 0 0 6px; }
+.denied-sub { font-size: 0.82rem; color: var(--ink-2); margin: 0 0 4px; }
+
+@media print { .who, #view-signin, #view-denied { display: none !important; } }
 </style>
 
 
@@ -1138,11 +1221,59 @@ pre.json .n { color: var(--accent); }
       <p class="eyebrow"><span class="v-mark" aria-hidden="true"></span>Verlet Robotics</p>
       <h1>Rotation Desk <span class="ver">v1</span></h1>
     </div>
-    <div class="modes" role="tablist" id="modes" aria-label="Desk mode">
-      <button type="button" role="tab" data-mode="live" aria-selected="true">Live</button>
-      <button type="button" role="tab" data-mode="plan" aria-selected="false">Plan</button>
+    <div class="head-right">
+      <div class="modes" role="tablist" id="modes" aria-label="Desk mode">
+        <button type="button" role="tab" data-mode="live" aria-selected="true">Live</button>
+        <button type="button" role="tab" data-mode="plan" aria-selected="false">Plan</button>
+      </div>
+      <!-- Who is signed in. Hidden entirely on a deployment with no
+           accounts, so the demo looks exactly as it did. -->
+      <div class="who" id="who" hidden>
+        <span class="who-name" id="who-name"></span>
+        <span class="who-role" id="who-role"></span>
+        <button type="button" class="who-out" id="btn-signout">Sign out</button>
+      </div>
     </div>
   </header>
+
+  <!-- =============================================================
+       SIGN IN - the desk asks who is at it before it draws anything.
+       The gate that counts is on the service; this is the one that
+       stops somebody wandering into a screen they cannot use.
+       ============================================================= -->
+  <main id="view-signin" hidden>
+    <form class="card" id="signin-form" autocomplete="on">
+      <h2 class="card-title">Sign in</h2>
+      <p class="card-sub">The desk plans and pushes the floor.</p>
+
+      <p class="card-error" id="signin-error" hidden></p>
+
+      <label class="field-label" for="in-email">Email</label>
+      <input type="email" id="in-email" name="email" autocomplete="username"
+             required autofocus>
+
+      <label class="field-label" for="in-password">Password</label>
+      <input type="password" id="in-password" name="password"
+             autocomplete="current-password" required>
+
+      <button type="submit" class="btn" id="btn-signin">Sign in</button>
+      <p class="card-foot">Rigs do not sign in. A rig authenticates as a machine.</p>
+    </form>
+  </main>
+
+  <!-- =============================================================
+       SIGNED IN, WRONG ROLE - not a 403 page. It names who you are,
+       says why this is not your screen, and does not pretend the
+       password was wrong.
+       ============================================================= -->
+  <main id="view-denied" hidden>
+    <div class="card denied">
+      <h2 class="card-title">The desk is for managers</h2>
+      <p class="denied-who">You are signed in as <b id="denied-name"></b>, an operator.</p>
+      <p class="denied-sub">Your turns, your breaks and your own numbers are on My Shift.</p>
+      <button type="button" class="btn" id="btn-denied-out">Sign out</button>
+    </div>
+  </main>
 
   <!-- =============================================================
        LIVE - what the floor is doing right now. Nothing to fill in.
@@ -1250,6 +1381,183 @@ pre.json .n { color: var(--accent); }
 
 <script>
 /* =====================================================================
+ * session.js  -  who is at this screen, for every screen that asks
+ *
+ * Two apps now need the same four answers, and they must not answer
+ * differently. That is the same argument that put the rotation in one
+ * shared file: a second copy is a second answer, and the first one that
+ * can silently disagree.
+ *
+ *   no accounts here    the service has nobody to sign in as. Open the
+ *                       app and behave as it did before there was such
+ *                       a thing.
+ *   nobody signed in    show the sign-in card.
+ *   somebody            hand back their name and role; the app decides
+ *                       whether that role may use it.
+ *   the service is ill  keep the door shut and say so.
+ *
+ * **Only silence opens the door.** A fetch that never resolves means
+ * there is no service behind this page - the static deploy, `./serve.sh`,
+ * the single-file build - and there is nothing to gate. Everything else
+ * is a service that exists: a 401 has said no, a 500 could not answer.
+ * Treating either as "no accounts configured" unlocks the screen exactly
+ * when nothing can be verified, and that mistake has now been made here
+ * twice, in both directions, which is why it is written down rather
+ * than left to be inferred.
+ *
+ * A 404 is the one deliberate exception: a service too old to know this
+ * route cannot be gating anything either.
+ *
+ * None of this is the security gate. The gate is on the service, on
+ * every route - `require_manager` and `require_operator`. This only
+ * stops somebody wandering into a screen they cannot use.
+ * ===================================================================== */
+
+(function (root) {
+  "use strict";
+
+  const state = {
+    personAuth: "off",   // "on" once the service says accounts exist
+    account: null,       // { name, role, operatorId }
+    csrf: null,
+    reachable: true,
+    broken: false,       // the service answered, and badly
+  };
+
+  /* No service behind the page. The one case that opens an app. */
+  function notServed() {
+    state.reachable = false;
+    state.broken = false;
+    state.personAuth = "off";
+    state.account = null;
+    state.csrf = null;
+  }
+
+  /* Every call a screen makes to the service.
+   *
+   * `same-origin` credentials so the session cookie travels, and the
+   * CSRF token echoed on writes - the header has to equal the cookie,
+   * which is a thing only a page on this origin can arrange. */
+  function api(path, init) {
+    const opts = Object.assign({ credentials: "same-origin" }, init || {});
+    const method = (opts.method || "GET").toUpperCase();
+    if (method !== "GET" && method !== "HEAD" && state.csrf) {
+      opts.headers = Object.assign({}, opts.headers,
+                                   { "x-csrf-token": state.csrf });
+    }
+    return fetch(path, opts);
+  }
+
+  /* Ask the service who is at this screen. Never throws. */
+  async function probe() {
+    state.broken = false;
+    try {
+      const r = await api("/api/auth/session");
+
+      if (r.status === 404) return notServed();
+
+      if (!r.ok) {
+        state.broken = true;
+        state.reachable = true;
+        state.personAuth = "on";
+        state.account = null;
+        state.csrf = null;
+        return;
+      }
+
+      const body = await r.json();
+      state.reachable = true;
+      state.personAuth = body.personAuth === "on" ? "on" : "off";
+      state.account = body.account || null;
+      state.csrf = body.csrfToken || null;
+    } catch (ignored) {
+      notServed();
+    }
+  }
+
+  /* Exchange an email and password for a session.
+   *
+   * Returns { ok: true } or { ok: false, message } - one message for
+   * every way of failing, because the service gives one. Saying which
+   * half was wrong answers "does this person work here" for anybody who
+   * cares to ask. A throttle is the exception: that is not a wrong
+   * password, and telling somebody to wait is useful. */
+  async function signIn(email, password) {
+    try {
+      const r = await api("/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: email, password: password }),
+      });
+      const body = await r.json().catch(() => ({}));
+
+      if (!r.ok) {
+        return {
+          ok: false,
+          message: r.status === 429
+            ? "Too many attempts. Wait a minute and try again."
+            : (body.detail || "Email or password is not right."),
+        };
+      }
+
+      state.personAuth = "on";
+      state.broken = false;
+      state.reachable = true;
+      state.account = {
+        name: body.name, role: body.role, operatorId: body.operatorId,
+      };
+      state.csrf = body.csrfToken || null;
+      return { ok: true };
+    } catch (ignored) {
+      return { ok: false, message: "Could not reach the server." };
+    }
+  }
+
+  /* End the session, here and on the service. Never throws: a sign-out
+   * that can fail is one somebody gives up on, and the local half has
+   * to happen either way. */
+  async function signOut() {
+    try { await api("/api/auth/logout", { method: "POST" }); }
+    catch (ignored) { /* the local half below still matters */ }
+    state.account = null;
+    state.csrf = null;
+  }
+
+  /* Whether somebody with this role may use the screen asking.
+   *
+   * `role` is what the app requires - "manager" for the desk, "operator"
+   * for My Shift. A deployment with no accounts lets everybody in, which
+   * is what keeps the laptop demo working; a service that could not
+   * answer lets nobody in. */
+  function mayUse(role) {
+    if (state.broken) return false;
+    if (state.personAuth === "off") return true;
+    return !!(state.account && state.account.role === role);
+  }
+
+  /* Signed in, but as the wrong sort of person. The app shows a card
+   * naming them rather than a password box, because their password was
+   * never the problem. */
+  function wrongRole(role) {
+    return !state.broken && !!state.account && state.account.role !== role;
+  }
+
+  root.Session = {
+    state: state,
+    api: api,
+    probe: probe,
+    signIn: signIn,
+    signOut: signOut,
+    mayUse: mayUse,
+    wrongRole: wrongRole,
+  };
+
+  if (typeof module === "object" && module.exports) module.exports = root.Session;
+
+})(typeof window !== "undefined" ? window : globalThis);
+</script>
+<script>
+/* =====================================================================
  * rotation-engine.js
  *
  * The schedule itself, with no screen attached. Nothing in this file
@@ -1279,21 +1587,6 @@ pre.json .n { color: var(--accent); }
   var SHIFT_MINUTES = 480;   // all three shifts are eight hours
   var HOLD_STINT    = 3;     // "hold" is forced to a 3-block on-run by the 3:1 duty
 
-  /* The one rule that decides whether a schedule works.
-   *
-   * An operator's cycle is four stints - three on a rig, one off. Break
-   * and think alternate across the off-stints, so an operator needs an
-   * even number of them: eight stints per cycle. Eight stints must fit
-   * the 480-minute shift a whole number of times, so
-   *
-   *     stint x 8  divides  480     <=>     stint divides 60
-   *
-   * That is all of it. Any time-on-rig that divides an hour works; any
-   * that does not cannot, at any block size. Block length only sets the
-   * resolution of the grid - 15min x 4 and 20min x 3 are the same
-   * schedule, because both are 60. */
-  var HOUR_DIVISORS = [5, 10, 12, 15, 20, 30, 60];
-
   var OFF   = -1;          // this operator is not on a rig this block
   var BREAK = "BREAK";
   var THINK = "THINK";
@@ -1311,13 +1604,6 @@ pre.json .n { color: var(--accent); }
 
   function stintMinutes(cfg) {
     return stintBlocksFor(cfg) * cfg.blockMin;
-  }
-
-  /* Times-on-rig that divide the hour and are a whole number of blocks. */
-  function cleanStints(blockMin) {
-    return HOUR_DIVISORS.filter(function (m) {
-      return m % blockMin === 0 && m >= blockMin;
-    });
   }
 
   // --------------------------------------------------------- generation
@@ -1385,15 +1671,6 @@ pre.json .n { color: var(--accent); }
       }
     });
     return Object.keys(lens).map(Number).sort(function (a, b) { return a - b; });
-  }
-
-  /* Block lengths that give an operator an even number of off-turns, which
-   * is what "hold" needs for break and think to come out equal. */
-  function cleanBlocks(options) {
-    return (options || [5, 10, 12, 15, 20, 30, 40]).filter(function (bm) {
-      var n = SHIFT_MINUTES / bm;
-      return n === Math.round(n) && n % 8 === 0;
-    });
   }
 
   /* "rotate" - the shift is cut into equal stints first, and an operator
@@ -1490,7 +1767,6 @@ pre.json .n { color: var(--accent); }
   }
   function blockStart(plan, b)  { return (plan.shift.start + b * plan.blockMin) % 1440; }
   function blockEnd(plan, b)    { return (plan.shift.start + (b + 1) * plan.blockMin) % 1440; }
-  function isHourMark(plan, b)  { return blockStart(plan, b) % 60 === 0; }
   function shiftEnd(plan)       { return (plan.shift.start + SHIFT_MINUTES) % 1440; }
 
   // ---------------------------------------------------------- fit check
@@ -1521,6 +1797,20 @@ pre.json .n { color: var(--accent); }
 
   function auditPlan(plan) {
     var sMin        = plan.stintMin;
+
+    /* The one rule that decides whether a schedule works.
+     *
+     * An operator's cycle is four stints - three on a rig, one off. Break
+     * and think alternate across the off-stints, so an operator needs an
+     * even number of them: eight stints per cycle. Eight stints must fit
+     * the 480-minute shift a whole number of times, so
+     *
+     *     stint x 8  divides  480     <=>     stint divides 60
+     *
+     * That is all of it. Any time-on-rig that divides an hour works; any
+     * that does not cannot, at any block size. Block length only sets the
+     * resolution of the grid - 15min x 4 and 20min x 3 are the same
+     * schedule, because both are 60, which rotate.test.js asserts. */
     var dividesHour = 60 % sMin === 0;
     var stintLens   = rigStintLengths(plan);
     var stintFits   = stintLens.length === 1;
@@ -1822,23 +2112,29 @@ pre.json .n { color: var(--accent); }
 
   // ------------------------------------------------------------- export
 
+  /* What the two apps and the tests actually use.
+   *
+   * Nine names were removed from this list: they were exported, called by
+   * nothing outside this file, and several by nothing at all. Most were
+   * left over from a desk that once had grid-size and rotation controls -
+   * `cleanStints` and `cleanBlocks` computed the legal values for pickers
+   * that v1 deliberately does not have.
+   *
+   * An export is a promise that something else may depend on it, and a
+   * promise nobody asked for is still one this file has to keep. The ones
+   * still needed inside the engine stayed as private functions; the three
+   * nothing called at all are gone. */
   root.RotationEngine = {
     SHIFTS: SHIFTS,
     SHIFT_MINUTES: SHIFT_MINUTES,
-    HOLD_STINT: HOLD_STINT,
-    HOUR_DIVISORS: HOUR_DIVISORS,
     OFF: OFF, BREAK: BREAK, THINK: THINK,
 
     shiftById: shiftById,
-    stintBlocksFor: stintBlocksFor,
     stintMinutes: stintMinutes,
-    cleanStints: cleanStints,
 
     buildPlan: buildPlan,
     auditPlan: auditPlan,
     rigStintLengths: rigStintLengths,
-    interiorStintLengths: interiorStintLengths,
-    cleanBlocks: cleanBlocks,
     holderAt: holderAt,
 
     rigPayload: rigPayload,
@@ -1850,9 +2146,6 @@ pre.json .n { color: var(--accent); }
 
     hhmm: hhmm,
     blockStart: blockStart,
-    blockEnd: blockEnd,
-    isHourMark: isHourMark,
-    shiftEnd: shiftEnd,
   };
 
   if (typeof module === "object" && module.exports) module.exports = root.RotationEngine;
@@ -2063,11 +2356,11 @@ function localPayloads() {
  * static page with no server behind it at all. */
 async function loadFloor(announce) {
   try {
-    const state = await fetch("/api/state").then(r => r.ok ? r.json() : Promise.reject());
+    const state = await api("/api/state").then(r => r.ok ? r.json() : Promise.reject());
     if (!state.rigs || !state.rigs.length) throw new Error("nothing pushed");
 
     floor.payloads = await Promise.all(state.rigs.map(id =>
-      fetch("/api/rigs/" + encodeURIComponent(id) + "/schedule.json")
+      api("/api/rigs/" + encodeURIComponent(id) + "/schedule.json")
         .then(r => r.ok ? r.json() : Promise.reject())));
     floor.pushedAt = state.pushedAt;
     floor.source = "floor";
@@ -2725,7 +3018,7 @@ async function pushFloor() {
   btn.disabled = true;
   $("push-note").textContent = "Pushing " + RE.SHIFTS.length + " shifts...";
   try {
-    const res = await fetch("/api/push", {
+    const res = await api("/api/push", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ payloads }),
@@ -2738,6 +3031,14 @@ async function pushFloor() {
         RE.SHIFTS.length + " shifts, at " + at;
       toast("Pushed " + rigs + " rigs for the day");
       await loadFloor(false);          // Live should now show the floor, not the plan
+    } else if (res.status === 401 || res.status === 403) {
+      /* Not a bad payload. Either the session went while the tab sat
+         open, or this account may not push - and "Rejected" would send
+         a manager hunting through a schedule that is perfectly fine. */
+      $("push-note").textContent = body.detail || "Not allowed to push.";
+      toast("Not allowed to push");
+      await probeSession();
+      applyGate();
     } else {
       $("push-note").textContent = "Rejected: " + (body.error || res.status);
       toast("Push rejected");
@@ -2798,6 +3099,124 @@ function onPlanChanged() {
 }
 
 /* ===================================================================
+ * The gate
+ *
+ * The desk asks who is at it before it draws anything. Four answers,
+ * and the fourth is the one that needed thinking about:
+ *
+ *   no accounts here    open the desk, show no chip, behave exactly as
+ *                       this screen did before there was such a thing
+ *   nobody signed in    the sign-in card
+ *   an operator         the "not your screen" card, naming them
+ *   a manager           the desk
+ *
+ * **A server that cannot be reached is treated as the first.** That is
+ * deliberate and it is not a hole: with no service there is nothing to
+ * read and no push that can succeed, so the desk falls back to the plan
+ * generated on this screen - which is what makes it work as a plain
+ * static page, and what `./serve.sh` and the single-file build depend
+ * on. A 401 is different in kind: that is a service that exists and has
+ * said no, and it shows the card.
+ *
+ * None of this is the security gate. The gate is on the service, on
+ * every route. This stops somebody wandering into a screen they cannot
+ * use; `require_manager` is what stops them using it.
+ * =================================================================== */
+
+const S = window.Session;
+
+/* Signed in as somebody who may use this screen - or a deployment that
+ * never asked. The desk is a manager's screen. */
+function mayUseTheDesk() { return S.mayUse("manager"); }
+
+/* Kept as local names so the rest of this file reads as it did. */
+function api(path, init) { return S.api(path, init); }
+function probeSession() { return S.probe(); }
+
+/* Show the door, or the desk. Called after every change of who is at it. */
+function applyGate() {
+  const open = mayUseTheDesk();
+  const denied = !open && S.wrongRole("manager");   // signed in, wrong role
+
+  $("view-signin").hidden = open || !!denied;
+  $("view-denied").hidden = !denied;
+  $("modes").hidden = !open;
+
+  /* The chip is hidden entirely where nobody signs in, so a floor that
+     has not configured accounts sees the screen it always saw. */
+  const chip = $("who");
+  chip.hidden = !S.state.account;
+  if (S.state.account) {
+    $("who-name").textContent = S.state.account.name;
+    $("who-role").textContent = S.state.account.role;
+    $("who-role").setAttribute("data-role", S.state.account.role);
+  }
+  if (denied) $("denied-name").textContent = S.state.account.name;
+
+  /* A password will not fix a service that cannot answer, so say what is
+     actually wrong instead of letting somebody retype it three times. */
+  if (S.state.broken) {
+    $("signin-error").textContent =
+      "The service is not answering. Signing in will not work until it does.";
+    $("signin-error").hidden = false;
+  }
+
+  if (!open) {
+    /* Nothing of the desk while the door is shut - not hidden panels
+       with the floor still ticking behind them.
+       
+       Emptied, not just hidden. `hidden` is a styling instruction: the
+       names of everyone on the floor stay in the document, readable by
+       whoever walks up to an unattended screen and opens the inspector.
+       Signing out has to actually take the floor off the page. */
+    clearInterval(ticker);
+    $("view-live").hidden = true;
+    $("view-plan").hidden = true;
+    ["board", "upnext", "rosters", "tbl-ops", "tbl-rigs"].forEach(id => {
+      $(id).textContent = "";
+    });
+  }
+}
+
+async function signIn(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn = $("btn-signin"), err = $("signin-error");
+  err.hidden = true;
+  btn.disabled = true;
+  try {
+    const out = await S.signIn($("in-email").value, $("in-password").value);
+    if (!out.ok) {
+      err.textContent = out.message;
+      err.hidden = false;
+      return;
+    }
+    $("in-password").value = "";
+    openTheDesk();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function signOut() {
+  await S.signOut();
+  floor.payloads = [];
+  floor.pushedAt = null;
+  floor.source = "plan";
+  applyGate();
+}
+
+/* Draw the desk for somebody who is allowed it. Separate from boot so
+   signing in does not have to reload the page. */
+function openTheDesk() {
+  applyGate();
+  if (!mayUseTheDesk()) return;
+  renderPlan();
+  floor.payloads = localPayloads();
+  setView(cfg.view === "plan" ? "plan" : "live");
+  loadFloor(false);
+}
+
+/* ===================================================================
  * Wiring
  * =================================================================== */
 
@@ -2828,13 +3247,21 @@ $("in-date").addEventListener("change", e => { cfg.date = e.target.value; onPlan
 $("btn-push").addEventListener("click", pushFloor);
 $("btn-print").addEventListener("click", () => window.print());
 $("btn-refresh").addEventListener("click", () => loadFloor(true));
+$("signin-form").addEventListener("submit", signIn);
+$("btn-signout").addEventListener("click", signOut);
+$("btn-denied-out").addEventListener("click", signOut);
 
-renderPlan();
-floor.payloads = localPayloads();
-setView("live");
-loadFloor(false);
+/* Ask who is at the desk before drawing any of it. Everything below the
+   masthead waits on that answer - a screen that renders the floor and
+   then hides it has already put it on the wire. */
+(async function boot() {
+  await probeSession();
+  openTheDesk();
+})();
 
 /* Re-read the floor now and then, in case somebody pushed from another
  * desk. Cheap: twelve small GETs a minute. */
-setInterval(() => { if (cfg.view === "live") loadFloor(false); }, 60000);
+setInterval(() => {
+  if (cfg.view === "live" && mayUseTheDesk()) loadFloor(false);
+}, 60000);
 </script>

@@ -150,11 +150,11 @@ function localPayloads() {
  * static page with no server behind it at all. */
 async function loadFloor(announce) {
   try {
-    const state = await fetch("/api/state").then(r => r.ok ? r.json() : Promise.reject());
+    const state = await api("/api/state").then(r => r.ok ? r.json() : Promise.reject());
     if (!state.rigs || !state.rigs.length) throw new Error("nothing pushed");
 
     floor.payloads = await Promise.all(state.rigs.map(id =>
-      fetch("/api/rigs/" + encodeURIComponent(id) + "/schedule.json")
+      api("/api/rigs/" + encodeURIComponent(id) + "/schedule.json")
         .then(r => r.ok ? r.json() : Promise.reject())));
     floor.pushedAt = state.pushedAt;
     floor.source = "floor";
@@ -812,7 +812,7 @@ async function pushFloor() {
   btn.disabled = true;
   $("push-note").textContent = "Pushing " + RE.SHIFTS.length + " shifts...";
   try {
-    const res = await fetch("/api/push", {
+    const res = await api("/api/push", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ payloads }),
@@ -825,6 +825,14 @@ async function pushFloor() {
         RE.SHIFTS.length + " shifts, at " + at;
       toast("Pushed " + rigs + " rigs for the day");
       await loadFloor(false);          // Live should now show the floor, not the plan
+    } else if (res.status === 401 || res.status === 403) {
+      /* Not a bad payload. Either the session went while the tab sat
+         open, or this account may not push - and "Rejected" would send
+         a manager hunting through a schedule that is perfectly fine. */
+      $("push-note").textContent = body.detail || "Not allowed to push.";
+      toast("Not allowed to push");
+      await probeSession();
+      applyGate();
     } else {
       $("push-note").textContent = "Rejected: " + (body.error || res.status);
       toast("Push rejected");
@@ -885,6 +893,124 @@ function onPlanChanged() {
 }
 
 /* ===================================================================
+ * The gate
+ *
+ * The desk asks who is at it before it draws anything. Four answers,
+ * and the fourth is the one that needed thinking about:
+ *
+ *   no accounts here    open the desk, show no chip, behave exactly as
+ *                       this screen did before there was such a thing
+ *   nobody signed in    the sign-in card
+ *   an operator         the "not your screen" card, naming them
+ *   a manager           the desk
+ *
+ * **A server that cannot be reached is treated as the first.** That is
+ * deliberate and it is not a hole: with no service there is nothing to
+ * read and no push that can succeed, so the desk falls back to the plan
+ * generated on this screen - which is what makes it work as a plain
+ * static page, and what `./serve.sh` and the single-file build depend
+ * on. A 401 is different in kind: that is a service that exists and has
+ * said no, and it shows the card.
+ *
+ * None of this is the security gate. The gate is on the service, on
+ * every route. This stops somebody wandering into a screen they cannot
+ * use; `require_manager` is what stops them using it.
+ * =================================================================== */
+
+const S = window.Session;
+
+/* Signed in as somebody who may use this screen - or a deployment that
+ * never asked. The desk is a manager's screen. */
+function mayUseTheDesk() { return S.mayUse("manager"); }
+
+/* Kept as local names so the rest of this file reads as it did. */
+function api(path, init) { return S.api(path, init); }
+function probeSession() { return S.probe(); }
+
+/* Show the door, or the desk. Called after every change of who is at it. */
+function applyGate() {
+  const open = mayUseTheDesk();
+  const denied = !open && S.wrongRole("manager");   // signed in, wrong role
+
+  $("view-signin").hidden = open || !!denied;
+  $("view-denied").hidden = !denied;
+  $("modes").hidden = !open;
+
+  /* The chip is hidden entirely where nobody signs in, so a floor that
+     has not configured accounts sees the screen it always saw. */
+  const chip = $("who");
+  chip.hidden = !S.state.account;
+  if (S.state.account) {
+    $("who-name").textContent = S.state.account.name;
+    $("who-role").textContent = S.state.account.role;
+    $("who-role").setAttribute("data-role", S.state.account.role);
+  }
+  if (denied) $("denied-name").textContent = S.state.account.name;
+
+  /* A password will not fix a service that cannot answer, so say what is
+     actually wrong instead of letting somebody retype it three times. */
+  if (S.state.broken) {
+    $("signin-error").textContent =
+      "The service is not answering. Signing in will not work until it does.";
+    $("signin-error").hidden = false;
+  }
+
+  if (!open) {
+    /* Nothing of the desk while the door is shut - not hidden panels
+       with the floor still ticking behind them.
+       
+       Emptied, not just hidden. `hidden` is a styling instruction: the
+       names of everyone on the floor stay in the document, readable by
+       whoever walks up to an unattended screen and opens the inspector.
+       Signing out has to actually take the floor off the page. */
+    clearInterval(ticker);
+    $("view-live").hidden = true;
+    $("view-plan").hidden = true;
+    ["board", "upnext", "rosters", "tbl-ops", "tbl-rigs"].forEach(id => {
+      $(id).textContent = "";
+    });
+  }
+}
+
+async function signIn(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn = $("btn-signin"), err = $("signin-error");
+  err.hidden = true;
+  btn.disabled = true;
+  try {
+    const out = await S.signIn($("in-email").value, $("in-password").value);
+    if (!out.ok) {
+      err.textContent = out.message;
+      err.hidden = false;
+      return;
+    }
+    $("in-password").value = "";
+    openTheDesk();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function signOut() {
+  await S.signOut();
+  floor.payloads = [];
+  floor.pushedAt = null;
+  floor.source = "plan";
+  applyGate();
+}
+
+/* Draw the desk for somebody who is allowed it. Separate from boot so
+   signing in does not have to reload the page. */
+function openTheDesk() {
+  applyGate();
+  if (!mayUseTheDesk()) return;
+  renderPlan();
+  floor.payloads = localPayloads();
+  setView(cfg.view === "plan" ? "plan" : "live");
+  loadFloor(false);
+}
+
+/* ===================================================================
  * Wiring
  * =================================================================== */
 
@@ -915,12 +1041,20 @@ $("in-date").addEventListener("change", e => { cfg.date = e.target.value; onPlan
 $("btn-push").addEventListener("click", pushFloor);
 $("btn-print").addEventListener("click", () => window.print());
 $("btn-refresh").addEventListener("click", () => loadFloor(true));
+$("signin-form").addEventListener("submit", signIn);
+$("btn-signout").addEventListener("click", signOut);
+$("btn-denied-out").addEventListener("click", signOut);
 
-renderPlan();
-floor.payloads = localPayloads();
-setView("live");
-loadFloor(false);
+/* Ask who is at the desk before drawing any of it. Everything below the
+   masthead waits on that answer - a screen that renders the floor and
+   then hides it has already put it on the wire. */
+(async function boot() {
+  await probeSession();
+  openTheDesk();
+})();
 
 /* Re-read the floor now and then, in case somebody pushed from another
  * desk. Cheap: twelve small GETs a minute. */
-setInterval(() => { if (cfg.view === "live") loadFloor(false); }, 60000);
+setInterval(() => {
+  if (cfg.view === "live" && mayUseTheDesk()) loadFloor(false);
+}, 60000);

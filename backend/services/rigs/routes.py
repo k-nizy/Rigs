@@ -24,8 +24,17 @@ from core.infrastructure.config import Settings, get_settings
 from core.infrastructure.database import get_session
 from core.workflows.floor import floor_state, operator_efficiency
 from core.workflows.schedules import in_force as schedules_in_force
+from core.workflows.schedules import turns_for_operator
+from core.domains.accounts.repository import (
+    AccountRepository, AccountSessionRepository,
+)
 from services.rigs.auth import (
     desk_auth, desk_read_auth, rig_auth, rig_auth_for_key, rig_rate_limit,
+)
+from services.rigs.people import (
+    REFUSED, SESSION_COOKIE, clear_session_cookies, current_account,
+    issue_session_cookies, login_key, login_limiter, require_account,
+    require_csrf, require_manager, require_operator, sign_in,
 )
 from services.rigs.identity import caller_address, config_js, rig_at
 from core.infrastructure.storage import Storage, get_storage
@@ -343,7 +352,7 @@ async def storage_put(
 
 
 @router.get("/floor/video", tags=["video"],
-            dependencies=[Depends(desk_read_auth)],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
             summary="What video is waiting, and what a real episode actually costs")
 async def video_backlog(session: AsyncSession = Depends(get_session)) -> dict:
     """What is waiting to reach the archive, and what a video actually
@@ -392,9 +401,23 @@ async def health(
         "rigRateLimit": (
             f"{s.rig_rate_limit_per_min}/min" if s.rig_rate_limit_per_min else "off"
         ),
+        # Whether the session cookie is HTTPS-only, and how fast a
+        # password may be guessed. Both are things a deploy check should
+        # be able to fail on rather than things to remember.
+        "sessionCookie": "secure" if s.session_cookie_secure else "INSECURE",
+        "loginRateLimit": (
+            f"{s.login_rate_limit_per_min}/min"
+            if s.login_rate_limit_per_min else "off"
+        ),
     }
     try:
         await session.execute(text("SELECT 1"))
+        # Person auth is on when there is somebody to sign in as. It
+        # cannot be read from a setting - the accounts are in the
+        # database - which is why this is here and not in `announce`.
+        body["personAuth"] = (
+            "on" if await AccountRepository(session).count() else "off"
+        )
     except Exception as e:
         raise HTTPException(
             status_code=503,
@@ -419,7 +442,8 @@ class PushOut(BaseModel):
 
 
 @router.post("/schedules/push", response_model=PushOut, tags=["schedules"],
-             dependencies=[Depends(desk_auth)],
+             dependencies=[Depends(desk_auth), Depends(require_manager),
+                           Depends(require_csrf)],
              summary="Push the desk's payloads to the floor, all or none")
 async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
     """Store what the desk pushed, whole and unexamined.
@@ -481,7 +505,8 @@ async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> Pu
 
 
 @router.post("/push", response_model=PushOut, tags=["schedules"],
-             dependencies=[Depends(desk_auth)],
+             dependencies=[Depends(desk_auth), Depends(require_manager),
+                           Depends(require_csrf)],
              summary="Push, at the path the deployed desk already posts to")
 async def push_alias(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
     """What the desk's "Push to floor" button already posts to.
@@ -494,7 +519,7 @@ async def push_alias(body: PushIn, session: AsyncSession = Depends(get_session))
 
 
 @router.get("/state", tags=["schedules"],
-            dependencies=[Depends(desk_read_auth)],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
             summary="What the floor is currently running, as the desk asks for it")
 async def state(session: AsyncSession = Depends(get_session)) -> dict:
     """What the floor is currently running, as the desk asks for it.
@@ -522,7 +547,7 @@ async def state(session: AsyncSession = Depends(get_session)) -> dict:
 
 
 @router.get("/floor/state", tags=["floor"],
-            dependencies=[Depends(desk_read_auth)],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
             summary="The desk's live board: who is on, what is open, what is quiet")
 async def floor(session: AsyncSession = Depends(get_session)) -> dict:
     """The Live board: every rig, who is on it, when it was last heard
@@ -531,7 +556,7 @@ async def floor(session: AsyncSession = Depends(get_session)) -> dict:
 
 
 @router.get("/floor/alerts", tags=["floor"],
-            dependencies=[Depends(desk_read_auth)],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
             summary="What is open against the floor")
 async def alerts(session: AsyncSession = Depends(get_session)) -> dict:
     """Everything currently wrong on the floor.
@@ -552,7 +577,7 @@ async def alerts(session: AsyncSession = Depends(get_session)) -> dict:
 
 
 @router.get("/floor/efficiency", tags=["floor"],
-            dependencies=[Depends(desk_read_auth)],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
             summary="Efficiency per operator for one shift, computed at read time")
 async def efficiency_for_shift(
     shift_date: date, shift_label: str, session: AsyncSession = Depends(get_session)
@@ -562,4 +587,200 @@ async def efficiency_for_shift(
         "shiftDate": shift_date.isoformat(),
         "shiftLabel": shift_label,
         "operators": await operator_efficiency(session, shift_date, shift_label),
+    }
+
+
+# --------------------------------------------------------------- people
+#
+# Signing in is about a *person* using the desk. It is deliberately
+# unrelated to the rig routes above, which authenticate a machine and
+# never a person - a rig has no login and is not getting one.
+
+
+class LoginIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class WhoOut(BaseModel):
+    """What a signed-in caller is told about themselves.
+
+    No id, and no more of the account than a screen needs to greet
+    somebody and decide what to draw. A reply that carries more than that
+    is a reply that leaks more than that from a page left open.
+    """
+
+    name: str
+    role: str
+    operatorId: str | None = None
+    csrfToken: str | None = None
+
+
+def _who(account, csrf: str | None = None) -> "WhoOut":
+    return WhoOut(name=account.name, role=account.role,
+                  operatorId=account.operator_id, csrfToken=csrf)
+
+
+@router.post("/auth/login", response_model=WhoOut, tags=["people"],
+             summary="Sign in a manager or an operator")
+async def login(
+    body: LoginIn, request: Request, response: Response,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> WhoOut:
+    """Exchange an email and password for a session cookie.
+
+    Every way of failing gives the same 401 with the same wording, and
+    takes the same time: the wrong-email path is verified against a dummy
+    hash rather than returning early, because a route that answers faster
+    for unknown addresses tells anyone who asks which addresses are real.
+
+    Throttled per calling address, and on by default - unlike the rig
+    limiter, for the reason written beside `login_rate_limit_per_min`.
+    """
+    wait = login_limiter(settings).allow(login_key(request))
+    if wait > 0:
+        raise HTTPException(
+            status_code=429, detail="too many sign-in attempts",
+            headers={"Retry-After": str(max(1, int(wait + 0.5)))},
+        )
+
+    signed = await sign_in(session, body.email, body.password, settings)
+    if signed is None:
+        raise HTTPException(status_code=401, detail=REFUSED)
+
+    account, token = signed
+    await session.commit()
+    csrf = issue_session_cookies(response, token, settings)
+    log.info("signed in: %s (%s)", account.email, account.role)
+    return _who(account, csrf)
+
+
+@router.post("/auth/logout", tags=["people"],
+             summary="End this session. Safe to call when not signed in")
+async def logout(
+    request: Request, response: Response,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """End the session this cookie names, and clear it.
+
+    Always 200, including with no cookie or a stale one. A sign-out that
+    can fail is one somebody gives up on, and there is nothing here to
+    protect: the only thing it does is end a session, and being asked to
+    end one that is already over is not an error.
+
+    No CSRF requirement, deliberately. Forcing a sign-out on somebody is
+    a nuisance, not a compromise, and refusing a logout because a token
+    did not travel leaves a live session open - which is the worse of
+    the two.
+    """
+    token = request.cookies.get(SESSION_COOKIE)
+    ended = 0
+    if token:
+        ended = await AccountSessionRepository(session).revoke(token)
+        await session.commit()
+    clear_session_cookies(response, settings)
+    return {"signedOut": bool(ended)}
+
+
+@router.get("/auth/me", response_model=WhoOut, tags=["people"],
+            summary="Who this browser is signed in as")
+async def me(account=Depends(require_account)) -> WhoOut:
+    """The identity behind the cookie, or 401.
+
+    This is what the desk asks before it renders anything: the screen a
+    manager sees and the screen an operator sees are different screens,
+    and this is the only thing that decides which.
+    """
+    return _who(account)
+
+
+# ------------------------------------------------------- an operator's own
+
+
+@router.get("/me/shift", tags=["people"],
+            summary="My turns in the shift running now, across every rig")
+async def my_shift(
+    account=Depends(require_operator),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """One operator's own day, and nobody else's.
+
+    Scoped here rather than in the screen that draws it. A page can hide
+    a row; only the route can decline to send it, and the difference
+    between those two is the whole of the role split.
+
+    A rig cannot answer this - it knows only its own turns, and this
+    person's day walks across all three rigs in their group. That is the
+    same fact that put `theyGoTo` in the payload.
+    """
+    return await turns_for_operator(session, account.operator_id)
+
+
+@router.get("/me/efficiency", tags=["people"],
+            summary="My own efficiency for one shift")
+async def my_efficiency(
+    shift_date: date, shift_label: str,
+    account=Depends(require_operator),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """The same numbers `/floor/efficiency` computes, filtered to one
+    person - and filtered *before* they are sent.
+
+    The floor-wide route stays manager-only. Whether an operator should
+    see how they compare to the person next to them is a question about
+    how this floor is run, and CLAUDE.md already records it as open;
+    answering it by accident, in an API that returns everyone, is the one
+    way it must not be settled.
+    """
+    everyone = await operator_efficiency(session, shift_date, shift_label)
+    mine = [row for row in everyone if row["operatorId"] == account.operator_id]
+    return {
+        "shiftDate": shift_date.isoformat(),
+        "shiftLabel": shift_label,
+        # A list of nought or one, not a bare object: an operator who has
+        # not worked that shift has no row, and inventing a zeroed one
+        # would read as "you recorded nothing" rather than "you were not
+        # here".
+        "operators": mine,
+    }
+
+
+@router.get("/auth/session", tags=["people"],
+            summary="What a screen needs to know before it draws anything")
+async def auth_session(
+    request: Request,
+    account=Depends(current_account),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Whether anybody can sign in here, and whether anybody has.
+
+    `/auth/me` cannot answer this. It says 401 both for "you are not
+    signed in" and for "this deployment has no accounts at all", and a
+    screen that cannot tell those apart either shows a login box nobody
+    has a password for, or opens the desk to anyone the moment a
+    deployment has not been configured yet.
+
+    Unauthenticated and always 200, because it is the question asked
+    *before* there is a credential to present. It gives away only whether
+    the door is locked, which is a thing anyone standing at a door can
+    already see.
+
+    The CSRF token comes back here so a page that has just been reloaded
+    can make a write without re-reading its own cookies. It is the value
+    of the cookie the browser already holds, so this hands out nothing
+    the caller did not arrive with.
+    """
+    from services.rigs.people import CSRF_COOKIE
+
+    on = await AccountRepository(session).count() > 0
+    return {
+        "personAuth": "on" if on else "off",
+        "account": (
+            {"name": account.name, "role": account.role,
+             "operatorId": account.operator_id}
+            if account else None
+        ),
+        "csrfToken": request.cookies.get(CSRF_COOKIE) if account else None,
     }

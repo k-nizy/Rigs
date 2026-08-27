@@ -117,3 +117,59 @@ def _nearest(rows: list[Schedule], now: datetime) -> Schedule:
         return min(upcoming, key=lambda pair: (pair[0], key(pair[1])))[1]
 
     return max(dated, key=lambda pair: (pair[0][1], key(pair[1])))[1]
+
+
+async def turns_for_operator(
+    session: AsyncSession, operator_id: str, now: datetime | None = None
+) -> dict:
+    """One operator's turns in the shift running now, across every rig.
+
+    Read, not derived. Every field returned here was written into a
+    payload by the desk and is handed back unchanged; this only selects -
+    which schedules cover this instant, and which of their turns name
+    this person. The same rule `in_force` above is built on, and for the
+    same reason: the rotation is computed in one shared JavaScript file
+    and a second implementation here would be a third answer.
+
+    It deliberately does *not* work out the breaks between the turns.
+    Each turn already carries `theyGoTo`, so a screen can lay the gaps
+    out from two things that were pushed; inferring them here would be
+    the server starting to have opinions about a rotation it is only
+    supposed to be filing.
+
+    Across every rig, because a rig only knows its own turns and an
+    operator's day is not one rig's business - which is exactly why a
+    rig cannot answer this and why `theyGoTo` had to travel in the
+    payload in the first place.
+    """
+    now = now or datetime.now(timezone.utc)
+
+    # The latest push wins for a given rig, shift and date, the same way
+    # `in_force` picks one. Ordering by pushed_at descending and keeping
+    # the first of each key means a re-push does not double the day.
+    rows = await session.execute(
+        select(Schedule).order_by(desc(Schedule.pushed_at))
+    )
+    latest: dict[tuple[str, object, str], Schedule] = {}
+    for row in rows.scalars().all():
+        latest.setdefault((row.rig_id, row.shift_date, row.shift_label), row)
+
+    turns: list[dict] = []
+    shift: dict | None = None
+    for row in latest.values():
+        payload = row.payload or {}
+        if not rules.shift_covers(payload, row.shift_date, now, timezone.utc):
+            continue
+        for turn in payload.get("turns") or []:
+            if (turn.get("operator") or {}).get("id") != operator_id:
+                continue
+            turns.append({**turn, "rigId": payload.get("rigId")})
+            if shift is None:
+                shift = {
+                    **(payload.get("shift") or {}),
+                    "group": payload.get("group"),
+                    "task": payload.get("task"),
+                }
+
+    turns.sort(key=lambda t: (t.get("from") or "", t.get("rigId") or ""))
+    return {"operatorId": operator_id, "shift": shift, "turns": turns}

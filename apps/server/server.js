@@ -31,6 +31,8 @@ const RE = require("../../packages/engine/rotation-engine.js");
 
 const ROOT      = path.resolve(__dirname, "..", "..");
 const STATE     = process.env.STATE_FILE || path.join(__dirname, "state.json");
+const PUSHLOG   = process.env.PUSH_LOG_FILE ||
+                  path.join(path.dirname(STATE), "pushes.jsonl");
 const PORT      = Number(process.env.PORT || 8765);
 const HOST      = process.env.HOST || "127.0.0.1";
 const MIME      = {
@@ -48,17 +50,77 @@ const MIME      = {
  *
  * { pushedAt: "2026-08-22T09:00:00Z", rigs: { "RIG-01": [<payload>, ...] } }
  *
- * Kept in memory and written to disk on every accepted push, so a rig
- * restart or a server restart still shows the current shift. */
+ * Kept in memory so a request costs no disk. What it is *derived from*
+ * is `pushes.jsonl`, one line per accepted push, appended and never
+ * rewritten - the same shape the backend's ledger has, for the same
+ * reason: a push replaces the floor whole, and without a record of what
+ * it replaced, "the desk pushed the wrong roster at 06:00, put it back"
+ * has no answer.
+ *
+ * `state.json` survives as a cache of the last line, so a restart does
+ * not have to read the whole log. Losing it costs nothing.
+ *
+ * The log is history for people and for recovery. It is deliberately
+ * not an input to `pick()` - which schedule a rig runs is decided by
+ * the window the desk wrote, compared against now, and by nothing else.
+ * A push id that reached a rig would be a second answer to "which
+ * schedule is real", and the invariant is that there is exactly one. */
 let store = { pushedAt: null, rigs: {} };
-try {
-  if (fs.existsSync(STATE)) store = JSON.parse(fs.readFileSync(STATE, "utf8"));
-} catch (e) {
-  console.error("could not read state.json, starting empty:", e.message);
+
+/* Every push that was accepted, oldest first. A trailing unparseable
+   line is a torn append - the process died mid-write - and costs only
+   that one entry, because everything before it is already complete. */
+function readPushLog() {
+  if (!fs.existsSync(PUSHLOG)) return null;
+  const lines = fs.readFileSync(PUSHLOG, "utf8").split("\n").filter(l => l.trim());
+  const out = [];
+  lines.forEach((line, i) => {
+    try { out.push(JSON.parse(line)); }
+    catch {
+      if (i === lines.length - 1) console.error("pushes.jsonl: ignoring a torn final line");
+      else throw new Error("pushes.jsonl is damaged at line " + (i + 1));
+    }
+  });
+  return out;
 }
 
+function storeFrom(entry) {
+  const next = { pushedAt: entry.pushedAt, rigs: {} };
+  entry.payloads.forEach(p => { (next.rigs[p.rigId] = next.rigs[p.rigId] || []).push(p); });
+  return next;
+}
+
+/* The log is the record; state.json is a cache; a corrupt cache with no
+   record behind it is the one case we refuse to start on. Coming up
+   empty would answer 404 for all twelve rigs, and twelve rigs sitting
+   in Standby looks exactly like a manager who forgot to push - the
+   failure would be silent on the only screen anyone checks. Same trade
+   as a rig that cannot place itself: refuse rather than guess. */
+try {
+  const log = readPushLog();
+  if (log && log.length) {
+    store = storeFrom(log[log.length - 1]);
+    persist();
+  } else if (fs.existsSync(STATE)) {
+    store = JSON.parse(fs.readFileSync(STATE, "utf8"));
+  }
+} catch (e) {
+  console.error("cannot read the floor's state (" + STATE + "): " + e.message);
+  console.error("refusing to start empty - twelve rigs would go to Standby with no signal.");
+  process.exit(1);
+}
+
+/* Truncate-in-place is what left a half-written file to be found at the
+   next boot. Write beside it, then rename over it: a reader sees either
+   the whole old file or the whole new one. */
 function persist() {
-  fs.writeFileSync(STATE, JSON.stringify(store, null, 2));
+  const tmp = STATE + ".tmp";
+  fs.writeFileSync(tmp, JSON.stringify(store, null, 2));
+  fs.renameSync(tmp, STATE);
+}
+
+function appendPush(entry) {
+  fs.appendFileSync(PUSHLOG, JSON.stringify(entry) + "\n");
 }
 
 /* ------------------------------------------------------------ the server */
@@ -126,9 +188,14 @@ async function handlePush(req, res) {
   // one shift, so keying a rig to a single payload meant the last one
   // pushed silently won and the floor ran whichever shift happened to be
   // written last.
-  const next = { pushedAt: new Date().toISOString(), rigs: {} };
-  payloads.forEach(p => { (next.rigs[p.rigId] = next.rigs[p.rigId] || []).push(p); });
-  store = next;
+  // The log first, then the floor. If the append fails there is no record
+  // of this push, so it must not become the schedule either - a floor the
+  // log cannot account for is the thing the log exists to prevent.
+  const entry = { pushedAt: new Date().toISOString(), payloads };
+  try { appendPush(entry); }
+  catch (e) { return sendJSON(res, 500, { error: "could not record the push: " + e.message }); }
+
+  store = storeFrom(entry);
   persist();
 
   sendJSON(res, 200, { ok: true, pushedAt: store.pushedAt, count: payloads.length });
@@ -190,7 +257,8 @@ function sendRigSchedule(res, rigId) {
  * Same list, same order, same reason as the location blocks in nginx.conf.
  * If one changes the other has to.
  */
-const SERVED = [path.join("apps", "rig"), "packages", "rotation-desk-v1"]
+const SERVED = [path.join("apps", "rig"), path.join("apps", "my-shift"),
+                "packages", "rotation-desk-v1"]
   .map((d) => path.join(ROOT, d) + path.sep);
 const LANDING = path.join(ROOT, "index.html");
 
