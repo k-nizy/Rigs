@@ -13,6 +13,15 @@
  *
  *   cd backend && .venv/Scripts/python.exe -m uvicorn local_gateway:app --port 8000
  *   node backend/tests/e2e_rig_to_floor.js
+ *
+ * On a database that has accounts in it, the desk routes are gated on a
+ * signed-in manager and this has to sign in as one:
+ *
+ *   RIGS_EMAIL=you@example.com RIGS_PASSWORD=... node backend/tests/e2e_rig_to_floor.js
+ *
+ * Both come from the environment because they are a secret and this file
+ * is in the repository. Left unset, nothing signs in, which is right
+ * wherever the gate is open - a fresh database, and so CI.
  * ===================================================================== */
 
 "use strict";
@@ -73,10 +82,74 @@ const nodeFetch = globalThis.fetch;
 const realFetch = (url, opts) =>
   nodeFetch(url.startsWith("http") ? url : API + url, opts);
 
+/* The desk's sign-in, when the service has people in it.
+ *
+ * `require_manager` is off-until-configured: on a deployment with no
+ * accounts it falls through, which is how this runs in CI against a fresh
+ * database and how `npm run serve` works with no setup. The moment one
+ * account exists it is a real gate, and this script is the desk - so on a
+ * developer's database, which does have accounts, it has to sign in like
+ * one.
+ *
+ *     RIGS_EMAIL=r.osei@verlet.co RIGS_PASSWORD=... node backend/tests/e2e_rig_to_floor.js
+ *
+ * Credentials come from the environment because they are a secret and
+ * this file is in the repository. Absent, nothing signs in and the run
+ * only works where the gate is open - which is exactly the CI case.
+ *
+ * The session belongs to `api()` and to nothing else. The rig's own calls
+ * go through `realFetch` and must stay cookie-free: `require_csrf` applies
+ * only to callers presenting a session cookie, precisely because a rig
+ * with a bearer token is not a browser and has no CSRF to protect. Attach
+ * this to the rig and it would start being asked for a token it has no
+ * reason to hold. */
+const CREDENTIALS = process.env.RIGS_EMAIL && process.env.RIGS_PASSWORD
+  ? { email: process.env.RIGS_EMAIL, password: process.env.RIGS_PASSWORD }
+  : null;
+
+let deskSession = null;      // { cookie, csrf } once signed in
+
+async function signInAsDesk() {
+  if (!CREDENTIALS) return null;
+
+  const r = await nodeFetch(API + "/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(CREDENTIALS),
+  });
+  const text = await r.text();
+  const body = text ? JSON.parse(text) : null;
+
+  if (r.status !== 200) {
+    throw new Error("sign-in failed (" + r.status + "): " + JSON.stringify(body)
+      + "\n  RIGS_EMAIL and RIGS_PASSWORD have to name a manager - the desk is "
+      + "for managers, and an operator account is refused with 403.");
+  }
+
+  /* Both cookies, not just the session one. The CSRF check is a double
+     submit: the header has to equal the cookie, so sending one without
+     the other is refused with 403 rather than let through. */
+  const raw = typeof r.headers.getSetCookie === "function"
+    ? r.headers.getSetCookie()
+    : [r.headers.get("set-cookie")].filter(Boolean);
+  const cookie = raw.map((c) => String(c).split(";")[0]).join("; ");
+
+  if (!cookie || !body.csrfToken) {
+    throw new Error("signed in but got no session cookie or CSRF token back");
+  }
+  return { cookie, csrf: body.csrfToken, who: body.name, role: body.role };
+}
+
 async function api(method, route, body) {
+  const headers = {};
+  if (body) headers["Content-Type"] = "application/json";
+  if (deskSession) {
+    headers["Cookie"] = deskSession.cookie;
+    headers["x-csrf-token"] = deskSession.csrf;
+  }
   const r = await nodeFetch(API + route, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers: Object.keys(headers).length ? headers : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await r.text();
@@ -94,6 +167,21 @@ function todaysPayload() {
   const health = await api("GET", "/api/health");
   assert.equal(health.status, 200, "no service at " + API);
   ok("health " + health.status);
+
+  deskSession = await signInAsDesk();
+  if (deskSession) {
+    ok("signed in as " + deskSession.who + " (" + deskSession.role + ")");
+  } else if (health.body && health.body.personAuth === "on") {
+    /* Said here rather than left to a 401 four lines down, because "not
+       signed in" from a push is a confusing way to learn that this
+       service has accounts and this script was given none. */
+    throw new Error(
+      "this service has accounts, so the desk routes need a manager signed in.\n"
+      + "  Set RIGS_EMAIL and RIGS_PASSWORD, or run against a database with no "
+      + "accounts, where the gate is open.");
+  } else {
+    ok("no accounts on this service - the desk gate is open");
+  }
 
   /* A schedule has to exist first: every event is stamped with the shift
      it happened under, and the ledger links each row to the push that was
