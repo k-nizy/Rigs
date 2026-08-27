@@ -9,8 +9,8 @@ language the README uses so the two cannot drift.
 Three static web apps — **Desk** (the manager's), **My Shift** (the
 operator's own day) and **Rig** (one per physical rig). Desk and Rig share
 one engine, so the schedule the desk hands out and the one the rig
-enforces are literally the same code. My Shift computes nothing; it reads
-back what the desk already decided.
+enforces are literally the same code. My Shift computes no rotation; it
+reads back what the desk already decided.
 
 ## The floor
 
