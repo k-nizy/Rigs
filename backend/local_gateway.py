@@ -154,12 +154,32 @@ async def rig_config(request: Request):
 # the only web content under apps/ is the rig. apps/server/ is the push
 # server and its state.json - the whole floor's pushed schedules - and
 # serving those was how this tree turned into a web root by accident.
+class FreshStatic(StaticFiles):
+    """Static files a browser must re-check before reusing.
+
+    Development only, and it earns its place: a cached index.html served
+    against a freshly edited script is new code running on old markup,
+    and what that looks like is a blank screen with a masthead on it. It
+    cost real time twice today, both times mistaken for a bug in the
+    page. `no-cache` still lets the browser keep the file - it just has
+    to ask first.
+
+    Deliberately not `no-store`: this is the harness, and the point is
+    that what you are looking at is what you just wrote.
+    """
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
 for url, folder in (("/apps/rig", "apps/rig"),
                     ("/apps/my-shift", "apps/my-shift"),
                     ("/packages", "packages"),
                     ("/rotation-desk-v1", "rotation-desk-v1")):
     app.mount(
         url,
-        StaticFiles(directory=REPO / folder, html=True),
+        FreshStatic(directory=REPO / folder, html=True),
         name=folder.replace("/", "-"),
     )

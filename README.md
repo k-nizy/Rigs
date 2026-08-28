@@ -1,8 +1,11 @@
 # Teleop Floor
 
-Two apps and one schedule between them. Sixteen operators over twelve rigs,
-in four groups of three rigs and four operators. Each group keeps one task
-for the whole shift so an operator works one skill all day.
+Three apps and one schedule between them. Sixteen operators over twelve
+rigs, in four groups of three rigs and four operators. Each group keeps one
+task for the whole shift so an operator works one skill all day.
+
+The desk builds the schedule, the rig enforces it, and My Shift shows an
+operator their own day out of it.
 
 ## Run
 
@@ -11,8 +14,9 @@ npm run serve           # http://127.0.0.1:8765/
 ```
 
 That starts `apps/server/`, which serves the whole tree *and* carries the
-push. `/rotation-desk-v1/` is the manager's screen, `/apps/rig/` is one
-rig's screen. `./serve.sh` is still there as a plain static server (no
+push. `/rotation-desk-v1/` is the manager's screen, `/apps/my-shift/` is
+an operator's own day, and `/apps/rig/` is one rig's screen.
+`./serve.sh` is still there as a plain static server (no
 push, python only) for cases where node is not available. No dependencies
 on either path. `./build.sh` (or `npm run build`) regenerates the two
 single-file distributions.
@@ -20,7 +24,7 @@ single-file distributions.
 ## Layout
 
 ```
-index.html                     landing page linking the two apps
+index.html                     landing page linking the three apps
 serve.sh                       serve the whole tree
 build.sh                       rebuild both dist/ files
 package.json                   just for `npm test` - no runtime deps
@@ -29,9 +33,11 @@ packages/                      code that is imported, not deployed
   engine/rotation-engine.js    THE SCHEDULE. no DOM, no globals, runs under node too
   engine/engine.test.js        headless assertions on the engine
   engine/reference-sheet.test.js  the sheet transcribed cell by cell
-  demo-roster/demo-roster.js   the example floor both apps open with
+  demo-roster/demo-roster.js   the example floor the apps open with
   schema/payload.js            the shape the desk pushes and the rig consumes
   schema/schema.test.js        every demo payload has to validate
+  session/session.js           who is signed in - desk and my-shift share it
+  brand/                       the mark and the palette, inlined at build
 
 rotation-desk-v1/              the manager's app - the name is the version
   README.md                    the format, and what is deliberately fixed
@@ -42,6 +48,10 @@ rotation-desk-v1/              the manager's app - the name is the version
   tools/make-single-file.py
 
 apps/                          things that are deployed
+  my-shift/                    an operator's own day, read only
+    index.html
+    assets/my-shift.js         the countdown, the timeline, no controls
+    my-shift.test.js
   rig/                         the operator's app, one per rig
     index.html
     assets/rig.css
@@ -59,9 +69,15 @@ apps/                          things that are deployed
 
 ## Why the engine is shared
 
-`packages/engine/rotation-engine.js` is loaded by both apps. The rig must
-never compute a different answer from the desk that scheduled it, so there
-is exactly one implementation and neither app owns it.
+`packages/engine/rotation-engine.js` is loaded by the desk and the rig.
+The rig must never compute a different answer from the desk that scheduled
+it, so there is exactly one implementation and neither app owns it.
+
+My Shift is deliberately outside that. It loads the engine for one clock
+helper and takes its turns from `/api/me/shift`, which hands back what the
+desk pushed. It computes no rotation, and a screen that recomputed one in
+order to draw it would be the third answer the invariant exists to
+prevent.
 
 It is also plain enough to run headlessly, which is how it gets tested:
 
