@@ -238,7 +238,12 @@ test("the landing page is served at the root and nowhere else", async () => {
 test("what is served matches the folders nginx names", async () => {
   /* One list in two places. If they drift, the deployment serves
      something the dev server does not, or the other way round, and the
-     first anybody knows is on a floor. */
+     first anybody knows is on a floor.
+
+     This checks the folders nginx serves. The one path it must *not*
+     serve - rig-config.js, which has to reach the service or every rig
+     is the same rig - is checked in backend/tests/test_identity.py,
+     next to the rule it protects. */
   const conf = fs.readFileSync(
     path.join(__dirname, "../../deploy/nginx.conf"), "utf8");
   for (const folder of ["/apps/rig/", "/packages/", "/rotation-desk-v1/"]) {
