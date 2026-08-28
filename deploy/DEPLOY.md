@@ -1,9 +1,14 @@
 # Deploying the pilot
 
 What this gets you: **twelve rigs filing real events into a real ledger,
-a desk that pushes schedules and reads a live floor board, alerts for the
-things nothing publishes, and a tested way to get it all back if the
-database is lost.**
+a desk that pushes schedules and reads a live floor board, a screen where
+an operator sees their own day, alerts for the things nothing publishes,
+and a tested way to get it all back if the database is lost.**
+
+Three screens, and only two of them need a person to sign in. The rig
+authenticates as a machine and nobody standing at it types anything. The
+desk is for managers, My Shift is for operators, and both refuse the other
+- so `mint_account` is not optional if you want either of them used.
 
 What it does **not** get you, and you should decide with both eyes open:
 
@@ -138,6 +143,44 @@ a floor. Exit codes: `0` ready, `1` broken, `2` open with `--strict`.
 Do not skip it. Every failure it names is five minutes to fix here and an
 hour to find later, because the symptom always appears somewhere else -
 rigs refused, a board that never updates, a disk that quietly fills.
+
+## 5a. The people who sign in
+
+Nothing above creates an account, and with none in the database both the
+desk and My Shift open to anybody who can reach them. That is deliberate -
+it is the same off-until-configured rule as `RIG_TOKENS` - but on a floor
+it is the wrong end of it.
+
+```sh
+cd /srv/rigs/backend
+.venv/bin/python -m tools.mint_account manager  --email r.osei@verlet.co  --name "Ruth Osei"
+.venv/bin/python -m tools.mint_account operator --email m.chen@verlet.co  --name "Mei Chen" --operator-id op-a2
+.venv/bin/python -m tools.mint_account list
+```
+
+With no `--password` one is generated and printed. That is the better
+default: strong, used once, changed by the person. It is printed to a
+terminal, which is not a safe place to leave it - hand it over and clear
+the scrollback.
+
+Three things worth knowing before you run it:
+
+- **A manager names no operator; an operator must name one.** The
+  `--operator-id` is the id on the sheet (`op-a2`), and My Shift has
+  nothing to look itself up by without it. The database enforces this,
+  so a wrong one is refused rather than discovered later by a screen
+  showing somebody else's day.
+- **There is no sign-up page and there should not be.** A floor has two
+  or three managers and sixteen operators on a roster somebody already
+  maintains. This is also how the first manager exists at all - a seeded
+  default account would be a known password on every deployment.
+- **Disable, never delete.** `mint_account disable` ends every session
+  that person has open and keeps the name, so a later audit row still
+  resolves to somebody.
+
+Check it took: `/api/health` reports `personAuth` once anybody has an
+account, and `SESSION_COOKIE_SECURE` must be true behind HTTPS or the
+session cookie travels in the clear.
 
 ## 6. Run it
 
