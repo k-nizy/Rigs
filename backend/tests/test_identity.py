@@ -399,3 +399,93 @@ async def test_head_and_get_describe_the_same_answer(client, floor):
     assert head.headers.get("cache-control") == got.headers.get("cache-control"), (
         "a cached rig-config is a rig filing episodes under another rig's name"
     )
+
+
+# ===================================================== what may be cached
+#
+# None of the app paths carries a content hash - the page asks for
+# `assets/desk.js`, never `assets/desk.a1b2c3.js` - so a browser left to
+# guess how long a file stays fresh will serve whatever it kept. New
+# script against old markup is a masthead over a blank page, and it
+# happened twice while My Shift was being built. No headless test has a
+# cache, which is why it took a browser to see and why it is asserted
+# here against the config instead.
+#
+# Read rather than run, for the reason given further up this file: there
+# is no nginx on a developer's machine. This catches a block that lost
+# its header, or a new app served without one. `nginx -t` on the box is
+# the other half.
+
+STATIC_BLOCKS = [
+    "location /apps/rig/ {",
+    "location /apps/my-shift/ {",
+    "location /rotation-desk-v1/ {",
+    "location /packages/ {",
+    "location = / {",
+]
+
+
+def test_every_static_block_says_how_long_it_may_be_kept():
+    """A new app served with no cache policy is the bug again, so this
+    lists them rather than checking the ones that happen to exist."""
+    for header in STATIC_BLOCKS:
+        block = _block(NGINX, header)
+        assert "Cache-Control" in block, (
+            f"`{header}` serves unversioned files and sets no cache policy, "
+            "so a browser decides for itself how long to keep them"
+        )
+        assert "no-cache" in block, (
+            f"`{header}` must be revalidated before reuse"
+        )
+
+
+def test_the_apps_may_be_kept_but_must_be_asked_about():
+    """`no-cache`, not `no-store`. The distinction is the point: the file
+    may be held and revalidated, so an unchanged asset costs a 304 rather
+    than a download every time somebody opens a rig."""
+    for header in STATIC_BLOCKS:
+        block = _block(NGINX, header)
+        assert "no-store" not in block, (
+            f"`{header}` says no-store, which forbids keeping the file at "
+            "all - every asset would be downloaded again on every load, "
+            "and nothing here needs that"
+        )
+
+
+def test_the_shared_engine_is_never_served_stale():
+    """The one that is not obvious.
+
+    `/packages/` serves rotation-engine.js. A rig running a cached engine
+    while the desk runs a new one is the founding rule of this system
+    broken by an HTTP header - the rig computing a different answer from
+    the desk that scheduled it - and the kiosk is a long-lived browser
+    nobody reloads by hand.
+    """
+    block = _block(NGINX, "location /packages/ {")
+    assert "no-cache" in block, (
+        "a cached rotation-engine.js is the rig and the desk disagreeing "
+        "about the schedule, arriving by cache rather than by code"
+    )
+
+
+def test_rig_config_is_still_the_stricter_case():
+    """It must never be reused at all, not merely revalidated. Weakening
+    it to match the blocks above would be a rig filing every episode
+    under another rig's name."""
+    block = _block(NGINX, "location = /apps/rig/rig-config.js {")
+    assert "no-store" in block, (
+        "rig-config.js names which rig this machine is; a kept copy is a "
+        "misidentified rig, so it is the one file that may not be held"
+    )
+
+
+def test_the_proxied_routes_set_no_cache_policy_of_their_own():
+    """`/api/` is the service's answer to give. nginx inventing a cache
+    policy over the top of it would override what the routes already say
+    - `/api/rigs/config.js` sets its own no-store, and health should not
+    be cached by a rule written for static files."""
+    for header in ("location /api/ {", "location = /healthz {"):
+        block = _block(NGINX, header)
+        assert "Cache-Control" not in block, (
+            f"`{header}` proxies to the service, which sets its own headers"
+        )
