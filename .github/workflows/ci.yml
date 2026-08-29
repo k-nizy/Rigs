@@ -2,14 +2,14 @@
 # cannot forget.
 #
 # Until now `npm test` was the only command anybody ran, and it covers the
-# JavaScript and nothing else. The three layering contracts, the 277
-# backend tests, the migrations and the one end-to-end run all existed and
-# all had to be remembered. That is the wrong way round: the checks least
+# JavaScript and nothing else. The three layering contracts, the backend
+# suite, the migrations and the one end-to-end run all existed and all had
+# to be remembered. That is the wrong way round: the checks least
 # likely to be run by hand are the ones that catch the failures nothing
 # else can see.
 #
-# Three jobs rather than one, because they fail for different reasons and
-# a red tick should say which. They also run in parallel, so three is
+# Four jobs rather than one, because they fail for different reasons and
+# a red tick should say which. They also run in parallel, so four is
 # faster than one.
 
 name: CI
@@ -218,3 +218,42 @@ jobs:
         if: failure()
         working-directory: backend
         run: cat gateway.log
+
+  kiosk-shell:
+    name: the shell the rig runs in
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: apps/rig/desktop
+
+    # The only compiled thing in the repository, and the only one nothing
+    # else would notice breaking. `npm test` does not see it, pytest does
+    # not see it, and it is native code that nobody builds by hand between
+    # one hardware milestone and the next - which is the exact profile of
+    # the checks this file exists for.
+    #
+    # It builds and does not run: opening a window needs a display, and a
+    # webview under Xvfb proves less than it costs. What compiling does
+    # prove is the part that has actually broken - the config parsing, the
+    # icon, and the generated capability schemas, all of which are built
+    # by `tauri_build` and none of which fail until something builds them.
+    steps:
+      - uses: actions/checkout@v7
+
+      # What Tauri links against. webkit2gtk-4.1 is the current name;
+      # 4.0 is the old one and is not what tauri 2 wants.
+      - name: The webview it hosts the page in
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev librsvg2-dev
+
+      # --locked, so Cargo.lock is a fact rather than a suggestion. The
+      # reason it is committed at all is that a rig should run what was
+      # tested, and a build free to resolve newer crates is not that.
+      - name: It compiles
+        run: |
+          cargo --version
+          cargo build --locked
