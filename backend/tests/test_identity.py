@@ -362,3 +362,40 @@ class TestTheFloorsWebServer:
 
         paths = [r.path for r in local_gateway.app.routes if hasattr(r, "path")]
         assert CONFIG_URL in paths
+
+
+async def test_a_head_request_is_answered_by_the_service_too(client, floor):
+    """The same question asked with a different verb.
+
+    `@router.get` registers GET alone - FastAPI's APIRoute, unlike
+    Starlette's plain Route, does not add HEAD for you. So HEAD fell
+    through: on `local_gateway` to the static mount, which served the
+    1405-byte placeholder that names nobody, and behind nginx - where
+    `location =` matches every method - to a 405.
+
+    Two deployments, two different wrong answers to "which rig am I",
+    which is the exact shape of the bug this whole file exists to close.
+    Nothing asks this way today, because the page uses a script tag. That
+    is why it is worth pinning rather than leaving to be discovered.
+    """
+    client._transport.client = ("10.0.0.17", 50000)
+    r = await client.head("/api/rigs/config.js")
+    assert r.status_code == 200, (
+        "HEAD reached no route: %s. The placeholder or a 405 is what a "
+        "caller gets instead of its identity." % r.status_code
+    )
+    assert "javascript" in r.headers["content-type"], (
+        "the page loads this with a script tag; a HEAD that described it "
+        "as something else would be describing a different resource"
+    )
+
+
+async def test_head_and_get_describe_the_same_answer(client, floor):
+    """A HEAD whose headers disagree with the GET is its own trap."""
+    client._transport.client = ("10.0.0.17", 50000)
+    got = await client.get("/api/rigs/config.js")
+    head = await client.head("/api/rigs/config.js")
+    assert head.status_code == got.status_code
+    assert head.headers.get("cache-control") == got.headers.get("cache-control"), (
+        "a cached rig-config is a rig filing episodes under another rig's name"
+    )

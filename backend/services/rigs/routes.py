@@ -198,9 +198,16 @@ async def schedule_json(
     return await schedule(rig_id, session)
 
 
-@router.get("/rigs/config.js", tags=["schedules"],
-            response_class=Response,
-            summary="Which rig this machine is, decided by where it called from")
+# HEAD as well as GET, and spelled out because `@router.get` will not do
+# it for you. Starlette's plain Route adds HEAD when GET is registered;
+# FastAPI's APIRoute does not. So HEAD used to fall past this route - on
+# local_gateway to the static mount, which serves the placeholder that
+# names nobody, and behind nginx, where `location =` matches every
+# method, to a 405. Two deployments, two different wrong answers to the
+# one question this route exists to answer.
+@router.api_route("/rigs/config.js", methods=["GET", "HEAD"], tags=["schedules"],
+                  response_class=Response,
+                  summary="Which rig this machine is, decided by where it called from")
 async def rig_config_js(
     request: Request, s: Settings = Depends(get_settings)
 ) -> Response:
