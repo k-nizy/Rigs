@@ -16,14 +16,23 @@ What it does **not** get you, and you should decide with both eyes open:
   `setVideoSource` is null and nothing is ever recorded or uploaded. The
   whole video path exists and is tested; it has never carried a real
   byte. This is a floor-management system until the Tauri shell lands.
-- **Somebody has to push, once a day.** A push covers a whole calendar
-  day - midnight to midnight, three shifts, twelve rigs - and the rigs
-  pick it up by themselves, so the daily cost is one click and no
-  reloads. But nothing pushes on its own. Miss a day and the rigs show
-  Standby and refuse to start a take rather than run yesterday's sheet,
-  which is deliberate: an expired sheet still cheerfully names somebody
-  at half past midnight, and a take filed under the wrong operator is
-  silent and permanent where idle time is loud and recoverable.
+- **Somebody has to push, once a day, before the first shift starts.** A
+  push covers a whole calendar day - midnight to midnight, three shifts,
+  twelve rigs - and the rigs pick it up by themselves, so the daily cost
+  is one click and no reloads. But nothing pushes on its own. Miss a day
+  and the rigs show Standby and refuse to start a take rather than run
+  yesterday's sheet, which is deliberate: an expired sheet still
+  cheerfully names somebody at half past midnight, and a take filed under
+  the wrong operator is silent and permanent where idle time is loud and
+  recoverable.
+
+  **Before, not during**, and that is the rule rather than a preference.
+  A push covers the hours already gone but cannot re-file the work done
+  in them. A crew that starts at 09:00 against a sheet corrected at 09:20
+  has twenty minutes of takes recorded against whoever the previous push
+  named, permanently. The same goes for a cover: if somebody is off and
+  another operator stands in, assign them at the desk and push before
+  they start - the rig is never asked who is standing at it.
 
   Watch for the Night shift. It runs 00:00-08:00 and therefore belongs
   to the date it *starts* on, so the night that follows Tuesday is on

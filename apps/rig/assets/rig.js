@@ -655,7 +655,12 @@ function pushId(p) {
 }
 
 async function resync() {
-  if (resyncing || !PAYLOAD) return;
+  /* Deliberately not `|| !PAYLOAD`. A rig that has never been given a
+     schedule is the one that most needs to ask for one - it is doing no
+     work at all until it has one - and skipping it here is how "it will
+     start seconds after somebody pushes" would have quietly meant "after
+     somebody walks round and reloads twelve browsers". */
+  if (resyncing) return;
 
   // Rule one: not while a take is in flight.
   if (S && (S.phase === "recording" || S.phase === "review")) return;
@@ -664,10 +669,14 @@ async function resync() {
   try {
     const next = await loadPayload(RIG_ID);
     if (!next || next.rigId !== RIG_ID) return;        // never another rig's
+    // `pushId(null)` is "", which no real payload can be, so a rig
+    // holding nothing always counts this as new.
     if (pushId(next) === pushId(PAYLOAD)) return;      // the same schedule
 
     // Rule two: not if it would strand a working operator.
-    const working = S && S.phase !== "standby" && S.phase !== "session_ended";
+    /* A rig holding nothing is not working, whatever screen it is on, so
+       the rule below must not read it as an operator to protect. */
+    const working = PAYLOAD && S && S.phase !== "standby" && S.phase !== "session_ended";
     const covers = RE.whoIsOn(next, nowMin());
     if (working && !covers) {
       emitLog("schedule_held", "sessions",
@@ -1995,7 +2004,36 @@ async function loadPayload(rigId) {
       if (!rigId || p.rigId === rigId) { SOURCE = "file"; return p; }
     }
   } catch (e) { /* no file, nothing pushed */ }
-  SOURCE = "generated";
+  /* Nothing answered. That is not a schedule, and the rig does not make
+     one up.
+
+     It used to. The last step here generated a rota out of
+     `packages/demo-roster` - demonstration names, on a machine standing
+     on a real floor - and the rig opened its shift check on it and let
+     the operator work. The window check does not catch it the way it
+     catches an expired sheet: a generated one is stamped with today, so
+     `coversAt()` says it covers now. The takes went to the outbox and
+     the journal carrying `operatorId: op-a3`, and the uploader posted
+     them as soon as the service came back, into an append-only ledger
+     with no correction mechanism.
+
+     It needs less of an outage than it sounds. `rig-config.js` is a
+     static file and the schedule is an API call, so a service restarting
+     behind a web server that is still up - a deployment, from the rig's
+     side - lands exactly here, with the identity check already satisfied
+     and skipped.
+
+     Same trade as Standby and as refusing an expired sheet: idle is
+     loud, cheap and recoverable; work filed under somebody who was never
+     there is silent, permanent, and poisons the training data. */
+  SOURCE = "generated";             // "schedule not pushed", on the rail
+  /* The line between a rig and a laptop is the one `rig-config.js`
+     already draws: a machine the service identified is a rig on a floor,
+     and one nothing identified is a demo. It is the same test that
+     decides whether an unrecognised machine refuses to work, and it is
+     the right one here - the dangerous case is precisely a machine that
+     KNOWS it is RIG-07, because everything it files will be believed. */
+  if (CONFIGURED_RIG) return null;
   return generateLocally(id);
 }
 
@@ -2033,6 +2071,18 @@ function generateLocally(rigId) {
 
 function applyPayload(p) {
   PAYLOAD = p;
+  /* No payload is a state the rig can be in now, and the rail has to say
+     so rather than keep the last thing it knew. The rig id survives - it
+     comes from the service, not from the schedule, and a machine that
+     knows which rig it is should still say which rig it is while it
+     waits for one. The task does not: nobody set it. */
+  if (!p) {
+    document.getElementById("rail-rig").textContent = RIG_ID || "";
+    document.getElementById("rail-task").textContent = "";
+    document.title = (RIG_ID || "Rig") + " Pedal Loop";
+    showMode();
+    return;
+  }
   RIG_ID = p.rigId;
   document.getElementById("rail-rig").textContent = p.rigId;
   document.getElementById("rail-task").textContent = p.task;

@@ -144,6 +144,47 @@ stays unfiled, until somebody clears it. That is the trade **I6** asks
 for and it is the right way round, but it means downtime spanning a crew
 change is charged to one stint rather than split at the boundary.
 
+### I10. A rig runs what the desk pushed it, or nothing
+
+No schedule the desk did not send may ever reach an operator, and no work
+may be filed against one.
+
+*Enforced, newly.* `loadPayload()` tried the service, then a co-located
+`schedule.json`, and then **generated a rota from
+`packages/demo-roster`** — demonstration names, on a machine standing on
+a real floor. The rig opened its shift check on it and let the operator
+work, and every envelope went to the outbox and the journal carrying
+`operatorId: op-a3`. The uploader posts those the moment the service
+returns; the ledger is append-only and has no correction.
+
+The window check does not catch it, which is the trap worth naming: an
+expired sheet is refused because `coversAt()` says its window has closed,
+but a generated sheet is stamped with today and therefore always covers
+now. **The guard that stops a rig running yesterday's real schedule waves
+through a fabricated one.**
+
+It needed less of an outage than it sounds. `rig-config.js` is a static
+file and the schedule is an API call, so a service restarting behind a
+web server that is still up — a deployment, from the rig's side — landed
+exactly here, with `confirmIdentity()` already satisfied and skipped.
+
+The line is the one `rig-config.js` already draws, and it is drawn on
+whether the **service identified this machine**, not on a URL parameter.
+A laptop or a static deploy sets nothing and is a demo; a machine told it
+is RIG-07 is a rig, and it is the one whose filings will be believed. So
+`CONFIGURED_RIG` gates it, the same test that decides whether an
+unrecognised machine refuses to work at all.
+
+With nothing pushed the rig stands by, says "schedule not pushed" on the
+rail rather than naming somebody, and keeps asking — `resync()` used to
+return early when there was no payload, which would have made "it starts
+seconds after somebody pushes" quietly mean "after somebody reloads
+twelve browsers".
+
+Same trade as **I9** and as refusing an expired sheet: idle is loud,
+cheap and recoverable; work filed under somebody who was never there is
+silent, permanent, and poisons the training data.
+
 ---
 
 ## Part 2 — The failures we should expect

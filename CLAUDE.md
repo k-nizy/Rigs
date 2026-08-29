@@ -308,8 +308,19 @@ answer to which schedule is real.
 
 The rig's `loadPayload()` fetches `/api/rigs/:rigId/schedule.json` first,
 falls back to a co-located `schedule.json` (still supported for a plain
-static deploy), and finally generates locally so the demo runs even with
-no server.
+static deploy), and then stops. It generates a schedule locally only on a
+machine the service never identified — a laptop, or a static deploy with
+nothing behind it — because that is the demo.
+
+**A machine that knows it is RIG-07 never invents one.** It used to, out
+of `packages/demo-roster`, and the window check did not catch it: an
+expired sheet is refused because its window has closed, but a generated
+sheet is stamped with today and always covers now. So a service
+restarting behind a web server that is still up — a deployment, from the
+rig's side — put demonstration names in front of an operator and queued
+their takes under `op-a3` for upload. With nothing pushed the rig now
+stands by and keeps asking. Same trade as everything else here: idle is
+loud and recoverable, misfiled work is silent and permanent.
 
 ## The roster travels the other way
 
