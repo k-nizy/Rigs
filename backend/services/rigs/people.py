@@ -47,11 +47,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.domains.accounts.model import MANAGER, OPERATOR, Account
 from core.domains.accounts.passwords import hash_password, verify_password
 from core.domains.accounts.repository import (
-    AccountRepository, AccountSessionRepository,
+    AccountRepository, AccountSessionRepository, normalise_email,
 )
 from core.infrastructure.config import Settings, get_settings
 from core.infrastructure.database import get_session
 from services.rigs.identity import caller_address
+from services.rigs.lockout import Lockout
 from services.rigs.ratelimit import RateLimiter
 
 log = logging.getLogger("rigs.people")
@@ -133,8 +134,36 @@ def login_limiter(settings: Settings) -> RateLimiter:
 
 def reset_login_limiter() -> None:
     """Tests call this. Nothing in the request path does."""
-    global _login_limiter
+    global _login_limiter, _lockout
     _login_limiter = None
+    _lockout = None
+
+
+# The other half of the same job. The limiter caps how fast one address
+# may guess; this caps how many times it may guess at one account. See
+# lockout.py for why it counts per pair rather than per account.
+_lockout: Lockout | None = None
+
+
+def lockout(settings: Settings) -> Lockout:
+    global _lockout
+    if (_lockout is None
+            or _lockout.after != settings.login_lockout_after
+            or _lockout.max_wait != settings.login_lockout_max_wait_secs):
+        _lockout = Lockout(after=settings.login_lockout_after,
+                           max_wait=float(settings.login_lockout_max_wait_secs))
+    return _lockout
+
+
+def lockout_key(request: Request, email: str) -> tuple:
+    """What a run of failures is counted against.
+
+    The email as typed, normalised - not the account, and not only when
+    the account exists. An unknown address that never locked while a real
+    one did would say which addresses are real, which is the enumeration
+    leak the dummy hash exists to close.
+    """
+    return (normalise_email(email), login_key(request))
 
 
 def login_key(request: Request) -> str:
@@ -262,6 +291,13 @@ def announce(settings: Settings) -> None:
     else:
         log.warning("login rate limit: OFF - passwords may be guessed at "
                     "whatever rate the network allows.")
+    if settings.login_lockout_after > 0:
+        log.info("login lockout: after %d failures, waits double to %ds",
+                 settings.login_lockout_after,
+                 settings.login_lockout_max_wait_secs)
+    else:
+        log.warning("login lockout: OFF - a weak password can be found by "
+                    "working through a list at the rate limit.")
 
 
 # ------------------------------------------------------------- the gate

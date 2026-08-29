@@ -414,14 +414,39 @@ class TestTheLoginThrottle:
         assert int(r.headers["retry-after"]) >= 1
 
     async def test_the_throttle_can_be_turned_off(self, engine, session):
+        """Both of them, because there are two now.
+
+        This turned off the rate limiter alone and expected twelve
+        unthrottled attempts. It stopped at five once the lockout
+        existed - correctly, since the lockout is a second throttle with
+        its own switch, and turning one off does not turn off the other.
+        Off means off, so this asks for both.
+        """
         await people(session)
-        async with serving(login_rate_limit_per_min=0) as c:
+        async with serving(login_rate_limit_per_min=0,
+                           login_lockout_after=0) as c:
             codes = [
                 (await c.post("/api/auth/login",
                               json={"email": MANAGER, "password": "guess"})).status_code
                 for _ in range(12)
             ]
         assert set(codes) == {401}
+
+    async def test_the_lockout_still_holds_when_the_rate_limit_is_off(
+            self, engine, session):
+        """They are separate switches guarding separate things - how fast
+        one address may call, and how many times it may guess at one
+        account. Turning the first off must not quietly disarm the
+        second."""
+        await people(session)
+        async with serving(login_rate_limit_per_min=0,
+                           login_lockout_after=3) as c:
+            codes = [
+                (await c.post("/api/auth/login",
+                              json={"email": MANAGER, "password": "guess"})).status_code
+                for _ in range(6)
+            ]
+        assert codes == [401, 401, 401, 429, 429, 429], codes
 
     async def test_a_throttled_caller_cannot_sign_in_with_the_right_password(
             self, engine, session):

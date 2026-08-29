@@ -33,8 +33,8 @@ from services.rigs.auth import (
 )
 from services.rigs.people import (
     REFUSED, SESSION_COOKIE, clear_session_cookies, current_account,
-    issue_session_cookies, login_key, login_limiter, require_account,
-    require_csrf, require_manager, require_operator, sign_in,
+    issue_session_cookies, lockout, lockout_key, login_key, login_limiter,
+    require_account, require_csrf, require_manager, require_operator, sign_in,
 )
 from services.rigs.identity import caller_address, config_js, rig_at
 from core.infrastructure.storage import Storage, get_storage
@@ -409,6 +409,10 @@ async def health(
             f"{s.login_rate_limit_per_min}/min"
             if s.login_rate_limit_per_min else "off"
         ),
+        "loginLockout": (
+            f"after {s.login_lockout_after}, up to {s.login_lockout_max_wait_secs}s"
+            if s.login_lockout_after else "off"
+        ),
     }
     try:
         await session.execute(text("SELECT 1"))
@@ -638,6 +642,18 @@ async def login(
     Throttled per calling address, and on by default - unlike the rig
     limiter, for the reason written beside `login_rate_limit_per_min`.
     """
+    # Two throttles, and they answer different questions. The limiter
+    # caps how fast this address may call at all; the lockout caps how
+    # many times it may guess at one account. Checked before any hashing
+    # is done, so a caller already waiting cannot spend our CPU.
+    key = lockout_key(request, body.email)
+    wait = lockout(settings).check(key)
+    if wait > 0:
+        raise HTTPException(
+            status_code=429, detail="too many failed sign-in attempts",
+            headers={"Retry-After": str(max(1, int(wait + 0.5)))},
+        )
+
     wait = login_limiter(settings).allow(login_key(request))
     if wait > 0:
         raise HTTPException(
@@ -647,8 +663,17 @@ async def login(
 
     signed = await sign_in(session, body.email, body.password, settings)
     if signed is None:
+        owed = lockout(settings).failed(key)
+        if owed > 0:
+            # Worth a line. A run of failures against a manager is either
+            # somebody locked out of their own desk or somebody working
+            # through a list, and both want a person to look.
+            log.warning("sign-in for %s from %s is now waiting %ds after "
+                        "repeated failures", body.email, login_key(request),
+                        int(owed))
         raise HTTPException(status_code=401, detail=REFUSED)
 
+    lockout(settings).succeeded(key)
     account, token = signed
     await session.commit()
     csrf = issue_session_cookies(response, token, settings)
