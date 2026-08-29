@@ -108,6 +108,42 @@ somebody's hour.
 *Not enforced, and not currently even visible.* The rig knows when a turn
 overruns; nothing accumulates it, and nothing tells the desk. See **F2**.
 
+### I9. A rig works only inside the shift it was pushed
+
+The window the desk wrote is the whole of the rig's authority to work.
+Outside it there is nobody at this rig, and the rig must say so rather
+than keep a live screen up.
+
+*Enforced, newly.* `tick()` had one half of this from the start —
+Standby ends when the schedule says somebody is due — and nothing at all
+for the other. A shift that ended simply left the rig where it was, with
+live pedals, and three things followed that nobody at the rig could see:
+the last stint of every shift was never filed, because `rotate()` is what
+emits one and the final turn has no turn to rotate into; episodes
+recorded past the end filed with `operatorId` null, because `envelope()`
+had no turn to read; and twelve rigs sitting on Handover after 16:00 look,
+from the desk, exactly like twelve rigs being worked.
+
+`rest()` closes it, by comparison against the window the desk wrote and
+never by working out when a shift ends — the same rule the rig already
+followed going the other way. It files the stint on the way out and
+leaves the next crew owing their own check.
+
+It rests from the working loop only (`RESTS_FROM`). A rig in a fault
+report or standing down is dealing with the machine rather than the
+schedule, and **I6** says a rig that is down stays down until a human
+clears it — a clock is not a human. An early check is excluded too: it
+runs outside the shift deliberately.
+
+**I1 holds through it.** A take is never cut short by the shift ending
+any more than by a turn boundary; `restDue` waits for the episode to land,
+exactly as `handoverDue` does.
+
+*Hole:* a rig that is down when its shift ends stays down, and its stint
+stays unfiled, until somebody clears it. That is the trade **I6** asks
+for and it is the right way round, but it means downtime spanning a crew
+change is charged to one stint rather than split at the boundary.
+
 ---
 
 ## Part 2 — The failures we should expect

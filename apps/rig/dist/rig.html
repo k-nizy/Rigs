@@ -1507,6 +1507,7 @@ function boot(screen) {
     reportedIssue: null,
     reportedAtHandover: false,
     handoverDue: false, // block ended mid-episode; hand over when it lands
+    restDue: false,     // shift ended mid-episode; rest when it lands
     pendingSecs: 0,
     demoWarm: false,    // demo only — skips the efficiency warm-up period
     checkedAt: null,    // shift seconds when the check last passed, or null
@@ -1561,6 +1562,23 @@ const SCREENS = [
   ["issue-menu", "Hardware issue"],
   ["rig-down",   "Rig down"],
 ];
+
+/* The screens a rig comes to rest FROM when its shift ends: the working
+   loop, and only it.
+
+   A rig in a fault report or standing down is dealing with the machine
+   rather than the schedule. Dropping it to Standby would throw away
+   where the operator had got to, and for `rig_down` it would break the
+   rule that a rig which is down stays down until a human clears it - a
+   clock is not a human. This is the same list `rotate()` refuses to
+   move out of, for the same reason.
+
+   The checklist is excluded for a different reason: it deliberately
+   runs OUTSIDE the shift, so a technician can sweep the floor at 07:40
+   and nobody burns a minute at 08:00. Resting would take the pedal away
+   in the moment it was pressed. `checklist_pass` already returns an
+   early check to Standby. */
+const RESTS_FROM = ["handover", "recording", "review", "resetting"];
 
 function seed(screen) {
   // Enough plausible history that each screen shows real numbers.
@@ -1893,13 +1911,22 @@ function dispatch(intent) {
 function afterEpisode() {
   // The workspace has to be reset by hand, so the next episode never
   // starts on its own — but the clock starts the moment this one ends.
+  /* Rest first. A take can outlive both a turn boundary and the end of
+     the shift, and rotating into a turn that no longer exists would put
+     a working screen in front of a rig with nobody on it. */
+  if (S.restDue) { rest(); return; }
   if (S.handoverDue) { rotate(); return; }
   go("resetting");
 }
 
 function go(phase) { S.phase = phase; S.phaseAt = S.t; }
 
-function rotate() {
+/* A stint ends here and nowhere else, so every way out of one files the
+   same block. There are two ways out: the operator is relieved, or the
+   shift they were working ends. Only the first existed, which is why the
+   last stint of every shift went unfiled - rotate() needs a turn to
+   rotate *into*, and the final turn of a shift has none. */
+function endStint() {
   /* The sentence keeps the percentage because the operator reads it.
      The data carries the four numbers it was made of, so the formula can
      be corrected in six months and every shift already filed recomputes
@@ -1920,9 +1947,20 @@ function rotate() {
          downSecs: Math.round(S.downSecs) },
        S.stintWho);
   S.stint += 1;
+}
+
+/* And a stint begins here and nowhere else. Three things start together
+   or the numbers are wrong: the clock it is measured with, the person it
+   is filed under, and the turn the rig believes is in progress.
+
+   Leaving them apart is what let a rig switched on before its shift
+   charge the first operator for the standby it sat through, credit their
+   stint to whoever relieved them, and - because turnKey was still null
+   when the first turn arrived - read that turn as a boundary crossed and
+   rotate straight past the shift check. */
+function beginStint() {
   S.stintAt = S.t;
   syncTurnKey();
-  // The next stint belongs to whoever has just come on.
   S.stintWho = current();
   S.episode = 0;
   S.recordedSecs = 0;
@@ -1930,7 +1968,46 @@ function rotate() {
   S.downSecs = 0;
   S.demoWarm = false;
   S.handoverDue = false;
+  S.restDue = false;
+}
+
+function rotate() {
+  endStint();
+  beginStint();
   go("handover");
+}
+
+/* The shift this rig was working has ended.
+
+   A payload covers one shift, and when its window closes there is
+   nobody at this rig. Nothing used to say so: the rig held whatever
+   screen it was on, with live pedals, and an operator could go on
+   recording into a shift that was over. Those takes file with
+   `operatorId` null, because `envelope()` has no turn to read - work
+   belonging to nobody, and the ledger has no mechanism to correct it.
+
+   So the rig comes to rest the same way it goes to work: by comparison
+   against the window the desk wrote, never by working out when a shift
+   ends. Standby is the truthful screen and it is the cheap failure -
+   the resync loop turns hungry the moment there is no turn, so the rig
+   is back at work seconds after the next shift is pushed. */
+function rest() {
+  endStint();
+  beginStint();
+  /* The next crew owes their own check. Same reasoning as a reload not
+     restoring one: the check is a statement about the rig now, and the
+     person who made it has gone home. An early check made *from*
+     Standby is untouched - that path never comes through here. */
+  S.checkedAt = null;
+  go("standby");
+  emitLog("shift_ended", "sessions",
+          "the shift this rig was running has ended — standing by");
+}
+
+/* Standby ends when somebody is due. */
+function wake() {
+  beginStint();
+  go(S.checkedAt == null ? "checklist" : "handover");
 }
 
 // ------------------------------------------------------ keeping in step
@@ -2076,16 +2153,26 @@ function tick(now) {
     if (S.phase === "fault_fixing") S.faultSecs += dt;
     if (S.phase === "rig_down")     S.downSecs += dt;
 
-    /* Standby ends when the schedule says somebody is due. A rig that
-       was checked early goes straight to the handover; one that was not
-       still owes its check. */
-    if (S.phase === "standby" && current()) go(S.checkedAt == null ? "checklist" : "handover");
-
-    // The turn boundary never interrupts a take. If the operator is
-    // mid-episode the handover waits until the episode lands.
+    /* The schedule seam, in one place and one order. Nothing else moves
+       a rig between working and not, and only one of these can be true
+       in a frame - which is why they are an else-if chain rather than
+       three independent ifs. Waking used to fall through into the
+       boundary check in the same frame and rotate immediately. */
     const c = current();
-    if (c && c.turn.from !== turnKey && !S.handoverDue) {
-      const busy = S.phase === "recording" || S.phase === "review";
+
+    // A take is never interrupted, by a turn boundary or by the end of
+    // the shift. Both wait for the episode to land.
+    const busy = S.phase === "recording" || S.phase === "review";
+
+    if (S.phase === "standby" && c) {
+      /* Somebody is due. A rig that was checked early goes straight to
+         the handover; one that was not still owes its check. */
+      wake();
+    } else if (!c && RESTS_FROM.includes(S.phase)) {
+      /* And nobody is, on a rig that was working. */
+      if (busy) S.restDue = true;
+      else rest();
+    } else if (c && c.turn.from !== turnKey && !S.handoverDue) {
       if (busy) S.handoverDue = true;
       else if (S.phase !== "rig_down" && S.phase !== "issue_menu" &&
                S.phase !== "fault_fixing" && S.phase !== "fault_class") rotate();
