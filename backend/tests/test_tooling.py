@@ -28,6 +28,10 @@ class FakeSettings:
         self.rig_addresses = kw.get("rig_addresses", {})
         self.desk_token = kw.get("desk_token", "")
         self.rig_rate_limit_per_min = kw.get("rig_rate_limit_per_min", 0)
+        self.session_cookie_secure = kw.get("session_cookie_secure", False)
+        self.login_rate_limit_per_min = kw.get("login_rate_limit_per_min", 0)
+        self.login_lockout_after = kw.get("login_lockout_after", 0)
+        self.login_lockout_max_wait_secs = kw.get("login_lockout_max_wait_secs", 900)
         self.video_keep_days = kw.get("video_keep_days", 0)
         self.database_url = kw.get(
             "database_url", "postgresql+asyncpg://u:p@127.0.0.1:5432/rigs")
@@ -43,9 +47,9 @@ def clean_results():
     preflight.results.clear()
 
 
-def posture(**kw) -> dict[str, tuple[str, str]]:
+def posture(accounts=1, **kw) -> dict[str, tuple[str, str]]:
     """Run the checks and return {name: (state, detail)}."""
-    preflight.check_posture(FakeSettings(**kw))
+    preflight.check_posture(FakeSettings(**kw), accounts)
     return {name: (state, detail) for state, name, detail in preflight.results}
 
 
@@ -56,6 +60,9 @@ FLOOR = dict(
     rig_rate_limit_per_min=120,
     video_keep_days=90,
     test_database_url="",
+    session_cookie_secure=True,
+    login_rate_limit_per_min=10,
+    login_lockout_after=5,
 )
 
 
@@ -72,12 +79,16 @@ def test_every_branch_names_a_state_that_exists():
         dict(FLOOR, rig_addresses={"RIG-01": "10.0.0.11"}),
         dict(FLOOR, rig_addresses={"RIG-01": "10.0.0.11", "RIG-02": "10.0.0.11"}),
         dict(FLOOR, test_database_url="postgresql+asyncpg://u:p@127.0.0.1:5432/rigs"),
+        dict(FLOOR, session_cookie_secure=False),
+        dict(FLOOR, login_rate_limit_per_min=0),
+        dict(FLOOR, login_lockout_after=0),
     ):
-        preflight.results.clear()
-        preflight.check_posture(FakeSettings(**case))
-        for state, name, _ in preflight.results:
-            assert state in (preflight.OK, preflight.WARN, preflight.FAIL), (
-                f"{name} reported an unknown state {state!r}")
+        for accounts in (None, 0, 3):
+            preflight.results.clear()
+            preflight.check_posture(FakeSettings(**case), accounts)
+            for state, name, _ in preflight.results:
+                assert state in (preflight.OK, preflight.WARN, preflight.FAIL), (
+                    f"{name} reported an unknown state {state!r}")
 
 
 def test_a_correctly_provisioned_floor_is_all_clear():
@@ -241,3 +252,148 @@ class TestMintTokens:
         import inspect
         src = inspect.getsource(mint_tokens)
         assert "--addresses" in src and "RIG_ADDRESSES" in src
+
+
+# ================================================ the desk's own switches
+#
+# A switch is announced in three places in this service: `announce()` at
+# startup, `/api/health` for a load balancer, and preflight for the unit
+# that refuses to come up. The person-auth switches were wired into the
+# first two and not the third, so a deployment was warned that the *rig*
+# door was open and told nothing about the *desk* door being open.
+
+
+class TestPersonAuth:
+    def test_no_accounts_is_a_warning(self):
+        """The same fault as an empty DESK_TOKEN, which is already a
+        warning: anyone who reaches the desk may push a schedule."""
+        got = posture(accounts=0, **FLOOR)
+        assert got["person auth"][0] == preflight.WARN
+        assert "no accounts" in got["person auth"][1]
+
+    def test_it_says_how_to_make_one(self):
+        """A warning somebody cannot act on is only half a warning."""
+        assert "mint_account" in posture(accounts=0, **FLOOR)["person auth"][1]
+
+    def test_accounts_are_reported_and_counted(self):
+        state, detail = posture(accounts=4, **FLOOR)["person auth"]
+        assert state == preflight.OK
+        assert "4 accounts" in detail
+
+    def test_a_database_it_could_not_ask_is_not_reported_as_ok(self):
+        """A check that cannot answer must not answer yes. That is the
+        bug this file exists to catch, in another place."""
+        assert posture(accounts=None, **FLOOR)["person auth"][0] == preflight.WARN
+
+
+class TestTheSessionCookie:
+    def test_an_insecure_cookie_is_a_warning(self):
+        got = posture(**dict(FLOOR, session_cookie_secure=False))
+        assert got["session cookie"][0] == preflight.WARN
+        assert "cleartext" in got["session cookie"][1]
+
+    def test_a_secure_cookie_is_clear(self):
+        assert posture(**FLOOR)["session cookie"][0] == preflight.OK
+
+    def test_it_is_the_one_switch_that_defaults_safe(self):
+        """Every other switch here is off until somebody turns it on, so
+        finding it off says nothing. This one is on until somebody turns
+        it off, so finding it off is always a decision - and worth
+        saying. Asserted against the real settings, not the fake."""
+        from core.infrastructure.config import Settings
+
+        assert Settings.model_fields["session_cookie_secure"].default is True
+        assert Settings.model_fields["login_lockout_after"].default > 0
+        assert Settings.model_fields["login_rate_limit_per_min"].default > 0
+
+
+class TestTheLoginThrottles:
+    def test_no_rate_limit_is_a_warning(self):
+        got = posture(**dict(FLOOR, login_rate_limit_per_min=0))
+        assert got["login rate limit"][0] == preflight.WARN
+
+    def test_no_lockout_is_a_warning(self):
+        got = posture(**dict(FLOOR, login_lockout_after=0))
+        assert got["login lockout"][0] == preflight.WARN
+        assert "list" in got["login lockout"][1]
+
+    def test_both_configured_are_clear(self):
+        got = posture(**FLOOR)
+        assert got["login rate limit"][0] == preflight.OK
+        assert got["login lockout"][0] == preflight.OK
+
+
+def test_every_switch_that_can_be_off_is_reported():
+    """The gap itself, as an assertion.
+
+    Anything a deployment can leave open should appear here by name, or
+    somebody ships with it open and is never told. This lists them, so
+    adding a switch and forgetting this file fails rather than passes.
+    """
+    named = set(posture(accounts=0, **dict(
+        FLOOR, rig_tokens={}, rig_addresses={}, desk_token="",
+        rig_rate_limit_per_min=0, session_cookie_secure=False,
+        login_rate_limit_per_min=0, login_lockout_after=0)))
+
+    for switch in ("rig auth", "rig identity", "desk auth", "rate limit",
+                   "person auth", "session cookie",
+                   "login rate limit", "login lockout"):
+        assert switch in named, f"preflight says nothing about {switch}"
+
+
+# ============================================ what the table check expects
+
+
+def test_preflight_expects_every_table_the_models_define():
+    """The check that would have caught the bug this test was written for.
+
+    `check_tables` used to import ten domains by hand. `accounts` was
+    added without anybody knowing that third list existed, so preflight
+    expected eleven tables while the models defined thirteen - and would
+    have reported a database with no `accounts` table as ready, on a
+    service where every sign-in needs one.
+
+    It has to run in a fresh interpreter. Inside pytest, conftest has
+    already imported every model, so `Base.metadata` is complete however
+    preflight behaves and the assertion passes against the broken code.
+    That is exactly how the bug survived.
+    """
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    probe = (
+        "import json, sys;"
+        "sys.path.insert(0, %r);"
+        "from tools import preflight;"
+        "preflight.load_every_domain();"
+        "from core.base.model import Base;"
+        "print(json.dumps(sorted(Base.metadata.tables)))" % str(root)
+    )
+    out = subprocess.run([sys.executable, "-c", probe],
+                         capture_output=True, text=True, cwd=str(root))
+    assert out.returncode == 0, out.stderr
+    seen = set(json.loads(out.stdout.strip().splitlines()[-1]))
+
+    on_disk = {p.parent.name for p in (root / "core" / "domains").glob("*/model.py")}
+    assert on_disk, "no domains found at all - the probe is looking in the wrong place"
+
+    # Every table this service has, including the ones a login needs.
+    for table in ("accounts", "account_sessions", "schedule_pushes",
+                  "schedules", "rig_events", "episodes"):
+        assert table in seen, (
+            f"preflight would not look for {table!r}, so it would pass a "
+            f"database that is missing it. It expects: {sorted(seen)}")
+
+
+def test_preflight_finds_a_domain_added_to_the_tree():
+    """No list to remember. A directory with a model.py in it is found,
+    which is the property that stops this drifting a third time."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    on_disk = {p.parent.name for p in (root / "core" / "domains").glob("*/model.py")}
+    assert set(preflight.load_every_domain()) == on_disk
+    assert "accounts" in on_disk
