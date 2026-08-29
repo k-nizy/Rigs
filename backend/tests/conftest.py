@@ -68,6 +68,34 @@ def _test_url() -> str:
 RUN_SCHEMA = f"run_{os.getpid()}_{secrets.token_hex(3)}"
 
 
+@pytest.fixture(autouse=True)
+def _no_state_between_tests():
+    """Three process-globals outlive a test, and nothing used to clear them.
+
+    The rig limiter, the login limiter and the lockout are all module
+    globals built lazily on first use. `_run_schema` gives each run its
+    own database schema, so *rows* cannot leak - but none of this is
+    rows, and six test files touch it.
+
+    The lockout is the one that bites, because it is keyed on
+    `time.monotonic` rather than on a count. Whether a sign-in is refused
+    then depends on how many failures preceded it *and how much wall time
+    passed while they did*, so the same command gives different answers
+    on a loaded machine - which is what a suite run beside three other
+    sessions is. The symptom is a 401 in a test that never asked for one,
+    because a correct lockout deliberately does not announce itself.
+
+    Reset before, not only after: a test that fails part-way still leaves
+    the global dirty, and the next test is the one that pays.
+    """
+    from services.rigs import auth, people
+    auth.reset_limiter()
+    people.reset_login_limiter()
+    yield
+    auth.reset_limiter()
+    people.reset_login_limiter()
+
+
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def _run_schema():
     """Create this run's schema up front and take it away afterwards.
