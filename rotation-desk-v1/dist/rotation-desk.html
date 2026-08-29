@@ -2252,7 +2252,17 @@ var RE = window.RotationEngine;
 /* The locked format. Changing these three values is changing v1. */
 const FORMAT = { blockMin: 15, stintBlocks: 3, mode: "hold" };
 
-const GROUPS = window.DEMO_ROSTER.groups;
+/* The roster the desk edits. It starts as the file compiled into this
+   page and is replaced, once, by whatever the floor is actually running
+   - see "The floor's roster" below. Not a const for that reason. */
+let GROUPS = window.DEMO_ROSTER.groups;
+
+/* Whether anybody has edited the plan on this screen yet. The floor's
+   roster is only ever adopted over an untouched screen: arriving late
+   and overwriting a name a manager is halfway through typing would be
+   the same silent clobber this whole feature exists to stop, only
+   faster. */
+let planTouched = false;
 
 const cfg = {
   shift: window.DEMO_ROSTER.defaults.shift,
@@ -2365,10 +2375,145 @@ function localPayloads() {
   return out;
 }
 
+/* ===================================================================
+ * The floor's roster
+ *
+ * The roster lives in a file compiled into this page, and an edit to it
+ * never leaves the browser tab it was made in. So the desk and the floor
+ * drift apart: the floor has the night manager's correction, every other
+ * desk still has the file, and the next person to push sends the file's
+ * version back over it. The correction disappears and nothing anywhere
+ * records that it did.
+ *
+ * The fix is to stop treating the file as the truth. What the floor is
+ * running is already on the floor, and it comes back whole: each payload
+ * carries its group, its task and every operator in it, and under hold
+ * rig the first block of a group names three of its four operators in
+ * rig order, the fourth being the one who is off. That is the entire
+ * recovery.
+ *
+ * It is not believed on the strength of that argument. Whatever comes
+ * back is rebuilt into a schedule and compared, rig by rig and turn by
+ * turn, against the schedule the floor is actually running. Agreement
+ * makes the recovery correct by demonstration rather than by reasoning.
+ * Disagreement keeps the file and says so out loud - a roster the desk
+ * cannot verify is worse than a stale one, because it would go to twelve
+ * rigs under a manager's name.
+ *
+ * What this does not fix: two managers editing at the same moment still
+ * ends with the later push winning. The window shrinks from all day to
+ * the minutes between opening the desk and pressing the button, and the
+ * staleness check on the push closes most of what is left of it.
+ * =================================================================== */
+
+/* The roster that produced these payloads, or null if they do not look
+   like a floor this desk could have drawn. */
+function rosterFromFloor(payloads) {
+  const byGroup = new Map();
+  payloads.forEach(p => {
+    if (!p || !p.group || !Array.isArray(p.turns) || !p.turns.length) return;
+    if (!byGroup.has(p.group)) byGroup.set(p.group, []);
+    byGroup.get(p.group).push(p);
+  });
+  if (!byGroup.size) return null;
+
+  const out = [];
+  for (const [key, rigs] of byGroup) {
+    /* Sorted, and the operators read out in that same order, so the two
+       arrays stay consistent with each other. A group whose rigs were
+       listed in some other order rebuilds to the same schedule with both
+       rotated together - which is the thing the check below proves. */
+    rigs.sort((a, b) => String(a.rigId).localeCompare(String(b.rigId)));
+
+    const everyone = new Set();
+    rigs.forEach(p => p.turns.forEach(t => {
+      if (t.operator && t.operator.name) everyone.add(t.operator.name);
+    }));
+
+    // The first block of the shift, read across the rigs in order.
+    const opensAt = rigs.reduce(
+      (a, p) => (a === null || toMin(p.turns[0].from) < a ? toMin(p.turns[0].from) : a), null);
+    const opening = rigs.map(p => p.turns.find(t => toMin(t.from) === opensAt));
+    if (opening.some(t => !t || !t.operator || !t.operator.name)) return null;
+
+    const onRig = opening.map(t => t.operator.name);
+    if (new Set(onRig).size !== onRig.length) return null;   // one name, two rigs
+
+    const off = [...everyone].filter(n => !onRig.includes(n));
+    out.push({
+      key: key,
+      task: rigs[0].task,
+      rigs: rigs.map(p => p.rigId),
+      ops: onRig.concat(off),
+    });
+  }
+
+  out.sort((a, b) => String(a.key).localeCompare(String(b.key)));
+  return out;
+}
+
+/* Does this roster, run through the engine, produce the schedule the
+   floor is actually running? The whole of the trust in a recovered
+   roster is this function. */
+function rosterAgrees(groups, payloads) {
+  const shift = RE.SHIFTS.find(s => s.label === payloads[0].shift.label);
+  if (!shift) return false;
+  let built;
+  try {
+    built = RE.buildPlan(
+      Object.assign({}, cfg, { shift: shift.id, date: payloads[0].shift.date }), groups);
+  } catch (e) { return false; }
+
+  return payloads.every(want => {
+    const got = RE.rigPayload(built, want.rigId);
+    if (!got) return false;
+    if (got.group !== want.group || got.task !== want.task) return false;
+    if (got.turns.length !== want.turns.length) return false;
+    return got.turns.every((t, i) => {
+      const w = want.turns[i];
+      return t.from === w.from && t.to === w.to && t.minutes === w.minutes
+          && t.operator.name === (w.operator && w.operator.name)
+          && t.relievedBy === w.relievedBy && t.theyGoTo === w.theyGoTo;
+    });
+  });
+}
+
+const sameRoster = (a, b) =>
+  a.length === b.length && a.every((g, i) =>
+    g.key === b[i].key && g.task === b[i].task &&
+    g.rigs.join() === b[i].rigs.join() && g.ops.join() === b[i].ops.join());
+
+/* Take the floor's roster onto this screen, if it can be verified. */
+function adoptFloorRoster() {
+  if (planTouched) return;
+
+  const found = rosterFromFloor(floor.payloads);
+  if (!found) return;
+  if (sameRoster(found, GROUPS)) return;      // they already agree
+
+  if (!rosterAgrees(found, floor.payloads)) {
+    /* Loud, because it means the floor is running something this desk
+       cannot reproduce - so the plan on screen is not what the floor
+       has, and pushing it would replace a schedule nobody here can
+       account for. */
+    toast("The floor is running a roster this desk cannot rebuild - showing the file");
+    return;
+  }
+
+  GROUPS = found;
+  remountRosters();
+  renderPlan();
+  toast("Roster read back from the floor");
+}
+
 /* Ask the server what the floor is actually running. Falls back to the
  * plan on this screen, which is what makes the desk work as a plain
  * static page with no server behind it at all. */
 async function loadFloor(announce) {
+  /* Whatever this call finds, a refusal to push over a floor this screen
+     had not read is about to stop being true - either because it now has
+     read it, or because there is no floor to read. */
+  disarmPush();
   try {
     const state = await api("/api/state").then(r => r.ok ? r.json() : Promise.reject());
     if (!state.rigs || !state.rigs.length) throw new Error("nothing pushed");
@@ -2378,6 +2523,7 @@ async function loadFloor(announce) {
         .then(r => r.ok ? r.json() : Promise.reject())));
     floor.pushedAt = state.pushedAt;
     floor.source = "floor";
+    adoptFloorRoster();
     if (announce) toast("Read " + floor.payloads.length + " rigs from the floor");
   } catch (e) {
     floor.payloads = localPayloads();
@@ -2811,6 +2957,16 @@ function renderFit(a) {
   $("fit").className = "fit " + a.level;
 }
 
+/* The roster cards are mounted once and then left alone, because the
+   inputs in them are live. Reading the floor's roster is the one thing
+   that has to redraw them, and that only ever happens over an untouched
+   screen - so it clears them and lets renderRosters build them again
+   against the roster that replaced the file. */
+function remountRosters() {
+  $("rosters").textContent = "";
+  renderRosters();
+}
+
 function renderRosters() {
   const host = $("rosters");
   if (host.children.length) return;   // inputs are live; never re-mount them
@@ -3024,10 +3180,69 @@ function renderPushPanel(p) {
   $("push-body").innerHTML = highlightJSON(JSON.stringify(one, null, 2));
 }
 
+/* ------------------------------------------------- pushing over a newer floor
+ *
+ * A push is not a merge. It replaces the whole day on all twelve rigs,
+ * so a manager who opened the desk at 08:58 and pushes at 09:01 wipes
+ * out the push somebody else made at 09:00 - and neither of them is told.
+ *
+ * The desk already knows when the floor was last pushed: `floor.pushedAt`
+ * is what the Live badge reads. So it can ask again on the way out and
+ * compare. If the floor has moved since this screen last read it, the
+ * first press refuses and says what happened; a second press goes
+ * through, because the manager may well have meant it and only they can
+ * know. Refresh is the better answer and is named first.
+ *
+ * Deliberately not a lock. Locking twelve rigs behind whoever opened a
+ * tab first is a much bigger promise, and this closes almost all of the
+ * window for a few lines. */
+let pushArmed = false;   // a refusal is standing; the next press goes through
+
+function disarmPush() {
+  pushArmed = false;
+  $("btn-push").textContent = "Push to floor";
+}
+
+/* When the floor was last pushed, if that is newer than what this screen
+   is holding. Null when it is not, and null when the question cannot be
+   answered - no server, or one too old for /api/state - because a push
+   that would have failed anyway must not be blocked by a warning about
+   a floor nobody can read. */
+async function floorMovedOn() {
+  if (!floor.pushedAt) return null;         // this screen never read a floor
+  try {
+    const state = await api("/api/state").then(r => r.ok ? r.json() : Promise.reject());
+    if (!state || !state.pushedAt) return null;
+    const theirs = Date.parse(state.pushedAt);
+    const ours = Date.parse(floor.pushedAt);
+    if (!(theirs > ours)) return null;
+    return state.pushedAt;
+  } catch (e) {
+    return null;
+  }
+}
+
 /* Push every rig in one shot. All-or-nothing: the server rejects a mix
  * of valid and invalid payloads, so the floor never runs half-updated. */
 async function pushFloor() {
   const btn = $("btn-push");
+  btn.disabled = true;
+  try {
+    const moved = await floorMovedOn();
+    if (moved && !pushArmed) {
+      const at = new Date(moved).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      pushArmed = true;
+      btn.textContent = "Push anyway";
+      $("push-note").textContent =
+        "The floor was pushed at " + at + ", after you opened this screen. "
+        + "Read it back before pushing, or press again to replace it.";
+      toast("The floor changed since you opened this");
+      return;
+    }
+  } finally {
+    btn.disabled = false;
+  }
+
   const payloads = dayPayloads();
   btn.disabled = true;
   $("push-note").textContent = "Pushing " + RE.SHIFTS.length + " shifts...";
@@ -3044,6 +3259,11 @@ async function pushFloor() {
       $("push-note").textContent = "Pushed " + rigs + " rigs, " +
         RE.SHIFTS.length + " shifts, at " + at;
       toast("Pushed " + rigs + " rigs for the day");
+      /* This screen is now the floor, so the refusal has nothing left to
+         protect. Cleared here rather than in `finally` - a push that was
+         rejected leaves the older floor in place and the warning still
+         true. */
+      disarmPush();
       await loadFloor(false);          // Live should now show the floor, not the plan
     } else if (res.status === 401 || res.status === 403) {
       /* Not a bad payload. Either the session went while the tab sat
@@ -3105,6 +3325,7 @@ function renderPlan() {
  * plan. Once something has been pushed, Live shows the floor until the
  * next push - which is the honest answer to "what are they running?" */
 function onPlanChanged() {
+  planTouched = true;
   renderPlan();
   if (floor.source === "plan") {
     floor.payloads = localPayloads();

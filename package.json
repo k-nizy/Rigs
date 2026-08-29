@@ -3,7 +3,7 @@
   "private": true,
   "description": "Teleop floor: rotation desk and rig pedal loop, sharing one engine.",
   "scripts": {
-    "test": "node --test packages/engine/engine.test.js packages/engine/reference-sheet.test.js packages/engine/rotate.test.js packages/engine/in-force.test.js packages/schema/schema.test.js packages/schema/event.test.js apps/server/server.test.js apps/server/store.test.js rotation-desk-v1/desk.test.js rotation-desk-v1/gate.test.js apps/my-shift/my-shift.test.js apps/rig/rig.test.js apps/rig/mock-roda.test.js apps/rig/stint-resume.test.js apps/rig/journal.test.js apps/rig/credentials.test.js apps/rig/attribution.test.js apps/rig/fuzz.test.js apps/rig/resync.test.js apps/rig/clock.test.js apps/rig/end-of-shift.test.js",
+    "test": "node --test packages/engine/engine.test.js packages/engine/reference-sheet.test.js packages/engine/rotate.test.js packages/engine/in-force.test.js packages/schema/schema.test.js packages/schema/event.test.js apps/server/server.test.js apps/server/store.test.js rotation-desk-v1/desk.test.js rotation-desk-v1/gate.test.js rotation-desk-v1/roster.test.js apps/my-shift/my-shift.test.js apps/rig/rig.test.js apps/rig/mock-roda.test.js apps/rig/stint-resume.test.js apps/rig/journal.test.js apps/rig/credentials.test.js apps/rig/attribution.test.js apps/rig/fuzz.test.js apps/rig/resync.test.js apps/rig/clock.test.js apps/rig/end-of-shift.test.js",
     "serve": "node apps/server/server.js",
     "build": "python rotation-desk-v1/tools/make-single-file.py && python apps/rig/tools/make-single-file.py"
   }

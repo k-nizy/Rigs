@@ -130,8 +130,9 @@ moving somebody.
 At the top of a shift, in **Plan**:
 
 1. Pick the shift (Morning / Day / Night) and the date.
-2. Type the four operator names and the one task for each group. Rig
-   ids are folded away — they change about once a year.
+2. Check the four operator names and the one task for each group, and
+   correct whatever has changed. Rig ids are folded away — they change
+   about once a year.
 3. Glance at the one-line check: *Everything checks out — 360 min work
    · 60 break · 60 think, each*. It opens itself if anything is wrong.
 4. **Push to floor.** All twelve payloads go in one request; the server
@@ -142,6 +143,29 @@ For the rest of the shift, in **Live**: nothing. It is a board to be
 read, not operated.
 
 Nothing else on either screen is an input.
+
+### The names it opens with are the floor's, not this file's
+
+The roster starts as a file compiled into the page, and for a while that
+was the only place it lived — which meant a correction made here never
+left this browser tab. The floor got it; every other desk still had the
+file; the next person to push sent the file's version back over it, and
+the correction was gone with nothing recording that it had ever existed.
+
+So the desk reads the floor on opening and rebuilds the roster from what
+is running there, then **proves it**: it redraws the schedule from the
+recovered roster and compares it against the floor's, rig by rig and turn
+by turn. If they agree, the recovery is correct by demonstration. If they
+do not, the file stays and the desk says so — a roster it cannot rebuild
+would go to twelve rigs under your name. Anything you have already typed
+on the screen wins over the floor.
+
+**And pushing over a floor somebody else has changed asks first.** If the
+floor was pushed after you opened this screen, the first press refuses
+and names the time; the button becomes *Push anyway* if you meant it, and
+**Refresh** answers it properly by reading the floor back. It is not a
+lock: two managers editing within the same few minutes still ends with
+the later push winning.
 
 ## Against the brief
 
