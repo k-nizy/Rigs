@@ -1,9 +1,10 @@
 from datetime import date
+from typing import Sequence
 
 from sqlalchemy import desc, select
 
 from core.base.repository import BaseRepository
-from core.domains.schedules.model import Schedule
+from core.domains.schedules.model import Schedule, SchedulePush
 
 
 class ScheduleRepository(BaseRepository[Schedule]):
@@ -21,5 +22,27 @@ class ScheduleRepository(BaseRepository[Schedule]):
             )
             .order_by(desc(Schedule.pushed_at))
             .limit(1)
+        )
+        return rows.scalar_one_or_none()
+
+
+class SchedulePushRepository(BaseRepository[SchedulePush]):
+    """Who pushed, read back newest first."""
+
+    model = SchedulePush
+
+    async def recent(self, limit: int = 50) -> Sequence[SchedulePush]:
+        rows = await self.session.execute(
+            select(SchedulePush)
+            .order_by(desc(SchedulePush.pushed_at))
+            .limit(limit)
+        )
+        return rows.scalars().all()
+
+    async def for_push(self, push_id) -> SchedulePush | None:
+        """The audit row belonging to one push, so a schedule row can be
+        traced back to the person who put it there."""
+        rows = await self.session.execute(
+            select(SchedulePush).where(SchedulePush.push_id == push_id)
         )
         return rows.scalar_one_or_none()

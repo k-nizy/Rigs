@@ -18,8 +18,10 @@ from core.domains.alerts.repository import AlertRepository
 from core.domains.rig_events.repository import RigEventRepository
 from core.domains.rig_events.schema import EventBatch, IngestResult
 from core.domains.rig_status.repository import RigStatusRepository
-from core.domains.schedules.model import Schedule
-from core.domains.schedules.repository import ScheduleRepository
+from core.domains.schedules.model import Schedule, SchedulePush
+from core.domains.schedules.repository import (
+    ScheduleRepository, SchedulePushRepository,
+)
 from core.infrastructure.config import Settings, get_settings
 from core.infrastructure.database import get_session
 from core.workflows.floor import floor_state, operator_efficiency
@@ -445,11 +447,53 @@ class PushOut(BaseModel):
     count: int
 
 
+def _actor(account, request: Request, settings: Settings) -> dict:
+    """Who to record for a push, and how they got in.
+
+    Three ways through the door and the history should say which. A
+    signed-in manager is named. The shared desk token is not a person and
+    must not be recorded as one. A deployment with neither configured is
+    "open", written down rather than left looking like a manager whose
+    name nobody captured.
+    """
+    address = caller_address(
+        request.client.host if request.client else None,
+        request.headers.get("x-real-ip"),
+    )
+    if account is not None:
+        return {"actor_kind": "manager", "account_id": account.id,
+                "actor_email": account.email, "actor_name": account.name,
+                "address": address}
+    kind = "token" if settings.desk_token else "open"
+    return {"actor_kind": kind, "account_id": None,
+            "actor_email": None, "actor_name": None, "address": address}
+
+
+def _covered(payloads: list[dict]) -> dict:
+    """What this push changed, as counts and lists rather than a verdict.
+
+    Enough to answer "was that the push that moved Tuesday night" without
+    reading thirty-six payloads back out.
+    """
+    rigs, dates, shifts = set(), set(), set()
+    for p in payloads:
+        rigs.add(str(p.get("rigId")))
+        shift = p.get("shift") or {}
+        dates.add(str(shift.get("date")))
+        shifts.add(str(shift.get("label")))
+    return {"payloads": len(payloads), "rigs": len(rigs),
+            "dates": sorted(dates), "shifts": sorted(shifts)}
+
+
 @router.post("/schedules/push", response_model=PushOut, tags=["schedules"],
-             dependencies=[Depends(desk_auth), Depends(require_manager),
-                           Depends(require_csrf)],
+             dependencies=[Depends(desk_auth), Depends(require_csrf)],
              summary="Push the desk's payloads to the floor, all or none")
-async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
+async def push(
+    body: PushIn, request: Request,
+    account=Depends(require_manager),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> PushOut:
     """Store what the desk pushed, whole and unexamined.
 
     Validated for the handful of fields this service indexes on and
@@ -504,22 +548,39 @@ async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> Pu
         )
 
     session.add_all(rows)
+
+    # In the same transaction as the schedules it describes. A push that
+    # rolled back must not leave a row saying the floor changed, and a
+    # push that landed must not be missing one.
+    session.add(SchedulePush(
+        push_id=push_id, pushed_at=pushed_at,
+        covered=_covered(body.payloads),
+        **_actor(account, request, settings),
+    ))
     await session.commit()
+
+    who = account.email if account is not None else "no signed-in person"
+    log.info("floor pushed by %s: %d payloads across %d rigs",
+             who, len(rows), len({r.rig_id for r in rows}))
     return PushOut(pushId=push_id, pushedAt=pushed_at, count=len(rows))
 
 
 @router.post("/push", response_model=PushOut, tags=["schedules"],
-             dependencies=[Depends(desk_auth), Depends(require_manager),
-                           Depends(require_csrf)],
+             dependencies=[Depends(desk_auth), Depends(require_csrf)],
              summary="Push, at the path the deployed desk already posts to")
-async def push_alias(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
+async def push_alias(
+    body: PushIn, request: Request,
+    account=Depends(require_manager),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> PushOut:
     """What the desk's "Push to floor" button already posts to.
 
     The desk is deployed and speaks to the static server today. Rather
     than make it learn which backend it is talking to, this service
     answers to the same path.
     """
-    return await push(body, session)
+    return await push(body, request, account, session, settings)
 
 
 @router.get("/state", tags=["schedules"],
@@ -808,4 +869,45 @@ async def auth_session(
             if account else None
         ),
         "csrfToken": request.cookies.get(CSRF_COOKIE) if account else None,
+    }
+
+
+class PushedBy(BaseModel):
+    pushId: uuid.UUID
+    pushedAt: datetime
+    by: str | None = None
+    email: str | None = None
+    how: str
+    address: str | None = None
+    covered: dict
+
+
+@router.get("/schedules/pushes", tags=["schedules"],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
+            summary="Who changed the floor's day, newest first")
+async def pushes(
+    limit: int = 50, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """The history the ledger does not keep.
+
+    Every event a rig files is attributable; nothing a manager does was,
+    until this. A push rewrites what twelve machines run for a whole day,
+    and "who put the floor on this schedule" is a question somebody asks
+    only after something has gone wrong - which is exactly when it must
+    already have been recorded.
+
+    Manager-only, because it names people and where they were.
+    """
+    rows = await SchedulePushRepository(session).recent(
+        limit=max(1, min(limit, 500))
+    )
+    return {
+        "pushes": [
+            PushedBy(
+                pushId=r.push_id, pushedAt=r.pushed_at,
+                by=r.actor_name, email=r.actor_email,
+                how=r.actor_kind, address=r.address, covered=r.covered,
+            ).model_dump(mode="json")
+            for r in rows
+        ]
     }
