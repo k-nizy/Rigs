@@ -1,0 +1,23 @@
+# The kiosk shell. One binary, twelve identical machines - which rig each
+# one is comes from the service, not from anything in here. See src/main.rs.
+
+[package]
+name = "rig-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Full-screen kiosk shell hosting the rig page served by the floor."
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+# A kiosk that panics should not also be slow to notice. Nothing here is
+# hot, so optimise the release build for size and let it abort rather than
+# unwind into a half-lit screen.
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"
