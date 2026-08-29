@@ -18,8 +18,10 @@ from core.domains.alerts.repository import AlertRepository
 from core.domains.rig_events.repository import RigEventRepository
 from core.domains.rig_events.schema import EventBatch, IngestResult
 from core.domains.rig_status.repository import RigStatusRepository
-from core.domains.schedules.model import Schedule
-from core.domains.schedules.repository import ScheduleRepository
+from core.domains.schedules.model import Schedule, SchedulePush
+from core.domains.schedules.repository import (
+    ScheduleRepository, SchedulePushRepository,
+)
 from core.infrastructure.config import Settings, get_settings
 from core.infrastructure.database import get_session
 from core.workflows.floor import floor_state, operator_efficiency
@@ -33,8 +35,8 @@ from services.rigs.auth import (
 )
 from services.rigs.people import (
     REFUSED, SESSION_COOKIE, clear_session_cookies, current_account,
-    issue_session_cookies, login_key, login_limiter, require_account,
-    require_csrf, require_manager, require_operator, sign_in,
+    issue_session_cookies, lockout, lockout_key, login_key, login_limiter,
+    require_account, require_csrf, require_manager, require_operator, sign_in,
 )
 from services.rigs.identity import caller_address, config_js, rig_at
 from core.infrastructure.storage import Storage, get_storage
@@ -409,6 +411,10 @@ async def health(
             f"{s.login_rate_limit_per_min}/min"
             if s.login_rate_limit_per_min else "off"
         ),
+        "loginLockout": (
+            f"after {s.login_lockout_after}, up to {s.login_lockout_max_wait_secs}s"
+            if s.login_lockout_after else "off"
+        ),
     }
     try:
         await session.execute(text("SELECT 1"))
@@ -441,11 +447,53 @@ class PushOut(BaseModel):
     count: int
 
 
+def _actor(account, request: Request, settings: Settings) -> dict:
+    """Who to record for a push, and how they got in.
+
+    Three ways through the door and the history should say which. A
+    signed-in manager is named. The shared desk token is not a person and
+    must not be recorded as one. A deployment with neither configured is
+    "open", written down rather than left looking like a manager whose
+    name nobody captured.
+    """
+    address = caller_address(
+        request.client.host if request.client else None,
+        request.headers.get("x-real-ip"),
+    )
+    if account is not None:
+        return {"actor_kind": "manager", "account_id": account.id,
+                "actor_email": account.email, "actor_name": account.name,
+                "address": address}
+    kind = "token" if settings.desk_token else "open"
+    return {"actor_kind": kind, "account_id": None,
+            "actor_email": None, "actor_name": None, "address": address}
+
+
+def _covered(payloads: list[dict]) -> dict:
+    """What this push changed, as counts and lists rather than a verdict.
+
+    Enough to answer "was that the push that moved Tuesday night" without
+    reading thirty-six payloads back out.
+    """
+    rigs, dates, shifts = set(), set(), set()
+    for p in payloads:
+        rigs.add(str(p.get("rigId")))
+        shift = p.get("shift") or {}
+        dates.add(str(shift.get("date")))
+        shifts.add(str(shift.get("label")))
+    return {"payloads": len(payloads), "rigs": len(rigs),
+            "dates": sorted(dates), "shifts": sorted(shifts)}
+
+
 @router.post("/schedules/push", response_model=PushOut, tags=["schedules"],
-             dependencies=[Depends(desk_auth), Depends(require_manager),
-                           Depends(require_csrf)],
+             dependencies=[Depends(desk_auth), Depends(require_csrf)],
              summary="Push the desk's payloads to the floor, all or none")
-async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
+async def push(
+    body: PushIn, request: Request,
+    account=Depends(require_manager),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> PushOut:
     """Store what the desk pushed, whole and unexamined.
 
     Validated for the handful of fields this service indexes on and
@@ -500,22 +548,39 @@ async def push(body: PushIn, session: AsyncSession = Depends(get_session)) -> Pu
         )
 
     session.add_all(rows)
+
+    # In the same transaction as the schedules it describes. A push that
+    # rolled back must not leave a row saying the floor changed, and a
+    # push that landed must not be missing one.
+    session.add(SchedulePush(
+        push_id=push_id, pushed_at=pushed_at,
+        covered=_covered(body.payloads),
+        **_actor(account, request, settings),
+    ))
     await session.commit()
+
+    who = account.email if account is not None else "no signed-in person"
+    log.info("floor pushed by %s: %d payloads across %d rigs",
+             who, len(rows), len({r.rig_id for r in rows}))
     return PushOut(pushId=push_id, pushedAt=pushed_at, count=len(rows))
 
 
 @router.post("/push", response_model=PushOut, tags=["schedules"],
-             dependencies=[Depends(desk_auth), Depends(require_manager),
-                           Depends(require_csrf)],
+             dependencies=[Depends(desk_auth), Depends(require_csrf)],
              summary="Push, at the path the deployed desk already posts to")
-async def push_alias(body: PushIn, session: AsyncSession = Depends(get_session)) -> PushOut:
+async def push_alias(
+    body: PushIn, request: Request,
+    account=Depends(require_manager),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> PushOut:
     """What the desk's "Push to floor" button already posts to.
 
     The desk is deployed and speaks to the static server today. Rather
     than make it learn which backend it is talking to, this service
     answers to the same path.
     """
-    return await push(body, session)
+    return await push(body, request, account, session, settings)
 
 
 @router.get("/state", tags=["schedules"],
@@ -638,6 +703,18 @@ async def login(
     Throttled per calling address, and on by default - unlike the rig
     limiter, for the reason written beside `login_rate_limit_per_min`.
     """
+    # Two throttles, and they answer different questions. The limiter
+    # caps how fast this address may call at all; the lockout caps how
+    # many times it may guess at one account. Checked before any hashing
+    # is done, so a caller already waiting cannot spend our CPU.
+    key = lockout_key(request, body.email)
+    wait = lockout(settings).check(key)
+    if wait > 0:
+        raise HTTPException(
+            status_code=429, detail="too many failed sign-in attempts",
+            headers={"Retry-After": str(max(1, int(wait + 0.5)))},
+        )
+
     wait = login_limiter(settings).allow(login_key(request))
     if wait > 0:
         raise HTTPException(
@@ -647,8 +724,17 @@ async def login(
 
     signed = await sign_in(session, body.email, body.password, settings)
     if signed is None:
+        owed = lockout(settings).failed(key)
+        if owed > 0:
+            # Worth a line. A run of failures against a manager is either
+            # somebody locked out of their own desk or somebody working
+            # through a list, and both want a person to look.
+            log.warning("sign-in for %s from %s is now waiting %ds after "
+                        "repeated failures", body.email, login_key(request),
+                        int(owed))
         raise HTTPException(status_code=401, detail=REFUSED)
 
+    lockout(settings).succeeded(key)
     account, token = signed
     await session.commit()
     csrf = issue_session_cookies(response, token, settings)
@@ -783,4 +869,45 @@ async def auth_session(
             if account else None
         ),
         "csrfToken": request.cookies.get(CSRF_COOKIE) if account else None,
+    }
+
+
+class PushedBy(BaseModel):
+    pushId: uuid.UUID
+    pushedAt: datetime
+    by: str | None = None
+    email: str | None = None
+    how: str
+    address: str | None = None
+    covered: dict
+
+
+@router.get("/schedules/pushes", tags=["schedules"],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
+            summary="Who changed the floor's day, newest first")
+async def pushes(
+    limit: int = 50, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """The history the ledger does not keep.
+
+    Every event a rig files is attributable; nothing a manager does was,
+    until this. A push rewrites what twelve machines run for a whole day,
+    and "who put the floor on this schedule" is a question somebody asks
+    only after something has gone wrong - which is exactly when it must
+    already have been recorded.
+
+    Manager-only, because it names people and where they were.
+    """
+    rows = await SchedulePushRepository(session).recent(
+        limit=max(1, min(limit, 500))
+    )
+    return {
+        "pushes": [
+            PushedBy(
+                pushId=r.push_id, pushedAt=r.pushed_at,
+                by=r.actor_name, email=r.actor_email,
+                how=r.actor_kind, address=r.address, covered=r.covered,
+            ).model_dump(mode="json")
+            for r in rows
+        ]
     }

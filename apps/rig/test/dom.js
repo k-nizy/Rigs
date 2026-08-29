@@ -364,6 +364,9 @@ async function mountRig(opts) {
        waiting on the uploader's timer. */
     setVideoSource(fn) { if (global.setVideoSource) global.setVideoSource(fn); },
     journal() { return global.rigJournal ? global.rigJournal() : null; },
+    /* What the stint has accumulated - the half of a restart that is not
+       an event, and the half a reload used to lose. */
+    stint() { return global.rigStint ? global.rigStint() : null; },
 
     /* Ask for a fresh schedule now rather than waiting on the timer. */
     async resync() { if (global.rigResync) await global.rigResync(); await this.settle(); },

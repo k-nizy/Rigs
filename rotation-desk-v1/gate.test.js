@@ -454,3 +454,63 @@ test("a broken service is not mistaken for a floor with no accounts",
        service that could not answer has said no such thing. */
     assert.equal(desk.$("view-live").hidden, true);
   }));
+
+/* ------------------------------------------- being told how long to wait
+ *
+ * The lockout backs off - one minute, then two, four, eight, up to
+ * fifteen. A screen that says "wait a minute" whatever the service sent
+ * is wrong by a factor of fifteen at the far end, and somebody who
+ * believes it tries again fourteen times and stays locked the whole
+ * while, each attempt pushing the wait out further.
+ */
+
+function refusing(status, retryAfter) {
+  return (url) => {
+    if (String(url) === "/api/auth/session") {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(NOBODY) });
+    }
+    if (String(url) === "/api/auth/login") {
+      return Promise.resolve({
+        ok: false, status,
+        headers: { get: (h) => (h === "retry-after" ? retryAfter : null) },
+        json: () => Promise.resolve({ detail: "too many failed sign-in attempts" }),
+      });
+    }
+    return Promise.reject(new Error("no"));
+  };
+}
+
+async function messageAfterRefusal(retryAfter) {
+  const desk = await mountDesk({ fetchImpl: refusing(429, retryAfter) });
+  await settle();
+  try {
+    desk.$("in-email").value = "r.osei@verlet.co";
+    desk.$("in-password").value = "wrong";
+    desk.fire(desk.$("signin-form"), "submit");
+    await settle();
+    return desk.$("signin-error").textContent;
+  } finally { desk.stop(); }
+}
+
+test("a long wait is reported as the length it actually is", async () => {
+  assert.match(await messageAfterRefusal("480"), /8 minutes/);
+  assert.match(await messageAfterRefusal("900"), /15 minutes/);
+});
+
+test("a short wait is still a minute, and reads as one", async () => {
+  assert.match(await messageAfterRefusal("30"), /a minute/);
+  assert.match(await messageAfterRefusal("60"), /1 minute\b/);
+});
+
+test("a service that sends no Retry-After still says something usable", async () => {
+  const msg = await messageAfterRefusal(null);
+  assert.match(msg, /too many/i);
+  assert.match(msg, /minute/i);
+});
+
+test("being throttled never reads as a wrong password", async () => {
+  /* The one thing this message must not do. Somebody who is locked out
+     and told their password is wrong changes a password that was right. */
+  const msg = await messageAfterRefusal("300");
+  assert.doesNotMatch(msg, /password is not right/i);
+});

@@ -9,10 +9,17 @@ the service's side twelve rigs reporting as one is indistinguishable from
 one very busy rig.
 """
 
+import re
+from pathlib import Path
+
 import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
 from core.infrastructure.config import Settings, get_settings
 from services.rigs.identity import caller_address, config_js, rig_at
+
+REPO = Path(__file__).resolve().parents[2]
 
 ADDRESSES = {"RIG-01": "10.0.0.11", "RIG-07": "10.0.0.17"}
 TOKENS = {"RIG-01": "token-one", "RIG-07": "token-seven"}
@@ -167,3 +174,191 @@ async def test_a_floor_with_no_addresses_configured_identifies_nobody(client):
     get_settings.cache_clear()
     r = await _config(client, peer="10.0.0.17")
     assert "window.RIG_ID = null" in r.text
+
+
+# =============================================== the deploy, on a floor
+#
+# Everything above proves the service answers correctly. None of it
+# proves the question ever reaches the service.
+#
+# On a floor the page asks for `rig-config.js` by a relative path, and
+# what answers is whatever the web server puts at that URL. There is a
+# real file at exactly that path in this repository - the placeholder,
+# checked in so the demo runs on a laptop with nothing behind it - so
+# "just serve the folder" is always a configuration that starts, and it
+# is the broken one. Every rig reads the placeholder, nobody is
+# identified, and the service is never asked. That is the original bug,
+# and it lives entirely in files no test above reads.
+#
+# So both deployments are checked here, by the strongest means each
+# allows. The gateway is checked by asking it, which reproduces the bug
+# exactly: if the static mount wins, the assertion sees the placeholder.
+# nginx is checked by reading it, because there is no nginx on a
+# developer's machine. That is weaker and worth saying plainly - it
+# catches a block deleted, retargeted, or stripped of the header the
+# service depends on, and it cannot catch a syntax error. `nginx -t` on
+# the box is the other half, and this does not replace it.
+
+PLACEHOLDER = REPO / "apps" / "rig" / "rig-config.js"
+NGINX = (REPO / "deploy" / "nginx.conf").read_text(encoding="utf-8")
+
+# The one URL all three have to agree on. Checked against `index.html`
+# below rather than trusted, because a rename would leave the nginx block
+# and the gateway route answering a path nobody asks for - while the
+# static folder answers the new one, which is the bug again.
+CONFIG_URL = "/apps/rig/rig-config.js"
+
+
+def _block(conf: str, header: str) -> str:
+    """What is inside one `location` block, found by its opening line.
+
+    Searching the whole file for a directive proves nothing about where
+    that directive is. `no-store` on the static folder is not `no-store`
+    on the proxy, and reading the first as the second is how a config
+    passes a test while serving a stale identity.
+    """
+    assert header in conf, f"nginx.conf has no `{header}` block"
+    start = conf.index(header)
+    depth = 0
+    for i in range(start, len(conf)):
+        if conf[i] == "{":
+            depth += 1
+        elif conf[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return conf[start:i + 1]
+    raise AssertionError(f"`{header}` is never closed")
+
+
+def _lf(text: str) -> str:
+    """One line ending, so a comparison is about content."""
+    return "\n".join(text.splitlines()).strip()
+
+
+async def _via_gateway(client, peer):
+    """The URL the page actually asks for, from a given machine.
+
+    Deliberately not `/api/rigs/config.js`: the whole question here is
+    which of the two things listening at *this* path answers.
+    """
+    client._transport.client = (peer, 50000)
+    return await client.get(CONFIG_URL)
+
+
+@pytest_asyncio.fixture
+async def gateway():
+    """The development gateway over ASGI, static mounts and all.
+
+    No database needed: the identity route reads the settings and the
+    peer address and nothing else, and httpx does not run lifespan, so
+    the three workers stay asleep.
+    """
+    import local_gateway
+
+    transport = ASGITransport(app=local_gateway.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+class TestTheDevelopmentGateway:
+    async def test_the_service_answers_this_path_not_the_folder(self, gateway, floor):
+        """The bug, reproduced. `/apps/rig` is mounted as static files and
+        a real `rig-config.js` sits inside it, so this one URL has two
+        possible answers and only one of them identifies anybody."""
+        r = await _via_gateway(gateway, peer="10.0.0.17")
+        assert r.status_code == 200
+        assert '"RIG-07"' in r.text, (
+            "the folder answered: this machine was handed the placeholder, "
+            "which names no rig, and would have run as the demo default")
+        assert '"token-seven"' in r.text
+
+    async def test_the_placeholder_is_not_what_came_back(self, gateway, floor):
+        """Compared against the file itself rather than a marker string
+        taken from it, so editing the placeholder cannot quietly weaken
+        this.
+
+        Both sides are flattened to one line ending first. Without that
+        this test passes while the placeholder is being served: the file
+        is checked out CRLF, `read_text` quietly translates it to LF, and
+        the static mount hands back the bytes untouched - so the two
+        differ by nothing that matters and `!=` is satisfied. It was
+        found by deleting the route and watching this test stay green.
+        """
+        r = await _via_gateway(gateway, peer="10.0.0.17")
+        assert _lf(r.text) != _lf(PLACEHOLDER.read_text(encoding="utf-8"))
+
+    async def test_an_unknown_machine_is_told_so_rather_than_falling_through(
+            self, gateway, floor):
+        """The route has to answer both cases. Falling through to the
+        folder for the callers it cannot place would name nobody and look
+        exactly like a laptop, which is the one thing that must not happen
+        on a floor."""
+        r = await _via_gateway(gateway, peer="10.0.0.99")
+        assert "window.RIG_ID = null" in r.text
+        for token in TOKENS.values():
+            assert token not in r.text
+
+    async def test_the_rest_of_the_folder_is_still_served(self, gateway):
+        """The balance. One route wins one URL - removing the mount to
+        achieve that would take the whole app off the air."""
+        r = await gateway.get("/apps/rig/assets/rig.js")
+        assert r.status_code == 200
+
+
+class TestTheFloorsWebServer:
+    def test_the_identity_path_is_proxied_to_the_service(self):
+        block = _block(NGINX, f"location = {CONFIG_URL}")
+        assert re.search(r"proxy_pass\s+http://\S*/api/rigs/config\.js\s*;", block), (
+            "nginx.conf no longer sends this path to the service, so the "
+            "checked-in placeholder answers it and every rig is the same rig")
+
+    def test_it_is_an_exact_match_so_the_folder_cannot_shadow_it(self):
+        """`location =` beats any prefix wherever it sits in the file, and
+        that one character is what makes the ordering here not matter -
+        unlike the gateway above, where the route must be declared before
+        the mount. Written as a prefix it would still win today by being
+        longer than `/apps/rig/`, and would stop winning the moment
+        anything more specific was added.
+        """
+        assert f"location = {CONFIG_URL}" in NGINX
+        assert f"location {CONFIG_URL}" not in NGINX
+
+    def test_the_proxy_tells_the_service_which_machine_called(self):
+        """Without this the service sees the proxy's own address for every
+        rig on the floor: twelve machines, one caller, which is the shape
+        of the original bug. It has to be `$remote_addr` rather than the
+        header as it arrived - the service believes this header from
+        loopback, so forwarding a caller's own copy would let any machine
+        name itself any rig and be handed that rig's token.
+        """
+        block = _block(NGINX, f"location = {CONFIG_URL}")
+        assert re.search(r"proxy_set_header\s+X-Real-IP\s+\$remote_addr\s*;", block)
+
+    def test_the_answer_is_never_cached(self):
+        """A stale copy is a rig filing every episode under another rig's
+        name. The service says this as well; both of them, because either
+        one alone is a single point of failure for an error nothing
+        downstream can see."""
+        block = _block(NGINX, f"location = {CONFIG_URL}")
+        assert "no-store" in block
+
+    def test_all_three_agree_on_the_url_the_page_asks_for(self):
+        """The page's own `<script src>`, resolved against the folder it
+        is served from. If that is ever renamed, the nginx block and the
+        gateway route go on answering a URL nobody requests while the
+        static folder answers the new one - silently, and correctly as far
+        as every other test here can tell.
+        """
+        html = (REPO / "apps" / "rig" / "index.html").read_text(encoding="utf-8")
+        src = re.search(r'<script src="([^"]*rig-config[^"]*\.js)"', html).group(1)
+        assert not src.startswith(("/", "../")), (
+            "loaded from somewhere other than the rig's own folder, so the "
+            "two locations below are guarding the wrong path")
+        assert "/apps/rig/" + src == CONFIG_URL
+
+        assert f"location = {CONFIG_URL}" in NGINX
+
+        import local_gateway
+
+        paths = [r.path for r in local_gateway.app.routes if hasattr(r, "path")]
+        assert CONFIG_URL in paths

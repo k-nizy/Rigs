@@ -23,7 +23,13 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Stint:
-    """The four seconds columns, exactly as the rig reports them."""
+    """The four seconds columns as the block holds them.
+
+    Not "as the rig reports them" any more: `recorded_secs` and
+    `assigned_secs` are derived from the ledger by the projection,
+    because the rig's own counters reset to zero on any restart. See
+    `_stint_totals` in core/workflows/projection.py.
+    """
 
     recorded_secs: float
     assigned_secs: float

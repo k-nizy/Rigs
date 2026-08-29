@@ -2527,6 +2527,9 @@ function emit(event, bucket, detail, data, who) {
   /* Journal before network, always. The uploader runs on a timer and is
      never the thing holding an event; this is. */
   onJournal(() => journal.appendEvent(e), "an event");
+  /* And the running total the events do not carry, at the same moment
+     and for the same reason. */
+  checkpointStint();
   logLines.push({ at: clock(S ? S.t : 0), event, bucket, detail });
   const el = document.getElementById("log");
   el.innerHTML = logLines.slice(-40).map((l) =>
@@ -2695,16 +2698,17 @@ function api(url, init) {
 
 const memoryJournal = {
   durable: false,
-  async load() { return { events: [], videos: [] }; },
+  async load() { return { events: [], videos: [], stint: null }; },
   async appendEvent() {},
   async forgetEvents() {},
   async putVideo() {},
   async forgetVideo() {},
+  async putStint() {},
 };
 
 function browserJournal() {
   const NAME = "rigs-rig-journal";
-  const VERSION = 1;
+  const VERSION = 2;
   let opening = null;
 
   function db() {
@@ -2723,6 +2727,12 @@ function browserJournal() {
         if (!d.objectStoreNames.contains("videos")) {
           d.createObjectStore("videos", { keyPath: "key" })
            .createIndex("rig", "rigId");
+        }
+        /* One row per rig, not one per event: this is the running total,
+           not a thing that happened. Keyed on rigId so writing it again
+           replaces it rather than accumulating a history nobody reads. */
+        if (!d.objectStoreNames.contains("stint")) {
+          d.createObjectStore("stint", { keyPath: "rigId" });
         }
       };
       req.onsuccess = () => resolve(req.result);
@@ -2757,7 +2767,8 @@ function browserJournal() {
          The uploader sends oldest first, so put them back in the order
          they were filed. */
       events.sort((a, b) => a.seq - b.seq);
-      return { events, videos };
+      const stint = (await tx("stint", "readonly", (s) => s.get(rigId))) || null;
+      return { events, videos, stint };
     },
     appendEvent(ev) { return tx("events", "readwrite", (s) => s.put(ev)); },
     forgetEvents(ids) {
@@ -2765,6 +2776,7 @@ function browserJournal() {
     },
     putVideo(item) { return tx("videos", "readwrite", (s) => s.put(item)); },
     forgetVideo(key) { return tx("videos", "readwrite", (s) => s.delete(key)); },
+    putStint(row) { return tx("stint", "readwrite", (s) => s.put(row)); },
   };
 }
 
@@ -2822,11 +2834,89 @@ async function recoverJournal() {
   /* Reported, not logged. boot() clears the drawer log and then files
      the shift check, so a line written here is wiped a moment later and
      the operator never sees that there is a backlog at all. */
-  return { events: events.length, videos: videos.length };
+  return { events: events.length, videos: videos.length,
+           stint: (held && held.stint) || null };
+}
+
+/* The part of a stint that is not an event.
+ *
+ * Every episode is filed and journalled, so the *events* survive a
+ * reload. What does not is `S` - `boot()` rebuilds it from zero, because
+ * every boot is treated as the start of a shift. The operator who
+ * reloads therefore watches their own episode count and recorded seconds
+ * go back to nothing, while the desk, which reads the ledger, still has
+ * them. This is the running total, saved beside the events it came from.
+ *
+ * Stamped with the shift and the turn it belongs to, and resumed only
+ * when all three match. A turn label is "HH:MM" and repeats on every
+ * shift of every day, so the turn alone would let a rig booting a day
+ * later inherit a stranger's numbers - the same trap `floor.py` names
+ * when it matches a finished block against a schedule.
+ *
+ * Elapsed rather than `stintAt`, because `S.t` restarts at zero on a
+ * boot and an absolute mark from before it would read as negative time
+ * on the rig. Elapsed is the fact; the mark is derived from it.
+ */
+function stintRecord() {
+  return {
+    rigId: RIG_ID,
+    shiftDate: PAYLOAD ? PAYLOAD.shift.date : null,
+    shiftLabel: PAYLOAD ? PAYLOAD.shift.label : null,
+    turnKey: turnKey,
+    stint: S.stint,
+    episode: S.episode,
+    recordedSecs: S.recordedSecs,
+    faultSecs: S.faultSecs,
+    downSecs: S.downSecs,
+    elapsedSecs: S.t - S.stintAt,
+  };
+}
+
+/* Written on every event, which is the same cadence the events
+   themselves are journalled at and needs no timer of its own. The
+   counters that move between events are fault and downtime seconds; a
+   crash mid-outage loses at most the seconds since it began, and it
+   loses them in the direction that charges the operator rather than
+   credits them. */
+function checkpointStint() {
+  if (!S || !journal.putStint) return;
+  onJournal(() => journal.putStint(stintRecord()), "the stint so far");
+}
+
+/* Same turn, same shift, same rig - or start clean.
+   Deliberately not a grace period. A turn is what work is attributed to,
+   so the turn boundary is the honest edge: a rig that was off long
+   enough to matter has crossed one, and the crew change crosses one by
+   definition. Nothing here needs a number chosen by hand. */
+function resumeStint(held) {
+  if (!held || !S || !PAYLOAD || !turnKey) return false;
+  if (held.turnKey !== turnKey) return false;
+  if (held.shiftDate !== PAYLOAD.shift.date) return false;
+  if (held.shiftLabel !== PAYLOAD.shift.label) return false;
+
+  S.stint = held.stint || 0;
+  S.episode = held.episode || 0;
+  S.recordedSecs = held.recordedSecs || 0;
+  S.faultSecs = held.faultSecs || 0;
+  S.downSecs = held.downSecs || 0;
+  S.stintAt = S.t - (held.elapsedSecs || 0);
+  /* The checklist is not restored, and that is deliberate. The numbers
+     are a record of what happened; the check is a statement about the
+     rig right now, and a machine that just restarted has not been
+     looked at since. */
+  return true;
 }
 
 /* For the tests and the drawer. */
 window.rigJournal = () => ({ durable: !!journal.durable, broken: journalBroken });
+/* What the stint has accumulated, the same way rigVideo and rigOutbox
+   report theirs - so a test can ask whether a reload kept it. */
+window.rigStint = () => (S ? {
+  stint: S.stint, episode: S.episode,
+  recordedSecs: Math.round(S.recordedSecs),
+  faultSecs: Math.round(S.faultSecs), downSecs: Math.round(S.downSecs),
+  assignedSecs: Math.round(assignedSecs()),
+} : null);
 
 // ---------------------------------------------------------- the uploader
 
@@ -3293,12 +3383,24 @@ async function start(rigId) {
   // carries on rather than restarting and going backwards.
   await alignSeq();
   boot(location.hash.slice(1));   // boot() reads the turn in progress back itself
+  /* After boot, because boot builds S from zero and reads the turn in
+     progress; both have to have happened before the held stint can be
+     matched against them. Written straight back, so the row on disk
+     describes the stint that is actually running rather than the zeros
+     boot just checkpointed. */
+  const resumed = resumeStint(owed && owed.stint);
+  if (resumed) checkpointStint();
   /* After boot, which clears the log. A backlog the operator cannot see
      is the same as no backlog from where they are standing. */
   if (owed && (owed.events || owed.videos)) {
     emitLog("journal_recovered", "sessions",
             owed.events + " events and " + owed.videos +
             " videos were still waiting from before the last restart");
+  }
+  if (resumed) {
+    emitLog("stint_resumed", "sessions",
+            "picked the turn back up: " + S.episode + " episodes and " +
+            clock(S.recordedSecs) + " recorded before the restart");
   }
   startUploader();
   startVideoUploader();

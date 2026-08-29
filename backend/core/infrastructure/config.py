@@ -167,6 +167,28 @@ class Settings(BaseSettings):
     # a sixty-second wait, once.
     login_rate_limit_per_min: int = 10
 
+    # Consecutive failed sign-ins, per (account, calling address), before
+    # the next attempt has to wait. 0 turns it off.
+    #
+    # The limiter above caps how *fast* one address may guess; this caps
+    # how *many* times it may guess at one account. Ten a minute is
+    # fourteen thousand a day, which is more than a list of common
+    # passwords is long, so the limiter on its own protects a strong
+    # password and not a weak one.
+    #
+    # Per pair, not per account, and that is deliberate: locking an
+    # account would let anyone who knows a manager's email deny them the
+    # desk, and a crew change with no pushed schedule leaves twelve rigs
+    # in Standby. Denial of service is the more attractive attack here,
+    # so the lockout is built not to offer it.
+    login_lockout_after: int = 5
+
+    # How long the wait may grow to. It doubles from one minute - 1, 2,
+    # 4, 8 - and stops here. Always self-clearing: a correct password
+    # ends it at once and nothing needs an administrator to undo, because
+    # at three in the morning on a floor there is not one.
+    login_lockout_max_wait_secs: int = 900
+
     # Whether reading the floor needs the desk token as well as writing to
     # it. Off by default: /floor/state is what a wall display shows and
     # what the desk polls, and making it need a secret is a product

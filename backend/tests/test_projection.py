@@ -24,11 +24,15 @@ RIG = "RIG-03"
 T0 = datetime(2026, 8, 24, 9, 0, tzinfo=timezone.utc)
 
 
-def env(seq, event, bucket, data, turn="09:00", op="op-a4"):
+def env(seq, event, bucket, data, turn="09:00", op="op-a4", secs=None):
+    """One envelope. `secs` overrides the default 30-seconds-per-seq
+    spacing, for the events whose real place in the turn matters - a
+    stint's length is now read from its own timestamps rather than taken
+    from the payload."""
     return {
         "eventId": str(uuid.uuid4()),
         "seq": seq,
-        "at": (T0 + timedelta(seconds=seq * 30)).isoformat(),
+        "at": (T0 + timedelta(seconds=seq * 30 if secs is None else secs)).isoformat(),
         "rigId": RIG,
         "shiftDate": "2026-08-24",
         "shiftLabel": "Morning",
@@ -52,9 +56,13 @@ def a_stint() -> list[dict]:
             {"issue": "Gripper broken", "issuePath": "Gripper broken",
              "needsManager": False, "chargedTo": "previous_operator"}),
         env(5, "rig_up", "rig_downtime_events", {"downSecs": 180}),
+        # Forty-five minutes after the first event, because that is what a
+        # turn is. The payload still carries the rig's own counters; they
+        # are no longer what the block is built from, so the timeline has
+        # to be the honest one.
         env(6, "stint_ended", "rig_productivity_blocks",
             {"episodes": 2, "recordedSecs": 197, "assignedSecs": 2700,
-             "faultSecs": 0, "downSecs": 180}),
+             "faultSecs": 0, "downSecs": 180}, secs=2700),
     ]
 
 
@@ -514,3 +522,106 @@ class TestAnOutageNobodyClosed:
         assert all(r.ended_by == "operator" for r in rows if r.up_at), (
             "a normally closed outage was relabelled"
         )
+
+
+# ----------------------------------------------- a rig that restarts mid-turn
+
+
+def a_stint_with_a_restart() -> list[dict]:
+    """The same turn, with a reload in the middle of it.
+
+    `boot()` on the rig rebuilds its whole session from zero - `S.episode`,
+    `S.recordedSecs`, `S.stintAt`, all of it - because every boot is
+    treated as the start of a shift. So the `stint_ended` that eventually
+    arrives describes only what happened *after* the restart.
+
+    The episodes themselves are not lost. The rig journals every event
+    before it touches the network, so the two takes from before the reload
+    are in this ledger; it is only the rig's summary of them that reset.
+    That is exactly why the block can be rebuilt.
+    """
+    ep1, ep2, ep3 = (str(uuid.uuid4()) for _ in range(3))
+    return [
+        env(0, "shift_check", "rig_shift_checks", {"outcome": "passed"}),
+        # Before the reload: two saved takes, 600 seconds of work.
+        env(1, "episode_saved", "episodes",
+            {"episodeId": ep1, "durationSecs": 400, "score": 4}, secs=300),
+        env(2, "episode_saved", "episodes",
+            {"episodeId": ep2, "durationSecs": 200, "score": 4}, secs=900),
+        # --- the operator reloads the page here, twenty minutes in ---
+        # After it: one take, and counters that start again from nothing.
+        env(3, "episode_saved", "episodes",
+            {"episodeId": ep3, "durationSecs": 300, "score": 5}, secs=1800),
+        env(4, "stint_ended", "rig_productivity_blocks",
+            {"episodes": 1, "recordedSecs": 300, "assignedSecs": 900,
+             "faultSecs": 0, "downSecs": 0}, secs=2700),
+    ]
+
+
+async def test_a_restart_mid_turn_does_not_erase_the_work_before_it(client, session):
+    """The block counts the whole turn, not the fragment the rig remembers.
+
+    Every episode is in the ledger. A block that believed the rig's
+    counters would drop two of the three takes and eleven minutes of
+    work, silently, in a table with no correction mechanism.
+    """
+    await ingest(client, a_stint_with_a_restart())
+    await project_batch(session)
+
+    block = (await session.execute(select(RigProductivityBlock))).scalar_one()
+    assert block.episodes == 3, "the two takes before the reload still happened"
+    assert block.recorded_secs == 900, "400 + 200 + 300, not the 300 the rig remembered"
+
+
+async def test_a_restart_cannot_flatter_the_operator(client, session):
+    """The denominator has to move with the numerator.
+
+    This is the reason `assigned_secs` is derived too. The rig reported
+    900 seconds assigned - the time since it restarted - against a turn
+    that really ran 2700. Score the real work over the fragment's
+    denominator and it comes to 1.0, which `efficiency()` clamps to a
+    perfect stint. An operator having a bad turn could reload and be
+    judged only on what came after.
+    """
+    await ingest(client, a_stint_with_a_restart())
+    await project_batch(session)
+
+    block = (await session.execute(select(RigProductivityBlock))).scalar_one()
+    assert block.assigned_secs == 2700, "first event to stint_ended, by the clock"
+
+    s = Stint(block.recorded_secs, block.assigned_secs, block.fault_secs, block.down_secs)
+    assert efficiency(s) == pytest.approx(900 / 2700)
+
+    # What it would have been on the rig's own numbers, had the numerator
+    # been fixed and the denominator left alone.
+    flattered = Stint(900.0, 900.0, 0.0, 0.0)
+    assert efficiency(flattered) == 1.0, (
+        "the clamp is what would have hidden this - a half-fix reads as perfect"
+    )
+
+
+async def test_replay_corrects_a_block_that_was_wrong(client, session):
+    """The property that makes deriving worth doing.
+
+    A transcribed block is frozen at whatever the device believed. A
+    derived one is rebuilt from the ledger, so wiping the facts and
+    running the projection again repairs history - which is the same
+    argument the backend already makes for not storing a percentage.
+    """
+    await ingest(client, a_stint_with_a_restart())
+    await project_batch(session)
+
+    block = (await session.execute(select(RigProductivityBlock))).scalar_one()
+    # Corrupt it the way a device-supplied number could be wrong.
+    block.episodes = 1
+    block.recorded_secs = 300.0
+    block.assigned_secs = 900.0
+    await session.commit()
+
+    await reset_projections(session)
+    await project_batch(session)
+
+    rebuilt = (await session.execute(select(RigProductivityBlock))).scalar_one()
+    assert rebuilt.episodes == 3
+    assert rebuilt.recorded_secs == 900
+    assert rebuilt.assigned_secs == 2700

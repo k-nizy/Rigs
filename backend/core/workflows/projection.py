@@ -25,7 +25,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.domains.episodes.model import Episode
@@ -73,6 +73,81 @@ async def _open_session(session: AsyncSession, ev: RigEvent) -> Session:
     session.add(opened)
     await session.flush()
     return opened
+
+
+async def _stint_totals(
+    session: AsyncSession, ev: RigEvent, sess: Session
+) -> tuple[int, float, float]:
+    """What the operator actually did this turn, from facts already held.
+
+    `stint_ended` carries the rig's own running counters, and those live
+    in `S`, which `boot()` rebuilds from zero on every start. A reload, a
+    crash or a kiosk restart therefore files a block describing only the
+    work done *since* the restart. The episodes before it are not lost -
+    the rig journals every event before it touches the network, so they
+    are in this ledger - but the block that judges the operator does not
+    count them, and there is no correction mechanism downstream.
+
+    So it is derived rather than transcribed, which is the rule every
+    other fact table here already follows: the ledger is the system, and
+    everything else is rebuilt from it. That also makes existing wrong
+    blocks correctable by replay, which transcribed ones never were.
+
+    Both numbers have to move together. `assigned_secs` is the
+    denominator, and it resets with everything else; deriving the
+    numerator alone would let a restarted stint report a full turn's work
+    against a few minutes of assigned time, and `efficiency()` clamps to
+    1.0 - so the bug would be rounded away into a perfect score.
+
+    - episodes and recorded_secs come from the Episode rows for this
+      turn, projected in ledger order before this event. Only saved
+      takes: a discarded one recorded nothing.
+    - assigned_secs is wall clock, `started_at` to now. `_open_session`
+      finds-or-opens by the turn key rather than per boot, so the start
+      is the first event of the turn and survives a restart.
+
+    The turn's scheduled length would be the more literal reading of
+    "assigned", and `floor.py` already looks turns up that way. It is
+    deliberately not used here: schedules are pushed, not filed, so they
+    are not in the ledger. A database restored from envelopes alone comes
+    back with every fact and no schedules at all, and `test_recovery.py`
+    asserts the facts come back *identical*. Reading the length from a
+    schedule would make this one column unreproducible from the ledger,
+    which is the property the whole design is arranged around. Every
+    input here is an event timestamp or an episode row, so replay stays
+    self-contained.
+
+    `fault_secs` and `down_secs` still come from the payload and reset
+    the same way. Left alone deliberately: fault time has no table of its
+    own - `rig_downtime_events` holds only `rig_down`/`rig_up`, while the
+    rig accrues `faultSecs` separately in `fault_fixing` - so deriving
+    one and not the other would be inconsistent. They fail in the safe
+    direction: too small a subtrahend makes chargeable time larger and
+    efficiency lower, so a restart cannot flatter anybody.
+    """
+    key = [
+        Episode.rig_id == ev.rig_id,
+        Episode.shift_date == ev.shift_date,
+        Episode.shift_label == ev.shift_label,
+        Episode.turn_from.is_(None) if ev.turn_from is None
+        else Episode.turn_from == ev.turn_from,
+        Episode.operator_id.is_(None) if ev.operator_id is None
+        else Episode.operator_id == ev.operator_id,
+        Episode.outcome == "saved",
+    ]
+    # Episodes for this turn were added to this same unit of work a moment
+    # ago and may still be pending. Flush so the aggregate sees them.
+    await session.flush()
+    rows = await session.execute(
+        select(func.count(), func.coalesce(func.sum(Episode.duration_secs), 0.0))
+        .where(*key)
+    )
+    episodes, recorded = rows.one()
+
+    assigned = (ev.at - sess.started_at).total_seconds()
+    # A stint whose first event is the one ending it. Not an error; the
+    # clamp in efficiency() already treats no chargeable time as zero.
+    return int(episodes), float(recorded), max(0.0, assigned)
 
 
 async def _open_downtime(session: AsyncSession, ev: RigEvent) -> RigDowntimeEvent | None:
@@ -187,13 +262,14 @@ async def project_one(session: AsyncSession, ev: RigEvent) -> str:
         return "rig_up"
 
     if ev.event == "stint_ended":
+        episodes, recorded_secs, assigned_secs = await _stint_totals(session, ev, sess)
         session.add(
             RigProductivityBlock(
                 **_key(ev),
                 ended_at=ev.at,
-                episodes=int(data.get("episodes", 0)),
-                recorded_secs=float(data.get("recordedSecs", 0)),
-                assigned_secs=float(data.get("assignedSecs", 0)),
+                episodes=episodes,
+                recorded_secs=recorded_secs,
+                assigned_secs=assigned_secs,
                 fault_secs=float(data.get("faultSecs", 0)),
                 down_secs=float(data.get("downSecs", 0)),
                 source_event=ev.id,

@@ -1495,7 +1495,7 @@ pre.json .n { color: var(--accent); }
         return {
           ok: false,
           message: r.status === 429
-            ? "Too many attempts. Wait a minute and try again."
+            ? "Too many attempts. Try again in " + waitFor(r) + "."
             : (body.detail || "Email or password is not right."),
         };
       }
@@ -1511,6 +1511,20 @@ pre.json .n { color: var(--accent); }
     } catch (ignored) {
       return { ok: false, message: "Could not reach the server." };
     }
+  }
+
+  /* How long the service said to wait, in words.
+   *
+   * "a minute" was the message whatever the header said, which is wrong
+   * by a factor of fifteen once a run of failures has been backing off
+   * for a while - and somebody told to wait a minute who is actually
+   * locked for fifteen tries again fourteen times and stays locked. */
+  function waitFor(response) {
+    const secs = Number(response.headers && response.headers.get
+      ? response.headers.get("retry-after") : 0);
+    if (!secs || secs < 60) return "a minute";
+    const mins = Math.ceil(secs / 60);
+    return mins + " minute" + (mins === 1 ? "" : "s");
   }
 
   /* End the session, here and on the service. Never throws: a sign-out
