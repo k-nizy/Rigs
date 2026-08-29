@@ -215,6 +215,34 @@ it should be paid knowingly: every number the floor produces is correct
 ever sees two rigs whose activity contradicts the schedule, that is a
 question for a human, not a prompt for the operator. **OPEN.**
 
+**The near neighbour of this, and it is decided.** Not the wrong rig, but
+the wrong *person*: Sara is on the sheet, Sara is off sick, Ben covers.
+Every take Ben makes is filed under Sara and nothing can tell.
+
+A picker was proposed for it — the idle left pedal on Handover offering
+the group's other three operators, so whoever is actually there could say
+so. Everything it needs is already in the payload; each rig sees all four
+of its group's operators over a shift, so it would have cost nothing but
+the pedal.
+
+**It is not being built, and the reason is the reason for everything else
+here.** Somebody decided Ben covers. That is a rostering decision, and
+the desk is where rostering decisions are made. A picker at the rig makes
+the rig a second place where who-works-where gets settled, and the whole
+design turns on there being one. The rig does not choose which rig it is;
+it does not compute its own rotation; it does not choose its operator
+either. A cover is a roster change: assigned at the desk, pushed, and the
+rig files whoever the sheet names.
+
+Two things have to hold for that to be true rather than merely stated,
+and both now do. The correction has to **survive** — it used to be
+reverted by the next desk to push, which is what the roster read-back in
+`rotation-desk-v1` fixes. And it has to be **early**: a push covers the
+hours already gone but cannot re-file the work done in them, so the floor
+rule is *push before the shift starts, not after it*. What is left is the
+gap between an operator walking in and the manager pushing, and that gap
+is a floor process rather than a thing the rig can close by asking.
+
 **F5 — the ghost.** *(likely)*
 A walks away without pressing anything. The rig sits on Recording,
 `phaseSecs()` climbing, an episode nominally in progress and nobody

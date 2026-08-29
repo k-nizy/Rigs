@@ -127,7 +127,7 @@ moving somebody.
 
 ## What a manager actually does
 
-At the top of a shift, in **Plan**:
+**Before the shift starts** - not once it is running - in **Plan**:
 
 1. Pick the shift (Morning / Day / Night) and the date.
 2. Check the four operator names and the one task for each group, and
@@ -138,6 +138,13 @@ At the top of a shift, in **Plan**:
 4. **Push to floor.** All twelve payloads go in one request; the server
    validates every one and rejects the lot if any fails, so the floor
    never runs half-updated.
+
+Before, rather than during, because a push covers the hours already gone
+but cannot re-file the work done in them. A crew that starts at 09:00
+against a sheet corrected at 09:20 has twenty minutes of takes recorded
+against the wrong person, permanently. The same goes for a cover: if
+somebody is off and another operator is standing in, assign them here and
+push before they start.
 
 For the rest of the shift, in **Live**: nothing. It is a board to be
 read, not operated.

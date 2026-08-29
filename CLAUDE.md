@@ -361,8 +361,8 @@ A payload covers **one shift**, and a push covers **one calendar day** -
 midnight to midnight, three shifts, twelve rigs, thirty six sheets. So
 the rule for whoever is managing the floor is one line:
 
-> Push once a day. Any time that day. Push again whenever the roster
-> changes.
+> Push once a day, **before the first shift starts**. Push again whenever
+> the roster changes — before the crew it affects walks in.
 
 Any desk will do, and it no longer matters which one — a desk opens on
 the roster the floor is running, not on the file it shipped with. See
@@ -373,6 +373,22 @@ one made at four in the afternoon both cover the whole of that day,
 including the hours already gone. What it does affect is content -
 whatever is on the desk when the button is pressed is what the floor
 runs, and it reaches every rig within thirty seconds.
+
+**Which is why "before" is the rule and not a preference.** Coverage is
+retrospective; attribution is not. An operator standing at a rig is
+recorded as whoever the *last* push named, from the moment they start.
+Push a correction at 09:20 for a crew that started at 09:00 and those
+twenty minutes are already filed under the person who did not work them
+- and there is no correction mechanism in the ledger, so they stay that
+way. The push lands on every rig within thirty seconds; everything
+before it is the part nobody can fix.
+
+So a cover is a roster change like any other. Sara is off, Ben is
+covering: the manager assigns Ben at the desk and pushes, and the rig
+files Ben because the sheet says Ben. The rig is never asked who is
+standing at it - see "Who signs in, and who does not" - and the roster
+read-back above is what stops that correction being reverted by the next
+desk to push.
 
 The part that catches people is that **a Night shift belongs to the date
 it starts on**. Night runs 00:00-08:00, so the night that *follows*
