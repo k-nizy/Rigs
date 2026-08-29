@@ -6,6 +6,7 @@ itself is checked separately, by applying it to rigs_dev.
 """
 
 import os
+import re
 import secrets
 import sys
 from pathlib import Path
@@ -96,6 +97,76 @@ def _no_state_between_tests():
     people.reset_login_limiter()
 
 
+def _process_is_alive(pid: int) -> bool:
+    """Whether that process still exists. Answers True when unsure.
+
+    Unsure has to mean alive: the only thing this decides is whether a
+    schema may be dropped, and dropping a live run's tables is the bug
+    the schema-per-run split exists to prevent. A stale schema left
+    behind costs a few megabytes.
+
+    `os.kill(pid, 0)` is the usual way and is only half portable. On
+    Windows CPython maps every signal except the console ones onto
+    TerminateProcess, so asking "are you alive" with it would kill the
+    process being asked about - which here is somebody else's test run.
+    """
+    if os.name == "nt":
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if handle:
+            kernel32.CloseHandle(handle)
+            return True
+        # Access denied means it is there and not ours to look at.
+        return kernel32.GetLastError() == 5
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True          # exists, owned by somebody else
+    except OSError:
+        return True          # could not tell, so assume alive
+    return True
+
+
+async def _sweep_dead_run_schemas(conn) -> list[str]:
+    """Drop the schemas left by runs that are no longer running.
+
+    A run creates its schema at the start and drops it at the end. One
+    that is killed - Ctrl-C, a CI timeout, a crash - never reaches the
+    end, and its schema stays with thirteen tables in it. They accumulate
+    quietly, and the first sign is a database that is bigger than anybody
+    expects.
+
+    Only the dead ones. A schema whose process is still running belongs
+    to a suite in progress, and taking its tables away is precisely the
+    failure the schema-per-run split was introduced to stop.
+    """
+    rows = (await conn.execute(text(
+        "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'run/_%' ESCAPE '/'"
+    ))).scalars().all()
+
+    dropped = []
+    for name in rows:
+        if name == RUN_SCHEMA:
+            continue
+        # The exact shape RUN_SCHEMA is built from, anchored at both
+        # ends. A loose prefix match would put whatever `pg_namespace`
+        # returned inside a quoted identifier below - which needs
+        # database privileges to exploit and is still not a thing to
+        # write. It also means this only ever touches schemas of its own
+        # making.
+        m = re.fullmatch(r"run_(\d+)_[0-9a-f]{6}", name)
+        if not m or _process_is_alive(int(m.group(1))):
+            continue
+        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{name}" CASCADE'))
+        dropped.append(name)
+    return dropped
+
+
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def _run_schema():
     """Create this run's schema up front and take it away afterwards.
@@ -106,6 +177,18 @@ async def _run_schema():
     """
     eng = create_async_engine(_test_url(), future=True)
     async with eng.begin() as conn:
+        # Tidy up after runs that were killed before they could. Failing
+        # to sweep must never fail the suite - it is housekeeping, and a
+        # test run that refuses to start because it could not tidy is
+        # worse than the mess.
+        try:
+            gone = await _sweep_dead_run_schemas(conn)
+            if gone:
+                print(f"\nconftest: cleared {len(gone)} schema(s) left by "
+                      f"runs that were killed: {', '.join(gone)}")
+        except Exception as e:          # noqa: BLE001 - see above
+            print(f"\nconftest: could not sweep old run schemas ({e})")
+
         await conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{RUN_SCHEMA}"'))
     await eng.dispose()
 
