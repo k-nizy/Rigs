@@ -434,6 +434,15 @@ badge reads **"Nothing scheduled for now"** in the warning colour rather
 than "On the floor", so the one screen a manager would check to find out
 cannot quietly reassure them.
 
+The rest of that screen has to agree with the badge, and for a while it
+did not. Everything else on Live was measured as minutes since the top of
+the shift *modulo a day*, which carries no date - so a Morning sheet from
+yesterday read at 10:37 came out **running**, with live countdowns beside
+a badge saying nothing was scheduled, and a Day sheet that ended at
+midnight was announced at 02:19 as starting in 13h 44m. `liveState()` now
+asks `shiftWindow()` the same question the badge asks, and says the shift
+has ended when it has.
+
 ## What the reference sheet does not ask for
 
 The sheet defines the scope. It does not speak to:

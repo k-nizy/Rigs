@@ -638,6 +638,108 @@ test("it still names when the last push happened, so it can be judged",
         "a manager needs to know how stale it is, not just that it is stale");
     }));
 
+/* The badge was fixed. The rest of the screen was not, and it is drawn
+   from a different clock.
+
+   `liveState()` measures everything as minutes since the top of the
+   shift, modulo a day: `nowRel = (now - start + 1440) % 1440`. There is
+   no date in that, so it cannot tell "before this shift starts" from
+   "after it ended" - and on a sheet whose hours happen to contain the
+   current time of day it reports the shift as RUNNING, a day late, with
+   live countdowns beside a badge that says nothing is scheduled.
+
+   The desk already holds the right answer: `RE.coversAt()` is what the
+   badge asks. These make the rest of the screen ask it too. */
+
+test("a sheet that expired yesterday is not counted down as if it were running",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(EXPIRED, "2026-08-22T09:58:00.000Z") },
+    async desk => {
+      /* 10:37 falls inside 08:00-16:00 as a time of day, so the modular
+         arithmetic calls this shift running. It ended a day ago. */
+      assert.doesNotMatch(desk.$("upnext").textContent, /Next handover in/,
+        "the desk counted down a handover on a shift that ended yesterday, "
+        + "beside a badge saying nothing is scheduled");
+    }));
+
+test("nor described as one that has not started",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(EXPIRED, "2026-08-22T09:58:00.000Z") },
+    async desk => {
+      const banner = desk.$("banner").textContent;
+      assert.doesNotMatch(banner, /starts at/,
+        "a finished shift was announced as one that is about to start: " + banner);
+      assert.doesNotMatch(desk.$("upnext").textContent, /has not started/,
+        "and the line under the board said it had not started");
+    }));
+
+test("it says the shift has ended, which is the one thing that is true",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(EXPIRED, "2026-08-22T09:58:00.000Z") },
+    async desk => {
+      const said = desk.$("banner").textContent + " " + desk.$("upnext").textContent;
+      assert.match(said, /ended/,
+        "the screen never said the shift was over - it is the only honest "
+        + "description of a sheet whose window has closed");
+    }));
+
+test("yesterday's Day sheet read at 02:19 is not a shift about to start",
+  (async () => {
+    /* Exactly what was on screen: the floor had only the 29th, the server
+       handed back the shift that finished most recently, and the desk
+       announced "Day shift starts at 16:00 - in 13h 44m" for one that ran
+       yesterday afternoon and ended at midnight. The badge beside it read
+       "Nothing scheduled for now". */
+    const YESTERDAY_DAY = (() => {
+      global.window = global;
+      require(path.resolve(__dirname, "../packages/engine/rotation-engine.js"));
+      const RE = global.RotationEngine;
+      const groups = [{
+        key: "A", task: "Pushed task",
+        rigs: ["RIG-01", "RIG-02", "RIG-03"],
+        ops: ["Pushed Person 1", "Pushed Person 2", "Pushed Person 3", "Pushed Person 4"],
+      }];
+      const p = RE.buildPlan(
+        { shift: "day", date: "2026-08-22", blockMin: 15, stintBlocks: 3, mode: "hold" }, groups);
+      return groups[0].rigs.map(r => RE.rigPayload(p, r));
+    })();
+
+    const desk = await mountDesk({
+      at: "02:19:00", fetchImpl: servedBy(YESTERDAY_DAY, "2026-08-22T02:35:00.000Z") });
+    try {
+      const banner = desk.$("banner").textContent;
+      assert.doesNotMatch(banner, /starts at/,
+        "a shift that ended at midnight was announced as starting in 13h: " + banner);
+      assert.doesNotMatch(desk.$("upnext").textContent, /has not started/,
+        "and the board said it had not started");
+    } finally { desk.stop(); }
+  }));
+
+test("a sheet whose shift really has not started still says so",
+  (async () => {
+    /* The control, and the case the old arithmetic got right. Tomorrow's
+       Morning sheet, read the evening before. */
+    const AHEAD = (() => {
+      global.window = global;
+      require(path.resolve(__dirname, "../packages/engine/rotation-engine.js"));
+      const RE = global.RotationEngine;
+      const groups = [{
+        key: "A", task: "Pushed task",
+        rigs: ["RIG-01", "RIG-02", "RIG-03"],
+        ops: ["Pushed Person 1", "Pushed Person 2", "Pushed Person 3", "Pushed Person 4"],
+      }];
+      const p = RE.buildPlan(
+        { shift: "morning", date: "2026-08-24", blockMin: 15, stintBlocks: 3, mode: "hold" },
+        groups);
+      return groups[0].rigs.map(r => RE.rigPayload(p, r));
+    })();
+
+    const desk = await mountDesk({
+      at: "18:20:00", fetchImpl: servedBy(AHEAD, "2026-08-23T18:00:00.000Z") });
+    try {
+      assert.match(desk.$("banner").textContent, /starts at 08:00/,
+        "a sheet for tomorrow morning should still count down to it");
+      assert.match(desk.$("upnext").textContent, /has not started/);
+    } finally { desk.stop(); }
+  }));
+
 test("a floor that is genuinely running is still badged as running",
   withDesk({ at: "10:37:22", fetchImpl: servedBy(PUSHED, "2026-08-23T09:58:00.000Z") },
     async desk => {

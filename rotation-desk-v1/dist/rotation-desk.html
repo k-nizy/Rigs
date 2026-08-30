@@ -2631,8 +2631,28 @@ function liveState() {
     absolute: r => (startMin + r) % 1440,
   };
   const nowRel  = relOf.of(nowMin);
-  const running = nowRel < RE.SHIFT_MINUTES;
-  const atRel   = running ? nowRel : 0;   // before the shift: the opening line-up
+
+  /* Whether this sheet is running is a COMPARISON against the window the
+     desk wrote, not a calculation from the clock - the same rule the rig
+     and the server follow, and the same call the Live badge already
+     makes.
+
+     `nowRel` is minutes since the top of the shift *modulo a day*, so it
+     carries no date. Asked whether a shift is running it answers about a
+     time of day: a Morning sheet from yesterday, read at 10:37, came out
+     RUNNING with live countdowns beside a badge saying nothing was
+     scheduled. Asked how long until it starts, it counted forward to a
+     16:00 belonging to a different day, so a Day sheet that ended at
+     midnight was announced at 02:19 as starting in 13h 44m.
+
+     A payload with no window - an older push, before the date travelled
+     - falls back to the old arithmetic, which is all there is to go on. */
+  const win     = RE.shiftWindow(first);
+  const nowMs   = Date.now();
+  const running = win ? (nowMs >= win.start && nowMs < win.end)
+                      : nowRel < RE.SHIFT_MINUTES;
+  const over    = win ? nowMs >= win.end : false;
+  const atRel   = running ? nowRel : 0;   // not running: the opening line-up
 
   /* One clock for the whole page: whole minutes to the moment, less the
    * seconds already spent in this minute. Every countdown on screen is
@@ -2677,7 +2697,10 @@ function liveState() {
     clock: pad2(Math.floor(nowMin / 60) % 24) + ":" + pad2(nowMin % 60),
     shift: first.shift,
     running: running,
+    over: over,
     leftOfShift: RE.SHIFT_MINUTES - nowRel,
+    /* Only meaningful before the shift. Once it is over there is no
+       "starts in" to state, and stating one anyway is the bug. */
     startsIn: (1440 - nowRel) % 1440,
     groups: groups,
     soonest: soonest,
@@ -2688,7 +2711,7 @@ function liveState() {
 /* Who is where - the one thing that decides whether the board has to be
  * rebuilt or merely re-timed. */
 function boardSignature(s) {
-  return s.running + "|" + s.groups.map(g =>
+  return s.running + "|" + s.over + "|" + s.groups.map(g =>
     g.key + ":" + g.task + ":" +
     g.rigs.map(r => r.rigId + "/" + (r.turn ? r.turn.operator.name + ">" + r.turn.theyGoTo : "-")).join(",") +
     "/" + (g.off ? g.off.name + ":" + g.off.kind + ">" + g.off.backTo : "-")
@@ -2849,7 +2872,13 @@ function renderLive() {
 
   const banner = $("banner");
   banner.hidden = s.running;
-  if (!s.running) {
+  if (s.over) {
+    /* Not a countdown. What is on the board is the line-up of a shift
+       that has finished, and saying which one it was is the only thing
+       here that helps somebody work out what to do about it. */
+    banner.textContent = s.shift.label + " shift ended at " + s.shift.end
+      + " on " + s.shift.date + ". This is the last sheet the floor ran.";
+  } else if (!s.running) {
     banner.textContent = s.shift.label + " shift starts at " + s.shift.start
       + " - in " + hm(s.startsIn) + ". Showing the opening line-up.";
   }
@@ -2883,7 +2912,9 @@ function renderLive() {
 function renderNext(s) {
   const up = $("upnext");
   if (!s.running || !s.soonest) {
-    up.textContent = s.running ? "" : "The shift has not started.";
+    up.textContent = s.running ? ""
+      : s.over ? "The shift has ended. Nothing on the floor covers now."
+      : "The shift has not started.";
     return;
   }
   const t = s.soonest.turn;
