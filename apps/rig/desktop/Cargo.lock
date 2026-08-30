@@ -2511,8 +2511,10 @@ dependencies = [
 name = "rig-desktop"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "tauri",
  "tauri-build",
+ "uuid",
 ]
 
 [[package]]

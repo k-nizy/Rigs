@@ -233,11 +233,17 @@ jobs:
     # one hardware milestone and the next - which is the exact profile of
     # the checks this file exists for.
     #
-    # It builds and does not run: opening a window needs a display, and a
-    # webview under Xvfb proves less than it costs. What compiling does
-    # prove is the part that has actually broken - the config parsing, the
-    # icon, and the generated capability schemas, all of which are built
+    # It builds and tests, but does not open a window: a webview under
+    # Xvfb proves less than it costs, and the shell's own job - point at a
+    # URL, bundle no rig assets - is three lines that a screenshot would
+    # not check any better than reading them does.
+    #
+    # Compiling proves the part that has actually broken: the config
+    # parsing, the icon, and the generated capability schemas, all built
     # by `tauri_build` and none of which fail until something builds them.
+    # Testing proves the parts with real behaviour - the adapter to the
+    # teleop layer, its stand-in camera, and the disk journal - none of
+    # which `npm test` or `pytest` can see.
     steps:
       - uses: actions/checkout@v7
 
@@ -257,3 +263,9 @@ jobs:
         run: |
           cargo --version
           cargo build --locked
+
+      # `--locked` again rather than trusting the build above to have
+      # settled the lockfile: a test run that quietly resolved different
+      # crates would be testing something the rig will not run.
+      - name: And it does what it says
+        run: cargo test --locked

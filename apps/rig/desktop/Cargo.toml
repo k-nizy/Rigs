@@ -14,6 +14,25 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 
+# The episode id is the single most important join in the system - the
+# file on the SSD and the row in the ledger name the same thing - so it is
+# a parsed type rather than a string. A malformed id then cannot become a
+# directory name; it is refused at the boundary.
+uuid = "1"
+
+# Free space for Health, which the plan asks for by name. std has no API
+# for it, and reporting a number nobody measured is how a disk-full alert
+# fires on the wrong rig.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# v4 only for the tests, which mint ids the way the rig does. The shell
+# itself never generates one - it is handed the id the page minted at
+# pedal-press - so the binary does not carry a random number generator it
+# has no use for.
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }
+
 # A kiosk that panics should not also be slow to notice. Nothing here is
 # hot, so optimise the release build for size and let it abort rather than
 # unwind into a half-lit screen.
