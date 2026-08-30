@@ -8,5 +8,10 @@
 //! it is talking to, which is the whole point - on hardware day one file
 //! is added and the rest of this tree does not notice.
 
+//! `journal` is the disk half of the outbox: the synchronous, fsynced
+//! write that the browser's IndexedDB cannot offer, and the reason an
+//! event the page has called safe survives a power cut.
+
+pub mod journal;
 pub mod mock_roda;
 pub mod roda;
