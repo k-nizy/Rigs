@@ -389,7 +389,17 @@ async def health(
     """
     body = {
         "ok": True,
-        "database": s.safe_url(),
+        # No connection string. It used to name the host, the port, the
+        # database and the user here, masked only in the password - and
+        # this route answers anybody who can reach the port. Masking the
+        # password never made the rest useful to a stranger.
+        #
+        # Nothing consumed it. The load balancer reads `ok` and the
+        # status; the rig reads `rigIdentity`; `tools.preflight` reads
+        # the settings directly and prints it on the box, which is where
+        # it belongs. The switches below stay: a caller can learn each of
+        # them by probing anyway - try a push, count a few refusals - and
+        # the rig depends on reading one of them.
         "rigAuth": "on" if s.auth_is_on else "off",
         # Whether this service tells rigs apart at all. The rig reads it:
         # a floor that identifies its rigs and could not identify *this*

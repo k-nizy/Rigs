@@ -13,6 +13,7 @@ eventually it is. The tokens and the connection string must not be in
 one, and a 500 must not hand a stack trace to whoever caused it.
 """
 
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -150,21 +151,32 @@ async def test_a_refused_token_is_never_written_down(engine, caplog):
     assert RIG in written, "the line does not say which rig, so it is not actionable"
 
 
-async def test_the_database_password_is_never_in_the_health_reply(engine):
-    """The property is that no password is in the reply, not that no `@`
-    is. Those are not the same thing: `postgres@host/db` is a URL with a
-    username and no password at all, which is what a CI service container
-    on trust auth produces, and this used to call that a leak."""
-    from urllib.parse import urlsplit
+async def test_no_connection_string_is_in_the_health_reply(engine):
+    """Stronger than the property this used to assert.
 
+    It used to read `database` out of the reply and check the password
+    had been masked. Masking was the wrong bar: the field still named the
+    host, the port, the database and the user, to anybody who could reach
+    the port, and this route answers before anyone has proved anything.
+
+    Nothing consumed it - the load balancer reads `ok` and the status
+    code, the rig reads `rigIdentity`, and preflight reads the settings
+    directly and prints it on the box. So it is gone, and what is
+    asserted now is that no connection string reaches the body at all,
+    masked or otherwise.
+    """
     c = await serving()
     async with c:
         r = await c.get("/api/health")
-    url = r.json()["database"]
+    body = r.json()
 
-    password = urlsplit(url).password
-    assert password in (None, "", "***"), (
-        f"a password reached a response body: {url}")
+    assert "database" not in body, (
+        f"the connection string is back in the health reply: {body['database']}")
+    text = json.dumps(body)
+    for smell in ("postgresql", "asyncpg", "://", "5432"):
+        assert smell not in text, (
+            f"something that looks like a connection string reached the "
+            f"reply ({smell!r}): {text}")
 
 
 async def test_a_password_that_is_set_is_masked(engine):
