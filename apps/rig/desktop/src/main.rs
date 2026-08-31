@@ -38,7 +38,9 @@
 // Anyone tempted to add `RIG_ID` beside this should read the paragraph
 // above first.
 
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use rig_desktop::bridge;
+use rig_desktop::journal::Journal;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
 /// Where the floor serves the rig page, e.g.
 /// `http://floor.internal/apps/rig/`. `DEPLOY.md` already says the kiosk
@@ -64,18 +66,40 @@ fn main() {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty());
 
+            // `remote` is the address actually loaded, not merely the one
+            // configured: an unparseable RIG_URL falls back to the local
+            // page, and trusting a URL the webview never opened would
+            // grant the journal to an origin nobody is looking at.
+            let mut remote: Option<String> = None;
             let target = match configured.as_deref().map(str::parse) {
-                Some(Ok(url)) => WebviewUrl::External(url),
+                Some(Ok(url)) => {
+                    remote = configured.clone();
+                    WebviewUrl::External(url)
+                }
                 _ => WebviewUrl::App("index.html".into()),
             };
+
+            // The disk half of the outbox. Opened before the window, so a
+            // page cannot call into a journal that is not there yet.
+            let dir = bridge::journal_dir();
+            app.manage(Journal::open(&dir)?);
+            bridge::allow_remote(app.handle(), remote.as_deref())?;
 
             WebviewWindowBuilder::new(app, "rig", target)
                 .title("Rig")
                 .fullscreen(std::env::var_os(WINDOWED).is_none())
+                .initialization_script(bridge::init_script())
                 .build()?;
 
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            bridge::rig_journal_load,
+            bridge::rig_journal_append_event,
+            bridge::rig_journal_forget_events,
+            bridge::rig_journal_put_stint,
+            bridge::rig_journal_forget_video,
+        ])
         .run(tauri::generate_context!())
         .expect("the rig shell could not start");
 }

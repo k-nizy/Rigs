@@ -12,6 +12,11 @@
 //! write that the browser's IndexedDB cannot offer, and the reason an
 //! event the page has called safe survives a power cut.
 
+//! `bridge` is how the page reaches the journal: the commands, the
+//! runtime capability that trusts exactly the configured floor, and the
+//! `window.RIG_JOURNAL` object `rig.js` already looks for.
+
+pub mod bridge;
 pub mod journal;
 pub mod mock_roda;
 pub mod roda;
