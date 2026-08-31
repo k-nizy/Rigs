@@ -19,4 +19,6 @@ pub const COMMANDS: &[&str] = &[
     "rig_journal_forget_events",
     "rig_journal_put_stint",
     "rig_journal_forget_video",
+    "rig_journal_put_video",
+    "rig_journal_read_video",
 ];

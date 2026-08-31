@@ -99,6 +99,8 @@ fn main() {
             bridge::rig_journal_forget_events,
             bridge::rig_journal_put_stint,
             bridge::rig_journal_forget_video,
+            bridge::rig_journal_put_video,
+            bridge::rig_journal_read_video,
         ])
         .run(tauri::generate_context!())
         .expect("the rig shell could not start");

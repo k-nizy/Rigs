@@ -44,7 +44,7 @@
 use std::path::PathBuf;
 
 use serde_json::{json, Value};
-use tauri::ipc::CapabilityBuilder;
+use tauri::ipc::{CapabilityBuilder, InvokeBody, Request, Response};
 use tauri::{Manager, State};
 
 use crate::journal::Journal;
@@ -103,6 +103,69 @@ pub fn rig_journal_put_stint(row: Value, journal: State<'_, Journal>) -> Reply<(
 #[tauri::command]
 pub fn rig_journal_forget_video(key: String, journal: State<'_, Journal>) -> Reply<()> {
     journal.forget_video(&key).map_err(oops)
+}
+
+/// Where a take's metadata rides while its bytes are the body.
+const VIDEO_META: &str = "x-rig-video";
+
+/// A take, and the bytes of it.
+///
+/// The only command here that is not JSON. A take is tens of megabytes,
+/// and Tauri's JSON channel would carry it as an array of numbers - one
+/// decimal string per byte on the way out, one heap-allocated `Value`
+/// per byte on the way in. The raw channel hands over the buffer the
+/// recorder already had.
+///
+/// So the bytes are the body and the metadata travels in a header. That
+/// header is plain JSON, escaped to ASCII by the page: a header value
+/// may carry only visible ASCII, and JSON's own `\uXXXX` escape is both
+/// ASCII and understood by serde_json without being asked.
+#[tauri::command]
+pub fn rig_journal_put_video(request: Request<'_>, journal: State<'_, Journal>) -> Reply<()> {
+    let meta = video_meta(
+        request
+            .headers()
+            .get(VIDEO_META)
+            .and_then(|h| h.to_str().ok()),
+    )?;
+    let bytes = match request.body() {
+        InvokeBody::Raw(b) => b.as_slice(),
+        // JSON here means the take was sent the ordinary way. Refusing is
+        // the point: accepting it would write a file of decimal digits
+        // and then tell the operator the take was safe.
+        InvokeBody::Json(_) => return Err("a video must be sent as bytes, not JSON".into()),
+    };
+    journal.put_video(&meta, bytes).map_err(oops)
+}
+
+/// The bytes of one held take, on demand.
+///
+/// `load` lists takes without their bytes, so a boot with a full queue
+/// costs a directory read rather than several hundred megabytes. The
+/// page asks for a take when the uploader reaches it, which is what the
+/// `blob` handle in `init_script` is.
+#[tauri::command]
+pub fn rig_journal_read_video(key: String, journal: State<'_, Journal>) -> Reply<Response> {
+    journal.read_video(&key).map(Response::new).map_err(oops)
+}
+
+/// The metadata that came with a take, out of its header.
+///
+/// `key` and `rigId` are checked here rather than left to the journal
+/// because they are the two that make a take findable again: without a
+/// key nothing can name the file, and without a rigId `load` will never
+/// hand it back. A take on disk that no boot will offer to upload is
+/// indistinguishable from one that was never recorded.
+fn video_meta(header: Option<&str>) -> Reply<Value> {
+    let text = header.ok_or("a video arrived with no metadata")?;
+    let meta: Value =
+        serde_json::from_str(text).map_err(|e| format!("a video's metadata is not JSON: {e}"))?;
+    for field in ["key", "rigId"] {
+        if meta.get(field).and_then(Value::as_str).is_none() {
+            return Err(format!("a video's metadata has no {field}"));
+        }
+    }
+    Ok(meta)
 }
 
 // The commands the shell exposes, named once and shared with `build.rs`.
@@ -176,28 +239,134 @@ pub fn init_script() -> String {
     // and has no bundler to import one with.
     r#"
 (function () {
-  var call = function (cmd, args) {
-    return window.__TAURI_INTERNALS__.invoke(cmd, args || {});
-  };
+  var internals = window.__TAURI_INTERNALS__;
+  var call = function (cmd, args) { return internals.invoke(cmd, args || {}); };
+
+  /* A header value may carry only visible ASCII. JSON's own \uXXXX escape
+     is ASCII and serde_json reads it back without being asked, so
+     escaping the rest costs nothing and settles the question of what a
+     service might one day put in a rig's name. */
+  function headerJson(o) {
+    return JSON.stringify(o).replace(/[\u007f-\uffff]/g, function (c) {
+      return "\\u" + ("000" + c.charCodeAt(0).toString(16)).slice(-4);
+    });
+  }
+
+  /* The bytes of a held take, fetched when the uploader reaches it rather
+     than at boot - a full queue is several hundred megabytes and none of
+     it is needed yet. rig.js checks that `blob` is there and later awaits
+     `blob.arrayBuffer()`; those are the only two things it does with one,
+     so this is the whole contract. */
+  function heldBytes(key) {
+    return {
+      arrayBuffer: function () { return call("rig_journal_read_video", { key: key }); }
+    };
+  }
+
   window.RIG_JOURNAL = {
     durable: true,
     load: function (rigId) {
       return call("rig_journal_load", { rigId: rigId }).then(function (h) {
-        return { events: h.events || [], videos: h.videos || [], stint: h.stint || null };
+        var videos = (h.videos || []).map(function (v) {
+          return { key: v.key, rigId: v.rigId, episodeId: v.episodeId,
+                   camera: v.camera, blob: heldBytes(v.key) };
+        });
+        return { events: h.events || [], videos: videos, stint: h.stint || null };
       });
     },
     appendEvent: function (ev) { return call("rig_journal_append_event", { event: ev }); },
     forgetEvents: function (ids) { return call("rig_journal_forget_events", { ids: ids }); },
     putStint: function (row) { return call("rig_journal_put_stint", { row: row }); },
-    forgetVideo: function (key) { return call("rig_journal_forget_video", { key: key }); },
-    /* Not yet on disk. Video is tens of megabytes a take and wants the
-       raw request body rather than a JSON array of numbers, so it is a
-       separate piece of work. Until then the page keeps the take in
-       memory for this boot, which is what it did before this file
-       existed - no worse, and it must not silently claim otherwise. */
-    putVideo: function () { return Promise.resolve(); }
+    putVideo: function (item) {
+      /* Named rather than copied, so what lands on disk is a decision
+         rather than whatever the caller happened to pass - and so the
+         blob is left out of it, because the blob is the body. */
+      var meta = { key: item.key, rigId: item.rigId,
+                   episodeId: item.episodeId, camera: item.camera };
+      return item.blob.arrayBuffer().then(function (buf) {
+        return internals.invoke("rig_journal_put_video", buf,
+                                { headers: { "x-rig-video": headerJson(meta) } });
+      });
+    },
+    forgetVideo: function (key) { return call("rig_journal_forget_video", { key: key }); }
   };
 })();
 "#
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --------------------------------------------------------- origins
+
+    #[test]
+    fn an_address_is_trusted_as_an_origin_not_as_a_path() {
+        // The bug this pins: granting the configured URL verbatim grants
+        // nothing at all, because a request arrives carrying its origin
+        // and never its path. Every command was refused.
+        assert_eq!(
+            origins("http://floor.internal/apps/rig/"),
+            vec!["http://floor.internal/*", "http://floor.internal"]
+        );
+    }
+
+    #[test]
+    fn a_port_is_part_of_the_origin() {
+        assert_eq!(
+            origins("http://127.0.0.1:8765/apps/rig/index.html"),
+            vec!["http://127.0.0.1:8765/*", "http://127.0.0.1:8765"]
+        );
+    }
+
+    #[test]
+    fn an_opaque_origin_is_trusted_with_nothing() {
+        // file: and data: both serialise to "null", so trusting that one
+        // string would trust every opaque origin at once.
+        assert!(origins("file:///home/rig/index.html").is_empty());
+        assert!(origins("data:text/html,<b>hi</b>").is_empty());
+        assert!(origins("not a url").is_empty());
+    }
+
+    // ------------------------------------------------------ video_meta
+
+    fn meta(json: &str) -> Reply<Value> {
+        video_meta(Some(json))
+    }
+
+    #[test]
+    fn a_takes_metadata_arrives_as_json_in_a_header() {
+        let m = meta(r#"{"key":"ep-1/wrist-l","rigId":"RIG-03","camera":"wrist-l"}"#).unwrap();
+        assert_eq!(m["key"], "ep-1/wrist-l");
+        assert_eq!(m["rigId"], "RIG-03");
+        assert_eq!(m["camera"], "wrist-l");
+    }
+
+    #[test]
+    fn the_pages_ascii_escaping_survives_the_trip() {
+        // The page escapes everything above 0x7e, because a header value
+        // may not carry it. serde_json puts it back without being asked,
+        // which is the whole reason that escape was the one chosen.
+        let m = meta(r#"{"key":"ep-1/caf\u00e9","rigId":"RIG-\u00d81"}"#).unwrap();
+        assert_eq!(m["key"], "ep-1/café");
+        assert_eq!(m["rigId"], "RIG-Ø1");
+    }
+
+    #[test]
+    fn a_take_nothing_could_name_again_is_refused() {
+        // Either of these would write a file that no later boot offers to
+        // upload - which from every angle looks exactly like a take that
+        // was never recorded.
+        assert!(meta(r#"{"rigId":"RIG-03"}"#).is_err());
+        assert!(meta(r#"{"key":"ep-1/wrist-l"}"#).is_err());
+        // A key that is not a string is not a key.
+        assert!(meta(r#"{"key":7,"rigId":"RIG-03"}"#).is_err());
+    }
+
+    #[test]
+    fn metadata_that_is_not_json_is_refused_rather_than_guessed() {
+        assert!(meta("ep-1/wrist-l").is_err());
+        assert!(video_meta(None).is_err());
+    }
 }
