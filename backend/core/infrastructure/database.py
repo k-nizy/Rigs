@@ -47,6 +47,38 @@ def sessionmaker() -> async_sessionmaker[AsyncSession]:
     return _sessionmaker
 
 
+def schema_connect_args(schema: str) -> dict:
+    """How a connection is confined to one schema, in the one place that
+    decides it. `configure` below and the test fixtures both use this.
+
+    The path names that schema and nothing else. It used to end in
+    `,public`, and that one word was the difference between a run being
+    isolated and a run being *mostly* isolated.
+
+    SQLAlchemy emits unqualified table names, so Postgres resolves each
+    one by walking this path in order. `CREATE TABLE accounts` landed in
+    the run schema, first on the path - but `DROP TABLE accounts` walked
+    the same path, and on the first test of a run, while that schema is
+    still empty, it walked straight past and found `public.accounts`.
+    The suite dropped a table it had never created.
+
+    Not hypothetical: running a service against `rigs_test` is the
+    documented way to do local end-to-end work without minting an
+    account, and a suite started beside one deleted its tables out from
+    under it. It looked like the service breaking.
+
+    With one name on the path there is nowhere else for an unqualified
+    name to go, so confinement is a constraint rather than a habit.
+    Nothing needed `public` - the UUID defaults resolve from
+    `pg_catalog`, which is always searched - and if something ever does,
+    it fails loudly here rather than quietly somewhere else.
+    """
+    # Set on the connection rather than per statement: SQLAlchemy emits
+    # unqualified names, so the search path is what decides where CREATE
+    # TABLE and every later query land.
+    return {"server_settings": {"search_path": schema}}
+
+
 def configure(url: str, schema: str | None = None) -> None:
     """Point every future session at a different database. Tests call this;
     nothing in the request path does.
@@ -65,10 +97,7 @@ def configure(url: str, schema: str | None = None) -> None:
     global _engine, _sessionmaker
     kw = {}
     if schema:
-        # Set on the connection rather than per statement: SQLAlchemy
-        # emits unqualified names, so the search path is what decides
-        # where CREATE TABLE and every later query land.
-        kw["connect_args"] = {"server_settings": {"search_path": f"{schema},public"}}
+        kw["connect_args"] = schema_connect_args(schema)
     _engine = create_async_engine(url, future=True, **kw)
     _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
 
