@@ -229,7 +229,8 @@ never receives a floor credential.
 
 ## 8. Each rig machine
 
-Nothing is copied to the rig. A kiosk browser, pointed at the server:
+Nothing is copied to the rig **while the kiosk is a browser**. A kiosk
+browser, pointed at the server:
 
 ```sh
 chromium --kiosk --noerrdialogs --disable-infobars \
@@ -254,6 +255,40 @@ exactly what one very busy rig looks like.
 So the server decides. `/apps/rig/rig-config.js` is proxied to the
 service, which answers per caller from `RIG_ADDRESSES` and hands back
 that rig's id and its own token - never another's.
+
+### When the Tauri shell replaces the browser
+
+Not yet - `apps/rig/desktop/` builds and is tested, and this floor still
+runs the chromium kiosk above. When it does land, two things go on each
+rig and neither of them comes from `deploy/systemd/`, which is the
+server's directory and is copied to the server wholesale:
+
+```sh
+sudo useradd --system --create-home --shell /usr/sbin/nologin rig
+sudo install -m755 rig-desktop rig-uploader /usr/bin/
+sudo install -d -m750 /etc/rigs
+sudo tee /etc/rigs/rig.env <<'ENV'
+RIG_URL=http://<server>/apps/rig/
+ENV
+sudo cp /srv/rigs/deploy/systemd-rig/*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now rig-uploader
+```
+
+That env file carries the one deployment fact both of them read, and the
+unit will refuse to start without it - which is the right way round, since
+a rig with no floor address has nowhere to send anything.
+
+The same address on all twelve machines - it is not an identity. Which
+rig this is still comes from the address the request arrives on, exactly
+as it does for the browser kiosk above.
+
+The uploader is a separate process on purpose. Uploading used to happen
+inside the page, so a reload or a crashed webview stopped it - the work
+stayed safe on disk and nothing was carrying it. This one has no window:
+`ldd` on it names no GTK and no WebKit, so it keeps running when the
+graphical session does not. It writes only `/var/lib/rig`, which its
+unit creates with `StateDirectory`.
 
 A machine the floor cannot place is told it is nobody, and the rig then
 **refuses to work**: it shows "This rig has no identity", names the

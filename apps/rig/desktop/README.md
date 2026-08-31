@@ -87,9 +87,9 @@ they depended on each other:
 - **the uploader as its own process** (`src/upload.rs`,
   `src/bin/rig-uploader.rs`) — a second binary that reads the journal and
   never writes to it, so the shell stays the only writer and no locking
-  is needed. `deploy/systemd/rig-uploader.service` is its unit, and it is
-  the only unit in that directory that installs on a rig rather than on
-  the server.
+  is needed. `deploy/systemd-rig/rig-uploader.service` is its unit, in a
+  directory of its own because `deploy/systemd/` is copied to the floor
+  server wholesale and a rig's unit has no business there.
 
 **The pedals are the part this cannot answer.** Today they are the keys
 `1`/`2`/`3` and the webview handles them. On a rig they are a pedal board
