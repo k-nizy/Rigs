@@ -445,6 +445,46 @@ mod tests {
         assert_eq!(id, Identity::default());
     }
 
+    #[test]
+    fn the_real_renderers_output_parses() {
+        // Copied verbatim out of services/rigs/identity.py's config_js,
+        // comment block and all. The stub in the harness only imitates
+        // this; if the service changes the file it renders, this is the
+        // test that should notice rather than a rig on a floor.
+        let placed = r#"/* Served by the rigs service, for this machine only. Do not copy
+   it to another rig: the token names one rig and is refused for
+   any other, which is what stops one machine attributing work
+   across the floor. */
+window.RIG_ID = "RIG-03";
+window.RIG_TOKEN = "t-real-token";
+window.RIG_SEEN_AS = "10.0.0.5";
+"#;
+        assert_eq!(
+            parse_config_js(placed),
+            Identity {
+                rig_id: Some("RIG-03".into()),
+                token: Some("t-real-token".into()),
+                seen_as: Some("10.0.0.5".into()),
+            }
+        );
+
+        let nobody = r#"/* Served by the rigs service. This machine is not one of the
+   rigs on the floor: no RIG_ADDRESSES entry matches the address
+   it called from, 10.0.0.99.
+
+   Nothing is set on purpose. The rig reads that as having no
+   identity and refuses to work rather than filing takes under
+   somebody else's name. */
+window.RIG_ID = null;
+window.RIG_TOKEN = null;
+window.RIG_SEEN_AS = "10.0.0.99";
+"#;
+        let id = parse_config_js(nobody);
+        assert_eq!(id.rig_id, None, "a machine with no identity was given one");
+        assert_eq!(id.token, None);
+        assert_eq!(id.seen_as, Some("10.0.0.99".into()));
+    }
+
     // ----------------------------------------------------------- urls
 
     #[test]
