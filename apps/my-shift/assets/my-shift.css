@@ -483,3 +483,41 @@ body {
   .now, .next, .tl-b { break-inside: avoid; }
   .now-left { font-size: 2rem; }
 }
+
+/* =================================================================
+ * Change password
+ *
+ * A modal, so a short errand does not take the day off the screen.
+ * ================================================================= */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--s4);
+  background: rgba(0, 0, 0, 0.45);
+  overflow-y: auto;
+}
+
+/* `hidden` is display:block by default, which the display:flex above
+   outranks - the exact bug this app already had once, where six
+   elements drew as slivers while claiming to be hidden. Stated here
+   rather than left to the cascade. */
+.modal[hidden] { display: none; }
+
+.modal .card { margin: auto; max-width: 380px; width: 100%; }
+
+.modal-buttons { display: flex; gap: var(--s2); }
+.modal-buttons .btn { flex: 1; }
+
+.card-ok {
+  font-size: 0.82rem; color: var(--work);
+  background: color-mix(in srgb, var(--work) 12%, transparent);
+  border: 1px solid var(--work); border-radius: var(--radius-sm);
+  padding: 9px 11px; margin-bottom: var(--s3);
+}
+
+@media print { .modal { display: none !important; } }

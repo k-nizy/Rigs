@@ -41,7 +41,9 @@ from sqlalchemy import select                                    # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 from core.domains.accounts.model import Account, MANAGER, OPERATOR  # noqa: E402
-from core.domains.accounts.passwords import hash_password        # noqa: E402
+from core.domains.accounts.passwords import (                    # noqa: E402
+    hash_password, password_complaint,
+)
 from core.domains.accounts.repository import (                   # noqa: E402
     AccountRepository, AccountSessionRepository, normalise_email,
 )
@@ -49,17 +51,32 @@ from core.infrastructure.config import get_settings              # noqa: E402
 
 
 def _password(given: str | None, prompt: bool) -> tuple[str, bool]:
-    """The password to set, and whether it has to be shown afterwards."""
+    """The password to set, and whether it has to be shown afterwards.
+
+    The rule is checked on the password, not on the way it was typed.
+    `--password` used to skip it entirely - the length test sat inside
+    the interactive branch - so the one path a script would use was the
+    one path with no rule at all.
+    """
     if given:
+        complaint = password_complaint(given)
+        if complaint:
+            raise SystemExit(complaint)
         return given, False
     if prompt:
         first = getpass("password: ")
         if first != getpass("again: "):
             raise SystemExit("passwords did not match")
-        if len(first) < 12:
-            raise SystemExit("too short - twelve characters at the very least")
+        complaint = password_complaint(first)
+        if complaint:
+            raise SystemExit(complaint)
         return first, False
-    return secrets.token_urlsafe(12), True
+    # Generated, so it is long and random by construction rather than by
+    # check - but asserted anyway, so raising the minimum past what this
+    # produces fails here instead of minting accounts that breach it.
+    made = secrets.token_urlsafe(12)
+    assert password_complaint(made) is None, "the generated password breaks the rule"
+    return made, True
 
 
 async def _run(args) -> int:

@@ -34,9 +34,10 @@ from services.rigs.auth import (
     desk_auth, desk_read_auth, rig_auth, rig_auth_for_key, rig_rate_limit,
 )
 from services.rigs.people import (
-    REFUSED, SESSION_COOKIE, clear_session_cookies, current_account,
-    issue_session_cookies, lockout, lockout_key, login_key, login_limiter,
-    require_account, require_csrf, require_manager, require_operator, sign_in,
+    REFUSED, SESSION_COOKIE, PasswordRefused, change_password,
+    clear_session_cookies, current_account, issue_session_cookies, lockout,
+    lockout_key, login_key, login_limiter, require_account, require_csrf,
+    require_manager, require_operator, sign_in,
 )
 from services.rigs.identity import caller_address, config_js, rig_at
 from core.infrastructure.storage import Storage, get_storage
@@ -785,6 +786,67 @@ async def logout(
         await session.commit()
     clear_session_cookies(response, settings)
     return {"signedOut": bool(ended)}
+
+
+class ChangePasswordIn(BaseModel):
+    currentPassword: str = Field(min_length=1, max_length=1024)
+    newPassword: str = Field(min_length=1, max_length=1024)
+
+
+@router.post("/auth/password", response_model=WhoOut, tags=["people"],
+             summary="Change your own password")
+async def change_own_password(
+    body: ChangePasswordIn, request: Request, response: Response,
+    account=Depends(require_account),
+    _csrf: None = Depends(require_csrf),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> WhoOut:
+    """Set a new password for the account this cookie names.
+
+    Either role. An operator has an account and a password like anybody
+    else, and a screen that could only be fixed by asking a manager is
+    the thing this route exists to remove.
+
+    The current password is required despite the session - see
+    `change_password` for why a cookie is not enough on a floor where
+    screens are left open.
+
+    Throttled with the same lockout as login, keyed the same way. This is
+    a guessing oracle against a known account: without it, an open tab
+    would let somebody work through a list of likely passwords at the
+    speed of the network, and the one route that already knows who you
+    are is a poor place to leave that open. A success clears the count,
+    so somebody who mistypes their old password twice and then gets it
+    right is not left waiting.
+    """
+    key = lockout_key(request, account.email)
+    wait = lockout(settings).check(key)
+    if wait > 0:
+        raise HTTPException(
+            status_code=429, detail="too many attempts",
+            headers={"Retry-After": str(max(1, int(wait + 0.5)))},
+        )
+
+    try:
+        token = await change_password(
+            session, account, body.currentPassword, body.newPassword, settings)
+    except PasswordRefused as refused:
+        # Only a wrong *current* password counts towards the lockout. A
+        # rejected new one is the person getting the rule wrong, not
+        # somebody guessing, and locking them out for it would punish the
+        # one thing this route is for.
+        if "current password" in str(refused):
+            lockout(settings).failed(key)
+        raise HTTPException(status_code=400, detail=str(refused))
+
+    lockout(settings).succeeded(key)
+    await session.commit()
+    # A new cookie, because every session including this one was just
+    # revoked. Without this the person is signed out by their own
+    # password change, which is how a flow stops being used.
+    csrf = issue_session_cookies(response, token, settings)
+    return _who(account, csrf)
 
 
 @router.get("/auth/me", response_model=WhoOut, tags=["people"],

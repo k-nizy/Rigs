@@ -1251,6 +1251,63 @@ async function signOut() {
   applyGate();
 }
 
+/* ===================================================================
+ * Changing your own password
+ *
+ * The service is the gate here as everywhere else - it requires the
+ * current password and applies the length rule. This box exists so
+ * somebody finds out before they submit rather than after, and so a
+ * manager does not have to ask another manager to re-mint them.
+ * =================================================================== */
+
+function openPasswd() {
+  ["pw-current", "pw-new", "pw-again"].forEach(id => { $(id).value = ""; });
+  $("passwd-error").hidden = true;
+  $("passwd-ok").hidden = true;
+  $("passwd-modal").hidden = false;
+  $("pw-current").focus();
+}
+
+function closePasswd() {
+  /* Emptied on the way out, not merely hidden. Three password fields
+     left populated behind a hidden panel is the same unattended-screen
+     problem the sign-out path above already deals with. */
+  ["pw-current", "pw-new", "pw-again"].forEach(id => { $(id).value = ""; });
+  $("passwd-modal").hidden = true;
+}
+
+async function savePasswd(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn = $("btn-passwd-save");
+  const err = $("passwd-error"), ok = $("passwd-ok");
+  err.hidden = true;
+  ok.hidden = true;
+
+  /* The one check worth making here rather than at the service: it
+     cannot know what the person meant to type twice. Everything else -
+     the current password, the length - is the service's to answer, and
+     asking it means one rule rather than two that can disagree. */
+  if ($("pw-new").value !== $("pw-again").value) {
+    err.textContent = "The two new passwords are not the same.";
+    err.hidden = false;
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    const out = await S.changePassword($("pw-current").value, $("pw-new").value);
+    if (!out.ok) {
+      err.textContent = out.message;
+      err.hidden = false;
+      return;
+    }
+    ["pw-current", "pw-new", "pw-again"].forEach(id => { $(id).value = ""; });
+    ok.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* Draw the desk for somebody who is allowed it. Separate from boot so
    signing in does not have to reload the page. */
 function openTheDesk() {
@@ -1296,6 +1353,18 @@ $("btn-refresh").addEventListener("click", () => loadFloor(true));
 $("signin-form").addEventListener("submit", signIn);
 $("btn-signout").addEventListener("click", signOut);
 $("btn-denied-out").addEventListener("click", signOut);
+$("btn-passwd").addEventListener("click", openPasswd);
+$("btn-passwd-cancel").addEventListener("click", closePasswd);
+$("passwd-form").addEventListener("submit", savePasswd);
+/* Escape closes it, and a click on the backdrop does too. A modal that
+   can only be dismissed by finding the right button is one people close
+   by reloading the page, which on the desk costs an unsaved plan. */
+$("passwd-modal").addEventListener("click", e => {
+  if (e.target === $("passwd-modal")) closePasswd();
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !$("passwd-modal").hidden) closePasswd();
+});
 
 /* Ask who is at the desk before drawing any of it. Everything below the
    masthead waits on that answer - a screen that renders the floor and

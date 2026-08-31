@@ -44,6 +44,11 @@ class El {
     };
   }
   appendChild(n) { this.children.push(n); return n; }
+  /* Real elements have these. A stub without them turns "the script
+     moved the caret" into "the whole screen threw", which is a failure
+     the browser would never have had. */
+  focus() {}
+  blur() {}
   setAttribute(k, v) { this.attrs[k] = String(v); }
   getAttribute(k) { return this.attrs[k]; }
   addEventListener(type, fn) { (this._on[type] = this._on[type] || []).push(fn); }
@@ -110,6 +115,18 @@ async function mountDesk(opts) {
   const mk = id => { const e = new El("div"); e.attrs.id = id; byId[id] = e; return e; };
   (html.match(/id="([^"]+)"/g) || []).forEach(m => mk(m.slice(4, -1)));
 
+  /* Start hidden if the page says hidden.
+   *
+   * Everything used to mount visible whatever the markup said, so a
+   * panel the page ships closed read as open until some boot path
+   * happened to close it - and a panel that nothing closes, because the
+   * markup already had, read as open forever. That is the harness
+   * disagreeing with the page about the page's own initial state. */
+  (html.match(/<[a-zA-Z][^>]*>/g) || []).forEach(tag => {
+    const id = (tag.match(/\bid="([^"]+)"/) || [])[1];
+    if (id && byId[id] && /\shidden(\s|>|=)/.test(tag)) byId[id].hidden = true;
+  });
+
   // the buttons the page ships with, in the order it ships them
   (html.match(/data-mode="(\w+)"/g) || []).forEach(m => {
     const b = new El("button");
@@ -132,11 +149,25 @@ async function mountDesk(opts) {
   global.Date = FakeDate;
   global.setInterval = (fn, ms) => { const id = realSetInterval(fn, ms); intervals.push(id); return id; };
   global.setTimeout  = (fn, ms) => { const id = realSetTimeout(fn, ms);  timeouts.push(id);  return id; };
+  /* Document-level listeners, because a real document has them and the
+     desk uses one for the Escape key. Without this the script threw at
+     the top level and took the whole screen with it - which is what a
+     browser missing anything the script assumes would also do, so the
+     stub having the method is the accurate stand-in rather than a
+     convenience. Kept addressable so a test can send a key. */
+  const docListeners = {};
   global.document = {
     createElement: t => new El(t),
     getElementById: id => byId[id] || (missingIds.push(id), mk(id)),
     body: new El("body"),
+    addEventListener: (type, fn) => {
+      (docListeners[type] = docListeners[type] || []).push(fn);
+    },
+    removeEventListener: (type, fn) => {
+      docListeners[type] = (docListeners[type] || []).filter(f => f !== fn);
+    },
   };
+  global.__docListeners = docListeners;
   global.window = global;
   global.location = { search: opts.search || "", hash: "" };
   global.fetch = opts.fetchImpl || (() => Promise.reject(new Error("no server")));
@@ -168,6 +199,11 @@ async function mountDesk(opts) {
       (node._on[type] || []).forEach(fn => fn({ target: node }));
     },
     click(node) { this.fire(node, "click"); },
+
+    /* A key press at the document, the way a real one arrives. */
+    key(name) {
+      (docListeners["keydown"] || []).forEach(fn => fn({ key: name }));
+    },
 
     mode(name) { this.click(byId["modes"].children.find(b => b.dataset.mode === name)); },
 

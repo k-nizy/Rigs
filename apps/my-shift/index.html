@@ -41,10 +41,46 @@
       <div class="who" id="who" hidden>
         <span class="who-name" id="who-name"></span>
         <span class="who-role" id="who-role"></span>
+        <button type="button" class="who-out" id="btn-passwd">Change password</button>
         <button type="button" class="who-out" id="btn-signout">Sign out</button>
       </div>
     </div>
   </header>
+
+  <!-- =============================================================
+       CHANGE PASSWORD - an operator has an account like anybody
+       else, and a password they could only get changed by asking a
+       manager is the thing this removes.
+
+       The current password is asked for even though this page is
+       already signed in: a cookie says this browser signed in once,
+       not who is at the keyboard now.
+       ============================================================= -->
+  <div class="modal" id="passwd-modal" hidden>
+    <form class="card" id="passwd-form" autocomplete="off">
+      <h2 class="card-title">Change your password</h2>
+      <p class="card-sub">Signing you out everywhere else, but not here.</p>
+
+      <p class="card-error" id="passwd-error" hidden></p>
+      <p class="card-ok" id="passwd-ok" hidden>Password changed.</p>
+
+      <label class="field-label" for="pw-current">Current password</label>
+      <input type="password" id="pw-current" autocomplete="current-password" required>
+
+      <label class="field-label" for="pw-new">New password</label>
+      <input type="password" id="pw-new" autocomplete="new-password" required>
+
+      <label class="field-label" for="pw-again">New password again</label>
+      <input type="password" id="pw-again" autocomplete="new-password" required>
+
+      <div class="modal-buttons">
+        <button type="submit" class="btn" id="btn-passwd-save">Change it</button>
+        <button type="button" class="btn ghost" id="btn-passwd-cancel">Cancel</button>
+      </div>
+      <p class="card-foot">Twelve characters at the very least. A phrase beats
+        a short scramble.</p>
+    </form>
+  </div>
 
   <!-- ============================================================= -->
   <main id="view-signin" hidden>

@@ -1210,7 +1210,47 @@ pre.json .n { color: var(--accent); }
 .denied-who { font-size: 0.9rem; color: var(--ink); margin: 0 0 6px; }
 .denied-sub { font-size: 0.82rem; color: var(--ink-2); margin: 0 0 4px; }
 
-@media print { .who, #view-signin, #view-denied { display: none !important; } }
+/* =================================================================
+ * Change password
+ *
+ * A modal, because it is a short errand that must not lose the plan
+ * underneath it - a manager who has half a schedule laid out should
+ * not have to leave the page to change a password.
+ * ================================================================= */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.45);
+  overflow-y: auto;
+}
+
+/* `hidden` is a browser default of display:block, which a display:flex
+   rule outranks - so the panel drew over the desk as an empty sheet
+   while claiming to be hidden. That has happened twice in this repo
+   now, once on My Shift, which is why it is stated rather than left
+   to the cascade. */
+.modal[hidden] { display: none; }
+
+.modal .card { margin: auto; max-width: 380px; width: 100%; }
+
+.modal-buttons { display: flex; gap: 8px; }
+.modal-buttons .btn { flex: 1; }
+
+.card-ok {
+  font-size: 0.82rem; color: var(--ok); background: var(--ok-soft);
+  border: 1px solid var(--ok); border-radius: 3px;
+  padding: 8px 10px; margin: 0 0 14px;
+}
+
+@media print {
+  .who, #view-signin, #view-denied, .modal { display: none !important; }
+}
 </style>
 
 
@@ -1231,10 +1271,47 @@ pre.json .n { color: var(--accent); }
       <div class="who" id="who" hidden>
         <span class="who-name" id="who-name"></span>
         <span class="who-role" id="who-role"></span>
+        <button type="button" class="who-out" id="btn-passwd">Change password</button>
         <button type="button" class="who-out" id="btn-signout">Sign out</button>
       </div>
     </div>
   </header>
+
+  <!-- =============================================================
+       CHANGE PASSWORD - so nobody has to ask a manager to re-mint
+       their account and read them a new password out loud.
+
+       The current password is asked for even though this page is
+       already signed in: a cookie says this browser signed in once,
+       not who is at the keyboard now, and desks on a floor are left
+       open. The service requires it too - this box is the courtesy,
+       the refusal there is the rule.
+       ============================================================= -->
+  <div class="modal" id="passwd-modal" hidden>
+    <form class="card" id="passwd-form" autocomplete="off">
+      <h2 class="card-title">Change your password</h2>
+      <p class="card-sub">Signing you out everywhere else, but not here.</p>
+
+      <p class="card-error" id="passwd-error" hidden></p>
+      <p class="card-ok" id="passwd-ok" hidden>Password changed.</p>
+
+      <label class="field-label" for="pw-current">Current password</label>
+      <input type="password" id="pw-current" autocomplete="current-password" required>
+
+      <label class="field-label" for="pw-new">New password</label>
+      <input type="password" id="pw-new" autocomplete="new-password" required>
+
+      <label class="field-label" for="pw-again">New password again</label>
+      <input type="password" id="pw-again" autocomplete="new-password" required>
+
+      <div class="modal-buttons">
+        <button type="submit" class="btn" id="btn-passwd-save">Change it</button>
+        <button type="button" class="btn ghost" id="btn-passwd-cancel">Cancel</button>
+      </div>
+      <p class="card-foot">Twelve characters at the very least. A phrase beats
+        a short scramble.</p>
+    </form>
+  </div>
 
   <!-- =============================================================
        SIGN IN - the desk asks who is at it before it draws anything.
@@ -1527,6 +1604,45 @@ pre.json .n { color: var(--accent); }
     return mins + " minute" + (mins === 1 ? "" : "s");
   }
 
+  /* Change the password of whoever is signed in here.
+   *
+   * Unlike signIn, this says which half was wrong. There is no account
+   * to enumerate: the caller is already signed in and is asking about
+   * their own password, so telling them plainly saves them guessing at
+   * both halves at once.
+   *
+   * The service revokes every session including this one and issues a
+   * fresh pair, so the new CSRF token has to be taken from the reply.
+   * Without that the page keeps a token the service has already thrown
+   * away, and the next thing the person does fails for no reason they
+   * could work out. */
+  async function changePassword(currentPassword, newPassword) {
+    try {
+      const r = await api("/api/auth/password", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: currentPassword, newPassword: newPassword,
+        }),
+      });
+      const body = await r.json().catch(() => ({}));
+
+      if (!r.ok) {
+        return {
+          ok: false,
+          message: r.status === 429
+            ? "Too many attempts. Try again in " + waitFor(r) + "."
+            : (body.detail || "That did not work."),
+        };
+      }
+
+      if (body.csrfToken) state.csrf = body.csrfToken;
+      return { ok: true };
+    } catch (ignored) {
+      return { ok: false, message: "Could not reach the server." };
+    }
+  }
+
   /* End the session, here and on the service. Never throws: a sign-out
    * that can fail is one somebody gives up on, and the local half has
    * to happen either way. */
@@ -1562,6 +1678,7 @@ pre.json .n { color: var(--accent); }
     probe: probe,
     signIn: signIn,
     signOut: signOut,
+    changePassword: changePassword,
     mayUse: mayUse,
     wrongRole: wrongRole,
   };
@@ -3471,6 +3588,63 @@ async function signOut() {
   applyGate();
 }
 
+/* ===================================================================
+ * Changing your own password
+ *
+ * The service is the gate here as everywhere else - it requires the
+ * current password and applies the length rule. This box exists so
+ * somebody finds out before they submit rather than after, and so a
+ * manager does not have to ask another manager to re-mint them.
+ * =================================================================== */
+
+function openPasswd() {
+  ["pw-current", "pw-new", "pw-again"].forEach(id => { $(id).value = ""; });
+  $("passwd-error").hidden = true;
+  $("passwd-ok").hidden = true;
+  $("passwd-modal").hidden = false;
+  $("pw-current").focus();
+}
+
+function closePasswd() {
+  /* Emptied on the way out, not merely hidden. Three password fields
+     left populated behind a hidden panel is the same unattended-screen
+     problem the sign-out path above already deals with. */
+  ["pw-current", "pw-new", "pw-again"].forEach(id => { $(id).value = ""; });
+  $("passwd-modal").hidden = true;
+}
+
+async function savePasswd(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn = $("btn-passwd-save");
+  const err = $("passwd-error"), ok = $("passwd-ok");
+  err.hidden = true;
+  ok.hidden = true;
+
+  /* The one check worth making here rather than at the service: it
+     cannot know what the person meant to type twice. Everything else -
+     the current password, the length - is the service's to answer, and
+     asking it means one rule rather than two that can disagree. */
+  if ($("pw-new").value !== $("pw-again").value) {
+    err.textContent = "The two new passwords are not the same.";
+    err.hidden = false;
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    const out = await S.changePassword($("pw-current").value, $("pw-new").value);
+    if (!out.ok) {
+      err.textContent = out.message;
+      err.hidden = false;
+      return;
+    }
+    ["pw-current", "pw-new", "pw-again"].forEach(id => { $(id).value = ""; });
+    ok.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* Draw the desk for somebody who is allowed it. Separate from boot so
    signing in does not have to reload the page. */
 function openTheDesk() {
@@ -3516,6 +3690,18 @@ $("btn-refresh").addEventListener("click", () => loadFloor(true));
 $("signin-form").addEventListener("submit", signIn);
 $("btn-signout").addEventListener("click", signOut);
 $("btn-denied-out").addEventListener("click", signOut);
+$("btn-passwd").addEventListener("click", openPasswd);
+$("btn-passwd-cancel").addEventListener("click", closePasswd);
+$("passwd-form").addEventListener("submit", savePasswd);
+/* Escape closes it, and a click on the backdrop does too. A modal that
+   can only be dismissed by finding the right button is one people close
+   by reloading the page, which on the desk costs an unsaved plan. */
+$("passwd-modal").addEventListener("click", e => {
+  if (e.target === $("passwd-modal")) closePasswd();
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !$("passwd-modal").hidden) closePasswd();
+});
 
 /* Ask who is at the desk before drawing any of it. Everything below the
    masthead waits on that answer - a screen that renders the floor and
