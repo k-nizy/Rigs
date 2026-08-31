@@ -16,7 +16,12 @@
 //! runtime capability that trusts exactly the configured floor, and the
 //! `window.RIG_JOURNAL` object `rig.js` already looks for.
 
+//! `upload` drains that journal to the service from a process of its
+//! own, reading the log without ever writing to it - the module explains
+//! why that one constraint is the whole design.
+
 pub mod bridge;
 pub mod journal;
 pub mod mock_roda;
 pub mod roda;
+pub mod upload;

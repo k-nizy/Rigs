@@ -33,6 +33,13 @@ serde_json = "1"
 # directory name; it is refused at the boundary.
 uuid = "1"
 
+# The uploader reports a checksum and the service verifies what landed -
+# that is step 4 of the video handshake and the only step that must never
+# be optimistic, because past it the rig deletes its only copy. Hand
+# rolling SHA-256 to save a dependency would be inventing a second answer
+# to a question with one right answer.
+sha2 = "0.10"
+
 # Free space for Health, which the plan asks for by name. std has no API
 # for it, and reporting a number nobody measured is how a disk-full alert
 # fires on the wrong rig.
