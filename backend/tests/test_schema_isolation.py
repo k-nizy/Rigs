@@ -100,10 +100,19 @@ class TestTheRunStaysInItsOwnSchema:
             "created - which is a service running against rigs_test losing "
             "its tables the moment somebody starts the suite")
 
-    async def test_the_run_still_creates_its_own_tables_where_it_should(
+    async def test_the_run_writes_into_its_own_schema_and_not_public(
             self, engine, session):
         """The other half. A fix that confined the run by breaking it
-        would satisfy the test above and be worse than the bug."""
+        would satisfy the test above and be worse than the bug.
+
+        What is asserted is where this run's row *went*, not that the
+        name is unique in the database. An earlier version demanded that
+        no other schema held a table called `accounts` - which fails the
+        moment a service is running against rigs_test, and a service
+        running against rigs_test is the very thing this change exists
+        to permit. The test contradicted its own feature, and only
+        passed because `public` happened to be empty.
+        """
         from core.domains.accounts.model import Account
         from core.domains.accounts.passwords import hash_password
 
@@ -113,11 +122,21 @@ class TestTheRunStaysInItsOwnSchema:
         assert len((await session.execute(select(Account))).scalars().all()) == 1
 
         async with engine.begin() as c:
-            where = (await c.execute(text(
-                "SELECT table_schema FROM information_schema.tables "
-                "WHERE table_name = 'accounts'"))).scalars().all()
-        assert where == [RUN_SCHEMA], (
-            f"accounts should exist only in this run's schema, found in {where}")
+            here = (await c.execute(text(
+                f'SELECT count(*) FROM "{RUN_SCHEMA}".accounts'))).scalar()
+        assert here == 1, "the row did not land in this run's own schema"
+
+        # And it must not have gone into public - whether or not anything
+        # else has a table there.
+        public_has_one = await _plain(
+            "SELECT count(*) FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_name = 'accounts'")
+        if public_has_one:
+            leaked = await _plain(
+                "SELECT count(*) FROM public.accounts WHERE email = 'x@verlet.co'")
+            assert leaked == 0, (
+                "this run's row was written into `public`, so the suite is "
+                "writing into whatever else is using this database")
 
     async def test_nothing_needed_public_to_resolve(self, engine, session):
         """Dropping `public` from the path would break the suite if any
