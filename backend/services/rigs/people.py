@@ -45,7 +45,9 @@ from fastapi import Depends, HTTPException, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.domains.accounts.model import MANAGER, OPERATOR, Account
-from core.domains.accounts.passwords import hash_password, verify_password
+from core.domains.accounts.passwords import (
+    hash_password, password_complaint, verify_password,
+)
 from core.domains.accounts.repository import (
     AccountRepository, AccountSessionRepository, normalise_email,
 )
@@ -210,6 +212,70 @@ async def sign_in(
     )
     account.last_login_at = datetime.now(timezone.utc)
     return account, token
+
+
+# --------------------------------------------- changing your own password
+
+
+class PasswordRefused(Exception):
+    """Why the change was not made, in words meant for the person.
+
+    Distinct from the login refusal above, and deliberately so: there is
+    no account to enumerate here. The caller is already signed in and is
+    asking about their own password, so telling them *which* half was
+    wrong costs nothing and saves them guessing at both.
+    """
+
+
+async def change_password(
+    session: AsyncSession, account: Account,
+    current: str, new: str, settings: Settings,
+) -> str:
+    """Set a new password and return a fresh session token for this browser.
+
+    Three things happen together, and the order matters.
+
+    **The current password is checked even though they are signed in.**
+    A cookie proves this browser signed in once, not that the person at
+    the keyboard is the account holder. An unattended desk on a floor is
+    the case that makes this worth the friction: without it, anybody
+    passing an open tab could take the account and lock a manager out of
+    their own floor.
+
+    **Every other session is revoked.** The reason to change a password
+    is usually that it might be known, and a change that leaves the old
+    sessions alive does nothing to whoever already has one.
+
+    **This browser gets a new token rather than being signed out.** They
+    have just proved the current password, so ending their own session
+    would be friction with nothing bought - and a change-password flow
+    that logs you out is one people avoid using.
+    """
+    if not verify_password(current, account.password_hash):
+        raise PasswordRefused("that is not your current password")
+
+    complaint = password_complaint(new)
+    if complaint:
+        raise PasswordRefused(complaint)
+
+    if verify_password(new, account.password_hash):
+        # Not dangerous, just pointless - and silently accepting it would
+        # have somebody believe they had changed something.
+        raise PasswordRefused("that is already your password")
+
+    account.password_hash = hash_password(new)
+
+    sessions = AccountSessionRepository(session)
+    await sessions.revoke_all(account.id)
+
+    token = secrets.token_urlsafe(32)
+    await sessions.open(
+        account.id, token, timedelta(hours=settings.session_lifetime_hours)
+    )
+    # No password in the line, present or past. Which account changed and
+    # when is the part worth having.
+    log.info("password changed: %s (%s)", account.email, account.role)
+    return token
 
 
 # ------------------------------------------------- who is calling, later

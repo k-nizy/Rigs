@@ -39,6 +39,31 @@ SCRYPT_P = 3
 SALT_BYTES = 16
 KEY_BYTES = 32
 
+# What a password has to be, in one place because there are now two ways
+# to set one - `tools.mint_account` and `POST /api/auth/password` - and a
+# rule written twice is a rule that will hold in one of them.
+#
+# It used to live in mint_account's interactive prompt alone, which meant
+# `--password` set anything at all: the check was on the way the password
+# was *typed* rather than on the password. Length only, deliberately. A
+# composition rule ("one capital, one digit") pushes people towards
+# `Password1!` and NIST stopped recommending it; length is the part that
+# actually costs a guesser something.
+MIN_PASSWORD_LENGTH = 12
+
+
+def password_complaint(password: str) -> str | None:
+    """What is wrong with this as a password, or None if nothing is.
+
+    A sentence rather than a boolean, because both callers have to tell
+    somebody what to do about it, and two independently worded versions
+    of the same rule is how they drift.
+    """
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return (f"too short - {MIN_PASSWORD_LENGTH} characters at the very "
+                f"least, and a phrase beats a short scramble")
+    return None
+
 
 def _maxmem(n: int, r: int, p: int) -> int:
     """The memory ceiling to hand OpenSSL, derived rather than guessed.

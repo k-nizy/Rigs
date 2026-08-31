@@ -697,6 +697,70 @@ async function signOut() {
   applyGate();
 }
 
+/* --------------------------------------------- changing your password
+
+   An operator has an account like anybody else. Before this, a
+   forgotten or shared password could only be fixed by asking a manager
+   to re-mint the account and read the new one out. */
+
+function openPasswd() {
+  ["pw-current", "pw-new", "pw-again"].forEach(id => {
+    if ($(id)) $(id).value = "";
+  });
+  if ($("passwd-error")) $("passwd-error").hidden = true;
+  if ($("passwd-ok")) $("passwd-ok").hidden = true;
+  if ($("passwd-modal")) $("passwd-modal").hidden = false;
+  if ($("pw-current")) $("pw-current").focus();
+}
+
+function closePasswd() {
+  /* Cleared on the way out. Three filled password fields behind a
+     hidden panel on a screen in a break room is the same problem the
+     desk empties the floor for. */
+  ["pw-current", "pw-new", "pw-again"].forEach(id => {
+    if ($(id)) $(id).value = "";
+  });
+  if ($("passwd-modal")) $("passwd-modal").hidden = true;
+}
+
+async function savePasswd(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn = $("btn-passwd-save");
+  const err = $("passwd-error"), ok = $("passwd-ok");
+  if (err) err.hidden = true;
+  if (ok) ok.hidden = true;
+
+  /* The only check this page can make that the service cannot: it
+     cannot know what somebody meant to type twice. The current
+     password and the length rule are the service's to answer, so they
+     are asked rather than duplicated. */
+  if ($("pw-new").value !== $("pw-again").value) {
+    if (err) {
+      err.textContent = "The two new passwords are not the same.";
+      err.hidden = false;
+    }
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  try {
+    const out = await S.changePassword($("pw-current").value, $("pw-new").value);
+    if (!out.ok) {
+      if (err) {
+        err.textContent = out.message;
+        err.hidden = false;
+      }
+      return;
+    }
+    ["pw-current", "pw-new", "pw-again"].forEach(id => {
+      if ($(id)) $(id).value = "";
+    });
+    if (ok) ok.hidden = false;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 /* ------------------------------------------------------------ wiring */
 
 /* Wire a handler, and survive the element not being there.
@@ -723,6 +787,16 @@ function on(id, type, fn) {
 on("signin-form", "submit", signIn);
 on("btn-signout", "click", signOut);
 on("btn-denied-out", "click", signOut);
+on("btn-passwd", "click", openPasswd);
+on("btn-passwd-cancel", "click", closePasswd);
+on("passwd-form", "submit", savePasswd);
+on("passwd-modal", "click", e => {
+  if (e.target === $("passwd-modal")) closePasswd();
+});
+document.addEventListener("keydown", e => {
+  const modal = $("passwd-modal");
+  if (e.key === "Escape" && modal && !modal.hidden) closePasswd();
+});
 on("past-toggle", "click", () => {
   showPast = !showPast;
   renderDay();

@@ -145,6 +145,45 @@
     return mins + " minute" + (mins === 1 ? "" : "s");
   }
 
+  /* Change the password of whoever is signed in here.
+   *
+   * Unlike signIn, this says which half was wrong. There is no account
+   * to enumerate: the caller is already signed in and is asking about
+   * their own password, so telling them plainly saves them guessing at
+   * both halves at once.
+   *
+   * The service revokes every session including this one and issues a
+   * fresh pair, so the new CSRF token has to be taken from the reply.
+   * Without that the page keeps a token the service has already thrown
+   * away, and the next thing the person does fails for no reason they
+   * could work out. */
+  async function changePassword(currentPassword, newPassword) {
+    try {
+      const r = await api("/api/auth/password", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          currentPassword: currentPassword, newPassword: newPassword,
+        }),
+      });
+      const body = await r.json().catch(() => ({}));
+
+      if (!r.ok) {
+        return {
+          ok: false,
+          message: r.status === 429
+            ? "Too many attempts. Try again in " + waitFor(r) + "."
+            : (body.detail || "That did not work."),
+        };
+      }
+
+      if (body.csrfToken) state.csrf = body.csrfToken;
+      return { ok: true };
+    } catch (ignored) {
+      return { ok: false, message: "Could not reach the server." };
+    }
+  }
+
   /* End the session, here and on the service. Never throws: a sign-out
    * that can fail is one somebody gives up on, and the local half has
    * to happen either way. */
@@ -180,6 +219,7 @@
     probe: probe,
     signIn: signIn,
     signOut: signOut,
+    changePassword: changePassword,
     mayUse: mayUse,
     wrongRole: wrongRole,
   };

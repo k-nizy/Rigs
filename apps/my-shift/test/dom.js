@@ -39,6 +39,10 @@ class El {
     };
   }
   appendChild(n) { this.children.push(n); return n; }
+  /* Real elements have these; a stub without them turns "the script
+     moved the caret" into "the screen threw". */
+  focus() {}
+  blur() {}
   /* The DOM's own name for the same list. The render code asks whether
      it appended anything before showing a line; without this it reads
      undefined and throws. */
@@ -87,6 +91,15 @@ async function mountMyShift(opts) {
   const mk = id => { const e = new El("div"); e.attrs.id = id; byId[id] = e; return e; };
   (html.match(/id="([^"]+)"/g) || []).forEach(m => mk(m.slice(4, -1)));
 
+  /* Start hidden if the page says hidden. Everything used to mount
+     visible whatever the markup said, so a panel the page ships closed
+     read as open - the harness disagreeing with the page about the
+     page's own initial state. */
+  (html.match(/<[a-zA-Z][^>]*>/g) || []).forEach(tag => {
+    const id = (tag.match(/\bid="([^"]+)"/) || [])[1];
+    if (id && byId[id] && /\shidden(\s|>|=)/.test(tag)) byId[id].hidden = true;
+  });
+
   const intervals = [];
   const timerFns = [];
   const realSetInterval = global.setInterval;
@@ -100,12 +113,22 @@ async function mountMyShift(opts) {
     intervals.push(id);
     return id;
   };
+  const docListeners = {};
   global.document = {
     querySelector: () => null,
     createElement: t => new El(t),
     createTextNode: t => { const n = new El("#text"); n.textContent = String(t); return n; },
     getElementById: id => byId[id] || (missingIds.push(id), mk(id)),
     body: new El("body"),
+    /* A real document has these, and the page uses one for Escape.
+       Without them the script throws at the top level and takes the
+       whole screen down - a failure a browser would never have had. */
+    addEventListener: (type, fn) => {
+      (docListeners[type] = docListeners[type] || []).push(fn);
+    },
+    removeEventListener: (type, fn) => {
+      docListeners[type] = (docListeners[type] || []).filter(f => f !== fn);
+    },
   };
   global.window = global;
   /* The page listens for scroll to keep the perch in step. Nothing
@@ -138,6 +161,11 @@ async function mountMyShift(opts) {
       (node._on[type] || []).forEach(fn => fn({ target: node }));
     },
     click(node) { this.fire(node, "click"); },
+
+    /* A key press at the document, the way a real one arrives. */
+    key(name) {
+      (docListeners["keydown"] || []).forEach(fn => fn({ key: name }));
+    },
 
     /* Which of the three screens is up, as one word. */
     showing() {
