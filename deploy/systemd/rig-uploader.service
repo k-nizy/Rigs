@@ -1,0 +1,48 @@
+# The uploader, on a rig - not on the server.
+#
+# Everything else in this directory runs on the box that serves the floor.
+# This one is installed on each of the twelve rigs, beside the kiosk
+# shell, and it is the only unit here that does.
+#
+# It outlives the page on purpose. Uploading used to happen inside the
+# webview, so a reload, a crash or a screen being restarted stopped it -
+# the work stayed safe on disk, but nothing was carrying it. This process
+# has no window and no webview: `ldd` on it names no GTK and no WebKit, so
+# it keeps running when the graphical session does not.
+
+[Unit]
+Description=Rig uploader - carries the journal to the floor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=rig
+Group=rig
+EnvironmentFile=/etc/rigs/rig.env
+ExecStart=/usr/bin/rig-uploader
+Restart=always
+RestartSec=5
+
+# The journal is the only thing it writes, and it must exist before this
+# starts. StateDirectory creates it, owns it to this user, and survives a
+# reboot - which is the whole reason the journal is on disk at all.
+#
+# The shell writes here too, as the same user. That is not a shared
+# writer: the shell appends to the log and the uploader never does. See
+# src/upload.rs.
+StateDirectory=rig
+StateDirectoryMode=0750
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# It reads a journal and posts it. It has no business anywhere else.
+ReadWritePaths=/var/lib/rig
+
+[Install]
+WantedBy=multi-user.target

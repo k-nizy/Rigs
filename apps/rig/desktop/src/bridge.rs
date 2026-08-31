@@ -49,18 +49,10 @@ use tauri::{Manager, State};
 
 use crate::journal::Journal;
 
-/// Where the journal lives. `/var/lib/rig` on a rig, overridable so a
-/// developer - and the headless test - does not need a system directory.
-const JOURNAL_DIR: &str = "RIG_JOURNAL_DIR";
-const DEFAULT_DIR: &str = "/var/lib/rig";
-
+/// Where the journal lives. Answered in `journal.rs`, because the
+/// uploader asks the same question and has to get the same answer.
 pub fn journal_dir() -> PathBuf {
-    std::env::var(JOURNAL_DIR)
-        .ok()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_DIR))
+    crate::journal::dir_from_env()
 }
 
 // Errors come back as strings because the page has exactly one thing it

@@ -71,18 +71,25 @@ page and drive the pedals from the keyboard.
 
 ## What is deliberately not here yet
 
-The rest of Phase 1. This is the shell and only the shell:
+One thing, and it is the one no amount of code settles:
 
-- **the `Roda` trait and a Rust `MockRoda`** — `apps/rig/tools/mock-roda.js`
-  is the same idea at the seam a browser has, not this one
-- **the disk journal** — `emit()` still goes to IndexedDB, which is the
-  browser-shaped version of `/var/lib/rig/journal.ndjson`
-- **the uploader as its own process**
+- **the pedals as raw HID** — see below
 
-All three need IPC between the page and this shell, and the page is
-loaded from a remote origin, so they will need Tauri's remote-domain
-capability wired up deliberately rather than by default. That is the next
-piece of work, not an oversight.
+The rest of Phase 1 is here now, and the order they arrived in is the order
+they depended on each other:
+
+- **the `Roda` trait and a Rust `MockRoda`** (`src/roda.rs`) — the six
+  calls the rig makes to the teleop layer, written down
+- **the disk journal** (`src/journal.rs`, `src/bridge.rs`) — the page
+  writes to `/var/lib/rig/journal.ndjson` through Tauri's IPC, which
+  needed the remote-domain capability wiring the earlier version of this
+  README warned about
+- **the uploader as its own process** (`src/upload.rs`,
+  `src/bin/rig-uploader.rs`) — a second binary that reads the journal and
+  never writes to it, so the shell stays the only writer and no locking
+  is needed. `deploy/systemd/rig-uploader.service` is its unit, and it is
+  the only unit in that directory that installs on a rig rather than on
+  the server.
 
 **The pedals are the part this cannot answer.** Today they are the keys
 `1`/`2`/`3` and the webview handles them. On a rig they are a pedal board

@@ -70,6 +70,24 @@ const STINT: &str = "stint.json";
 const VIDEO_DIR: &str = "video";
 const MARK: &str = "uploaded.json";
 
+/// Where the journal lives. `/var/lib/rig` on a rig, overridable so a
+/// developer - and a test - does not need a system directory.
+///
+/// Here rather than beside either reader, because the shell and the
+/// uploader have to agree about it and a second copy of a default path is
+/// a second answer waiting to drift.
+pub const JOURNAL_DIR_ENV: &str = "RIG_JOURNAL_DIR";
+const DEFAULT_DIR: &str = "/var/lib/rig";
+
+pub fn dir_from_env() -> PathBuf {
+    std::env::var(JOURNAL_DIR_ENV)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_DIR))
+}
+
 impl Journal {
     /// Open (and create) the journal directory. `/var/lib/rig` on a rig,
     /// anywhere for a test.
@@ -228,7 +246,7 @@ impl Journal {
 
     /// What this rig still owes, oldest first. Compacts on the way past.
     pub fn load(&self, rig_id: &str) -> std::io::Result<Held> {
-        let live = self.replay()?;
+        let (live, lines) = self.replay()?;
         let mark = self.read_mark();
 
         let mut events: Vec<Value> = live
@@ -250,7 +268,7 @@ impl Journal {
         // rather than a presentational choice.
         events.sort_by_key(|e| e.get("seq").and_then(Value::as_i64).unwrap_or(0));
 
-        self.compact(&live)?;
+        self.compact(&live, lines)?;
 
         Ok(Held {
             events,
@@ -262,19 +280,21 @@ impl Journal {
     /// Replay the log into what is still owed, keyed by eventId so that
     /// re-appending the same event cannot produce two of it - the same
     /// rule as the server's unique `(rigId, eventId)`.
-    fn replay(&self) -> std::io::Result<BTreeMap<String, Value>> {
+    fn replay(&self) -> std::io::Result<(BTreeMap<String, Value>, usize)> {
         let file = match File::open(self.dir.join(EVENTS)) {
             Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((BTreeMap::new(), 0)),
             Err(e) => return Err(e),
         };
 
         let mut live: BTreeMap<String, Value> = BTreeMap::new();
+        let mut lines = 0usize;
         for line in BufReader::new(file).lines() {
             let line = line?;
             if line.trim().is_empty() {
                 continue;
             }
+            lines += 1;
             // A line that will not parse is the one the power cut caught.
             let parsed: Value = match serde_json::from_str(&line) {
                 Ok(v) => v,
@@ -298,7 +318,7 @@ impl Journal {
                 _ => {}
             }
         }
-        Ok(live)
+        Ok((live, lines))
     }
 
     /// Write what is still owed to a fresh file and rename it over.
@@ -306,7 +326,7 @@ impl Journal {
     /// Owed means two things now: not acknowledged by the page, and not
     /// already handed over by the uploader. The second is what lets a
     /// separate process drain this file without writing to it.
-    fn compact(&self, live: &BTreeMap<String, Value>) -> std::io::Result<()> {
+    fn compact(&self, live: &BTreeMap<String, Value>, lines: usize) -> std::io::Result<()> {
         let mark = self.read_mark();
         let sent = |e: &&Value| match &mark {
             Some((rig, seq)) => {
@@ -316,6 +336,16 @@ impl Journal {
             None => false,
         };
         let mut ordered: Vec<&Value> = live.values().filter(|e| !sent(e)).collect();
+
+        // Nothing to drop means the file already says exactly this, so
+        // rewriting it would be a write for no reason. That matters now
+        // that the uploader reads this every couple of seconds all day:
+        // an idle rig was rewriting its journal forty thousand times a
+        // day, which is flash wear bought with nothing. Order is not a
+        // reason to rewrite - `load` sorts what it hands back.
+        if ordered.len() == lines {
+            return Ok(());
+        }
         // Ordered by seq so the compacted file reads the way it was
         // written, rather than in eventId order, which means nothing.
         ordered.sort_by_key(|e| e.get("seq").and_then(Value::as_i64).unwrap_or(0));
@@ -698,6 +728,46 @@ mod tests {
         let dir = Dir::new();
         let held = dir.open().load("RIG-03").unwrap();
         assert!(held.events.is_empty() && held.videos.is_empty() && held.stint.is_none());
+    }
+
+    // ------------------------------------------------------ idle writes
+
+    #[test]
+    fn an_idle_load_does_not_rewrite_the_log() {
+        // The uploader reads this every couple of seconds for the length
+        // of a shift. Rewriting a file that already says the right thing
+        // is flash wear bought with nothing.
+        let dir = Dir::new();
+        let j = dir.open();
+        j.append_event(&event("e1", 0, "RIG-03")).unwrap();
+
+        let path = dir.0.join(EVENTS);
+        let before = fs::metadata(&path).unwrap().modified().unwrap();
+        j.load("RIG-03").unwrap();
+        j.load("RIG-03").unwrap();
+        let after = fs::metadata(&path).unwrap().modified().unwrap();
+
+        assert_eq!(before, after, "an idle rig rewrote its journal for nothing");
+    }
+
+    #[test]
+    fn a_load_with_something_to_drop_still_rewrites() {
+        // And the saving must not have turned compaction off.
+        let dir = Dir::new();
+        let j = dir.open();
+        j.append_event(&event("e1", 0, "RIG-03")).unwrap();
+        j.append_event(&event("e2", 1, "RIG-03")).unwrap();
+        j.forget_events(&["e1".to_string()]).unwrap();
+
+        let path = dir.0.join(EVENTS);
+        let before = fs::read_to_string(&path).unwrap();
+        assert!(before.contains("\"e1\""));
+
+        j.load("RIG-03").unwrap();
+
+        let after = fs::read_to_string(&path).unwrap();
+        assert!(!after.contains("\"e1\""), "the log never shrinks");
+        assert!(after.contains("\"e2\""));
     }
 
     // ------------------------------------------------- the uploader's mark

@@ -121,6 +121,42 @@ pub fn ours(origin: &str, url: &str) -> bool {
     url == origin || url.starts_with(&format!("{origin}/"))
 }
 
+/// The origin of the floor's address: scheme, host and port, no path.
+///
+/// Hand written rather than pulled from a URL crate because this file is
+/// deliberately free of the shell's dependencies - it has to build in a
+/// process that never opens a window - and the one question asked of an
+/// address here is which origin it names.
+pub fn origin_of(url: &str) -> Option<String> {
+    let (scheme, rest) = url.split_once("://")?;
+    if scheme.is_empty() || !scheme.bytes().all(|b| b.is_ascii_alphanumeric() || b"+-.".contains(&b))
+    {
+        return None;
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.is_empty() {
+        return None;
+    }
+    Some(format!("{}://{}", scheme.to_ascii_lowercase(), authority))
+}
+
+/// Where `rig-config.js` is, given where the rig page is.
+///
+/// Resolved the way the browser resolves it, because it has to be the
+/// same file: `index.html` asks for it with a relative path, so it sits
+/// beside the page. Asking for it anywhere else would be asking a
+/// different question and could get a different rig's answer.
+pub fn config_url(rig_url: &str) -> Option<String> {
+    let origin = origin_of(rig_url)?;
+    let after = &rig_url[origin.len()..];
+    let path = after.split(['?', '#']).next().unwrap_or("");
+    let dir = match path.rfind('/') {
+        Some(i) => &path[..=i],
+        None => "/",
+    };
+    Some(format!("{origin}{dir}rig-config.js"))
+}
+
 // ---------------------------------------------------------------- floor
 
 /// A response: the status, and the body if there was one worth keeping.
@@ -407,6 +443,43 @@ mod tests {
     fn nothing_that_is_not_an_assignment_is_read_as_one() {
         let id = parse_config_js("alert('hi'); window.RIG_ID = notjson;\nwindow.OTHER = \"x\";");
         assert_eq!(id, Identity::default());
+    }
+
+    // ----------------------------------------------------------- urls
+
+    #[test]
+    fn the_origin_is_the_scheme_the_host_and_the_port() {
+        assert_eq!(
+            origin_of("http://floor.internal/apps/rig/"),
+            Some("http://floor.internal".into())
+        );
+        assert_eq!(
+            origin_of("https://floor.internal:8443/apps/rig/index.html?x=1"),
+            Some("https://floor.internal:8443".into())
+        );
+        assert_eq!(origin_of("floor.internal/apps"), None);
+        assert_eq!(origin_of("http://"), None);
+    }
+
+    #[test]
+    fn the_config_sits_beside_the_page_the_way_the_browser_asks_for_it() {
+        // index.html asks for it relatively, so it has to resolve the same
+        // way here - a different path could be a different rig's answer.
+        for page in [
+            "http://floor.internal/apps/rig/",
+            "http://floor.internal/apps/rig/index.html",
+            "http://floor.internal/apps/rig/index.html?demo",
+        ] {
+            assert_eq!(
+                config_url(page).as_deref(),
+                Some("http://floor.internal/apps/rig/rig-config.js"),
+                "resolved wrongly from {page}"
+            );
+        }
+        assert_eq!(
+            config_url("http://floor.internal").as_deref(),
+            Some("http://floor.internal/rig-config.js")
+        );
     }
 
     // ----------------------------------------------------------- ours
