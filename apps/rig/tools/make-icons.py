@@ -118,5 +118,15 @@ p = f"{OUT}/icon-maskable-512.png"
 draw(512, INK_LIGHT, ACCENT, ground=GROUND, inset=0.58).save(p)
 made.append(p)
 
+# The kiosk shell (apps/rig/desktop). Its own file rather than a reuse of
+# icon-512.png, because Tauri rejects anything that is not RGBA and the
+# installed-app icons above are opaque on purpose - `ground` drops the
+# alpha channel so iOS does not composite stray transparency against
+# black. Two requirements that cannot both be met by one file, so: two
+# files, one mark, still generated from the geometry at the top.
+p = f"{OUT}/icon-desktop-512.png"
+draw(512, INK_DARK, ACCENT, inset=0.84).save(p)
+made.append(p)
+
 for p in made:
     print(p)

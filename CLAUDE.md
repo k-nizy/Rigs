@@ -159,11 +159,16 @@ Single full-screen page, three foot pedals (keys `1`/`2`/`3`), nine
 addressable screens. State machine:
 
 ```
-checklist → handover → recording → review → resetting → (loop)
-              ↑                                  ↓
-              └─── issue-menu → rig-down ────────┘
-              └─── fault-class → fault-fixing ───┘
+standby ⇄ checklist → handover → recording → review → resetting → (loop)
+                        ↑                                  ↓
+                        └─── issue-menu → rig-down ────────┘
+                        └─── fault-class → fault-fixing ───┘
 ```
+
+Standby is both ends of the day, and the arrow goes both ways. The rig
+leaves it when the schedule says somebody is due and returns to it when
+the shift the desk pushed has run out — by comparison against the window
+in the payload, never by working out when a shift ends.
 
 - Middle pedal is "go" on every screen **except** Recording, where it is
   deliberately inert so muscle memory can't end a good take.
@@ -172,7 +177,12 @@ checklist → handover → recording → review → resetting → (loop)
 - Efficiency = `recordedSecs / (assignedSecs − faultSecs − downSecs)` with
   a warm-up so the first episode of a stint doesn't shout.
 - A turn boundary never interrupts a take: `handoverDue` waits for the
-  episode to land before rotating.
+  episode to land before rotating. The end of the shift is the same rule
+  with a different flag — `restDue` — because a take is a take.
+- A stint begins and ends in exactly one place each, `beginStint()` and
+  `endStint()`, so every way out of one files the same block. There are
+  two ways out: relieved, or the shift ended. Only the first used to
+  exist, so the last stint of every shift was never filed at all.
 - The event log tags each event with its backend bucket (`episodes`,
   `rig_shift_checks`, `rig_downtime_events`, `rig_productivity_blocks`,
   `sessions`). These are filed as real envelopes, journalled to IndexedDB
@@ -298,8 +308,63 @@ answer to which schedule is real.
 
 The rig's `loadPayload()` fetches `/api/rigs/:rigId/schedule.json` first,
 falls back to a co-located `schedule.json` (still supported for a plain
-static deploy), and finally generates locally so the demo runs even with
-no server.
+static deploy), and then stops. It generates a schedule locally only on a
+machine the service never identified — a laptop, or a static deploy with
+nothing behind it — because that is the demo.
+
+**A machine that knows it is RIG-07 never invents one.** It used to, out
+of `packages/demo-roster`, and the window check did not catch it: an
+expired sheet is refused because its window has closed, but a generated
+sheet is stamped with today and always covers now. So a service
+restarting behind a web server that is still up — a deployment, from the
+rig's side — put demonstration names in front of an operator and queued
+their takes under `op-a3` for upload. With nothing pushed the rig now
+stands by and keeps asking. Same trade as everything else here: idle is
+loud and recoverable, misfiled work is silent and permanent.
+
+## The roster travels the other way
+
+A push replaces the whole day on all twelve rigs. It is not a merge, and
+that made the roster the one thing in this system that could go
+*backwards*.
+
+The roster lived only in `packages/demo-roster/`, compiled into the desk.
+A manager correcting a name corrected it in their own browser tab and
+nowhere else: the floor got the fix, every other desk still had the file,
+and the next person to push sent the file's version back over it. The
+correction disappeared with no trace anywhere, and every recording from
+then on was filed under whoever the file said.
+
+So the desk stops treating its own file as the truth. On opening it reads
+the floor and rebuilds the roster from the payloads — which carry the
+group, the task and every operator, and under hold rig name three of a
+group's four operators in rig order in the first block, the fourth being
+the one who is off.
+
+**It is proved rather than trusted.** What comes back is rebuilt into a
+schedule and compared, rig by rig and turn by turn, against the schedule
+the floor is actually running. Agreement makes the recovery correct by
+demonstration. Disagreement keeps the file and says so out loud, because
+a roster the desk cannot rebuild is worse than a stale one — it would go
+to twelve rigs under a manager's name. Same instinct as the rig refusing
+an expired sheet, and as rejecting a bad push in full.
+
+The floor is never adopted over an edit already made on the screen.
+Arriving late and overwriting a half-typed name is the same silent
+clobber, only faster.
+
+**And a push says so when it would replace one it never read.** The desk
+already knows when the floor was last pushed. It asks again on the way
+out; if the floor has moved since this screen read it, the first press
+refuses and names the time, and the button becomes "Push anyway" so a
+manager who meant it can still do it. Reading the floor back answers the
+refusal instead. Not a lock — locking twelve rigs behind whoever opened a
+tab first is a much bigger promise, and this closes almost all of the
+window for a few lines.
+
+What is left: two managers editing in the same few minutes still ends
+with the later push winning. The window shrinks from all day to the
+minutes between opening the desk and pressing the button.
 
 ## Running a floor day to day
 
@@ -307,14 +372,34 @@ A payload covers **one shift**, and a push covers **one calendar day** -
 midnight to midnight, three shifts, twelve rigs, thirty six sheets. So
 the rule for whoever is managing the floor is one line:
 
-> Push once a day. Any time that day. Push again whenever the roster
-> changes.
+> Push once a day, **before the first shift starts**. Push again whenever
+> the roster changes — before the crew it affects walks in.
+
+Any desk will do, and it no longer matters which one — a desk opens on
+the roster the floor is running, not on the file it shipped with. See
+"The roster travels the other way" above.
 
 Timing does not affect coverage: a push made at nine in the morning and
 one made at four in the afternoon both cover the whole of that day,
 including the hours already gone. What it does affect is content -
 whatever is on the desk when the button is pressed is what the floor
 runs, and it reaches every rig within thirty seconds.
+
+**Which is why "before" is the rule and not a preference.** Coverage is
+retrospective; attribution is not. An operator standing at a rig is
+recorded as whoever the *last* push named, from the moment they start.
+Push a correction at 09:20 for a crew that started at 09:00 and those
+twenty minutes are already filed under the person who did not work them
+- and there is no correction mechanism in the ledger, so they stay that
+way. The push lands on every rig within thirty seconds; everything
+before it is the part nobody can fix.
+
+So a cover is a roster change like any other. Sara is off, Ben is
+covering: the manager assigns Ben at the desk and pushes, and the rig
+files Ben because the sheet says Ben. The rig is never asked who is
+standing at it - see "Who signs in, and who does not" - and the roster
+read-back above is what stops that correction being reverted by the next
+desk to push.
 
 The part that catches people is that **a Night shift belongs to the date
 it starts on**. Night runs 00:00-08:00, so the night that *follows*
@@ -349,13 +434,24 @@ badge reads **"Nothing scheduled for now"** in the warning colour rather
 than "On the floor", so the one screen a manager would check to find out
 cannot quietly reassure them.
 
+The rest of that screen has to agree with the badge, and for a while it
+did not. Everything else on Live was measured as minutes since the top of
+the shift *modulo a day*, which carries no date - so a Morning sheet from
+yesterday read at 10:37 came out **running**, with live countdowns beside
+a badge saying nothing was scheduled, and a Day sheet that ended at
+midnight was announced at 02:19 as starting in 13h 44m. `liveState()` now
+asks `shiftWindow()` the same question the badge asks, and says the shift
+has ended when it has.
+
 ## What the reference sheet does not ask for
 
 The sheet defines the scope. It does not speak to:
 
 - **Crew changeover at shift boundaries.** The engine hard-codes three
-  8-hour shifts; the rig treats each boot as the start of a shift. No
-  handover-window vs. cold-takeover decision has been made.
+  8-hour shifts, and the rig now comes to rest at the end of the one it
+  was pushed rather than running past it. What is still undecided is the
+  *changeover itself*: no handover-window vs. cold-takeover decision has
+  been made, and a rig treats every boot as the start of a shift.
 - **Whether anyone reviews the scores an operator gives their own
   takes.** Who may read which screen is now settled and built - see "Who
   signs in, and who does not" above - but nobody checks the marking.

@@ -1,0 +1,60 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>No floor address</title>
+<!--
+  The only page this shell carries, and it is deliberately not a rig.
+
+  It is what the window shows when RIG_URL is missing or unparseable. A
+  kiosk has no terminal and nobody is watching stderr, so the alternative
+  to saying this on screen is a blank white window - which looks exactly
+  like a slow network, and gets power-cycled for an hour before anyone
+  reads a log.
+
+  It carries no rig assets and sets no identity, for the reason spelled
+  out in src/main.rs: a shell that can name a rig is a shell that can name
+  the wrong one.
+-->
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    background: #17110c; color: #f4ede4;
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 2rem;
+  }
+  main { max-width: 34rem; }
+  h1 {
+    font-size: 1.5rem; font-weight: 600; margin: 0 0 1rem;
+    color: #f0b429;
+  }
+  p { margin: 0 0 1rem; color: #d8ccbd; }
+  code {
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    background: #241a12; border: 1px solid #3a2a1c;
+    border-radius: 4px; padding: 0.1em 0.4em; font-size: 0.9em;
+  }
+  pre {
+    background: #241a12; border: 1px solid #3a2a1c; border-radius: 6px;
+    padding: 0.9rem 1rem; overflow-x: auto; font-size: 0.85rem;
+    font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    color: #e8dccb;
+  }
+  .note { color: #a8998a; font-size: 0.9rem; border-top: 1px solid #3a2a1c; padding-top: 1rem; }
+</style>
+<main>
+  <h1>This shell has no floor address</h1>
+  <p>
+    <code>RIG_URL</code> is not set, is empty, or is not a URL, so there is
+    nothing to open. No rig page is bundled in this binary, deliberately —
+    the page has to come from the floor, because that is how a machine
+    learns which rig it is.
+  </p>
+  <pre>RIG_URL=http://floor.internal/apps/rig/</pre>
+  <p class="note">
+    That address is the same on every machine on the floor. It is not this
+    rig’s identity: the service works out which rig is calling from the
+    address the request arrives on, and a machine it cannot place is told
+    it is nobody rather than guessed at.
+  </p>
+</main>

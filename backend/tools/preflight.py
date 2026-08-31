@@ -107,6 +107,34 @@ async def check_migrations() -> bool:
     return False
 
 
+def load_every_domain() -> list[str]:
+    """Import every domain's models, so `Base.metadata` knows what to look
+    for. Returns the domains it loaded.
+
+    Found on disk rather than listed here, and that is the fix for a bug
+    this function has now had twice. The first version imported nothing,
+    so metadata was empty and it reported "0 present, ok" against a
+    database with no tables at all. The second listed ten domains by
+    hand, `accounts` was added without anyone knowing this third list
+    existed, and it reported "11 present" while the models defined
+    thirteen - so it would have passed a database with no `accounts`
+    table, on a service whose every login needs one.
+
+    A list that has to be remembered in three places is a list that will
+    be wrong in one of them. There is nothing to remember now: a new
+    directory under `core/domains/` with a `model.py` in it is found.
+    """
+    import importlib
+
+    root = Path(__file__).resolve().parents[1] / "core" / "domains"
+    loaded = []
+    for path in sorted(root.glob("*/model.py")):
+        name = path.parent.name
+        importlib.import_module(f"core.domains.{name}.model")
+        loaded.append(name)
+    return loaded
+
+
 async def check_tables() -> bool:
     """Every table the models expect. Catches a migration that ran against
     a different database than the one configured here."""
@@ -115,21 +143,7 @@ async def check_tables() -> bool:
     from core.base.model import Base
     from core.infrastructure.database import engine
 
-    # Every domain, imported so Base.metadata knows what to expect. The
-    # first version of this check did not, so metadata was empty and it
-    # cheerfully reported "0 present, ok" against a database with no
-    # tables at all - a preflight that passes when nothing is there is
-    # worse than no preflight.
-    from core.domains.alerts import model as _a  # noqa: F401
-    from core.domains.episode_videos import model as _ev  # noqa: F401
-    from core.domains.episodes import model as _e  # noqa: F401
-    from core.domains.rig_downtime_events import model as _d  # noqa: F401
-    from core.domains.rig_events import model as _re  # noqa: F401
-    from core.domains.rig_productivity_blocks import model as _b  # noqa: F401
-    from core.domains.rig_shift_checks import model as _c  # noqa: F401
-    from core.domains.rig_status import model as _s  # noqa: F401
-    from core.domains.schedules import model as _sc  # noqa: F401
-    from core.domains.sessions import model as _se  # noqa: F401
+    load_every_domain()
 
     try:
         async with engine().connect() as conn:
@@ -200,7 +214,7 @@ async def check_workers() -> bool:
     return True
 
 
-def check_posture(s) -> None:
+def check_posture(s, accounts: int | None = None) -> None:
     """Things that work perfectly and should not see a floor."""
     if s.rig_tokens:
         record(OK, "rig auth", f"{len(s.rig_tokens)} rigs provisioned")
@@ -251,6 +265,50 @@ def check_posture(s) -> None:
         record(WARN, "desk auth",
                "DESK_TOKEN is empty - anyone who can reach this may push a schedule")
 
+    # The desk's other door. A switch is announced in three places in this
+    # service - `announce()` at startup, `/api/health` for a load balancer,
+    # and here for the unit that refuses to come up - and the person-auth
+    # ones were wired into the first two and not this one. So a deployment
+    # was told the *rig* door was open and nothing about the *desk* door.
+    if accounts is None:
+        record(WARN, "person auth",
+               "could not be read - the accounts table was not reachable")
+    elif accounts:
+        record(OK, "person auth", f"{accounts} accounts; the desk needs a sign-in")
+    else:
+        record(WARN, "person auth",
+               "no accounts - the desk is open to anyone who can reach it, and "
+               "nobody can sign in to it either. Make one with "
+               "`python -m tools.mint_account manager`")
+
+    # The one switch in this service whose default is the safe setting.
+    # Everything else is off until somebody turns it on; this is on until
+    # somebody turns it off, so it being off is always a decision and
+    # always worth saying out loud.
+    if s.session_cookie_secure:
+        record(OK, "session cookie", "Secure - HTTPS only")
+    else:
+        record(WARN, "session cookie",
+               "SESSION_COOKIE_SECURE is false - the session cookie will "
+               "travel in cleartext. Right for local http, wrong for a floor")
+
+    if s.login_rate_limit_per_min:
+        record(OK, "login rate limit",
+               f"{s.login_rate_limit_per_min}/min per address")
+    else:
+        record(WARN, "login rate limit",
+               "LOGIN_RATE_LIMIT_PER_MIN is 0 - passwords may be guessed at "
+               "whatever rate the network allows")
+
+    if s.login_lockout_after:
+        record(OK, "login lockout",
+               f"after {s.login_lockout_after} failures, up to "
+               f"{s.login_lockout_max_wait_secs}s")
+    else:
+        record(WARN, "login lockout",
+               "LOGIN_LOCKOUT_AFTER is 0 - a weak password can be found by "
+               "working through a list at the rate limit")
+
     if s.rig_rate_limit_per_min:
         record(OK, "rate limit", f"{s.rig_rate_limit_per_min}/min per rig")
     else:
@@ -283,6 +341,27 @@ def check_posture(s) -> None:
             record(OK, "databases", "test and live are different databases")
 
 
+async def count_accounts() -> int | None:
+    """How many people can sign in. None if the question cannot be asked.
+
+    Read rather than assumed: person auth is on when there is somebody to
+    be, and that fact lives in the database rather than in a setting.
+    """
+    from sqlalchemy import func, select
+
+    from core.domains.accounts.model import Account
+    from core.infrastructure.database import engine
+
+    try:
+        async with engine().connect() as conn:
+            return int((await conn.execute(
+                select(func.count()).select_from(Account))).scalar_one())
+    except Exception:
+        # A missing table is already reported by check_tables; saying it
+        # twice in different words helps nobody.
+        return None
+
+
 async def run(strict: bool) -> int:
     print("preflight\n")
 
@@ -296,7 +375,7 @@ async def run(strict: bool) -> int:
         await check_tables()
     await check_storage(s)
     await check_workers()
-    check_posture(s)
+    check_posture(s, await count_accounts() if live else None)
 
     from core.infrastructure.database import engine
     await engine().dispose()

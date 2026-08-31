@@ -108,6 +108,83 @@ somebody's hour.
 *Not enforced, and not currently even visible.* The rig knows when a turn
 overruns; nothing accumulates it, and nothing tells the desk. See **F2**.
 
+### I9. A rig works only inside the shift it was pushed
+
+The window the desk wrote is the whole of the rig's authority to work.
+Outside it there is nobody at this rig, and the rig must say so rather
+than keep a live screen up.
+
+*Enforced, newly.* `tick()` had one half of this from the start —
+Standby ends when the schedule says somebody is due — and nothing at all
+for the other. A shift that ended simply left the rig where it was, with
+live pedals, and three things followed that nobody at the rig could see:
+the last stint of every shift was never filed, because `rotate()` is what
+emits one and the final turn has no turn to rotate into; episodes
+recorded past the end filed with `operatorId` null, because `envelope()`
+had no turn to read; and twelve rigs sitting on Handover after 16:00 look,
+from the desk, exactly like twelve rigs being worked.
+
+`rest()` closes it, by comparison against the window the desk wrote and
+never by working out when a shift ends — the same rule the rig already
+followed going the other way. It files the stint on the way out and
+leaves the next crew owing their own check.
+
+It rests from the working loop only (`RESTS_FROM`). A rig in a fault
+report or standing down is dealing with the machine rather than the
+schedule, and **I6** says a rig that is down stays down until a human
+clears it — a clock is not a human. An early check is excluded too: it
+runs outside the shift deliberately.
+
+**I1 holds through it.** A take is never cut short by the shift ending
+any more than by a turn boundary; `restDue` waits for the episode to land,
+exactly as `handoverDue` does.
+
+*Hole:* a rig that is down when its shift ends stays down, and its stint
+stays unfiled, until somebody clears it. That is the trade **I6** asks
+for and it is the right way round, but it means downtime spanning a crew
+change is charged to one stint rather than split at the boundary.
+
+### I10. A rig runs what the desk pushed it, or nothing
+
+No schedule the desk did not send may ever reach an operator, and no work
+may be filed against one.
+
+*Enforced, newly.* `loadPayload()` tried the service, then a co-located
+`schedule.json`, and then **generated a rota from
+`packages/demo-roster`** — demonstration names, on a machine standing on
+a real floor. The rig opened its shift check on it and let the operator
+work, and every envelope went to the outbox and the journal carrying
+`operatorId: op-a3`. The uploader posts those the moment the service
+returns; the ledger is append-only and has no correction.
+
+The window check does not catch it, which is the trap worth naming: an
+expired sheet is refused because `coversAt()` says its window has closed,
+but a generated sheet is stamped with today and therefore always covers
+now. **The guard that stops a rig running yesterday's real schedule waves
+through a fabricated one.**
+
+It needed less of an outage than it sounds. `rig-config.js` is a static
+file and the schedule is an API call, so a service restarting behind a
+web server that is still up — a deployment, from the rig's side — landed
+exactly here, with `confirmIdentity()` already satisfied and skipped.
+
+The line is the one `rig-config.js` already draws, and it is drawn on
+whether the **service identified this machine**, not on a URL parameter.
+A laptop or a static deploy sets nothing and is a demo; a machine told it
+is RIG-07 is a rig, and it is the one whose filings will be believed. So
+`CONFIGURED_RIG` gates it, the same test that decides whether an
+unrecognised machine refuses to work at all.
+
+With nothing pushed the rig stands by, says "schedule not pushed" on the
+rail rather than naming somebody, and keeps asking — `resync()` used to
+return early when there was no payload, which would have made "it starts
+seconds after somebody pushes" quietly mean "after somebody reloads
+twelve browsers".
+
+Same trade as **I9** and as refusing an expired sheet: idle is loud,
+cheap and recoverable; work filed under somebody who was never there is
+silent, permanent, and poisons the training data.
+
 ---
 
 ## Part 2 — The failures we should expect
@@ -178,6 +255,34 @@ it should be paid knowingly: every number the floor produces is correct
 *Recommendation:* do not add a login. Detect it instead — if the desk
 ever sees two rigs whose activity contradicts the schedule, that is a
 question for a human, not a prompt for the operator. **OPEN.**
+
+**The near neighbour of this, and it is decided.** Not the wrong rig, but
+the wrong *person*: Sara is on the sheet, Sara is off sick, Ben covers.
+Every take Ben makes is filed under Sara and nothing can tell.
+
+A picker was proposed for it — the idle left pedal on Handover offering
+the group's other three operators, so whoever is actually there could say
+so. Everything it needs is already in the payload; each rig sees all four
+of its group's operators over a shift, so it would have cost nothing but
+the pedal.
+
+**It is not being built, and the reason is the reason for everything else
+here.** Somebody decided Ben covers. That is a rostering decision, and
+the desk is where rostering decisions are made. A picker at the rig makes
+the rig a second place where who-works-where gets settled, and the whole
+design turns on there being one. The rig does not choose which rig it is;
+it does not compute its own rotation; it does not choose its operator
+either. A cover is a roster change: assigned at the desk, pushed, and the
+rig files whoever the sheet names.
+
+Two things have to hold for that to be true rather than merely stated,
+and both now do. The correction has to **survive** — it used to be
+reverted by the next desk to push, which is what the roster read-back in
+`rotation-desk-v1` fixes. And it has to be **early**: a push covers the
+hours already gone but cannot re-file the work done in them, so the floor
+rule is *push before the shift starts, not after it*. What is left is the
+gap between an operator walking in and the manager pushing, and that gap
+is a floor process rather than a thing the rig can close by asking.
 
 **F5 — the ghost.** *(likely)*
 A walks away without pressing anything. The rig sits on Recording,

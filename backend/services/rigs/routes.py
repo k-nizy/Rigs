@@ -198,9 +198,16 @@ async def schedule_json(
     return await schedule(rig_id, session)
 
 
-@router.get("/rigs/config.js", tags=["schedules"],
-            response_class=Response,
-            summary="Which rig this machine is, decided by where it called from")
+# HEAD as well as GET, and spelled out because `@router.get` will not do
+# it for you. Starlette's plain Route adds HEAD when GET is registered;
+# FastAPI's APIRoute does not. So HEAD used to fall past this route - on
+# local_gateway to the static mount, which serves the placeholder that
+# names nobody, and behind nginx, where `location =` matches every
+# method, to a 405. Two deployments, two different wrong answers to the
+# one question this route exists to answer.
+@router.api_route("/rigs/config.js", methods=["GET", "HEAD"], tags=["schedules"],
+                  response_class=Response,
+                  summary="Which rig this machine is, decided by where it called from")
 async def rig_config_js(
     request: Request, s: Settings = Depends(get_settings)
 ) -> Response:
@@ -382,7 +389,17 @@ async def health(
     """
     body = {
         "ok": True,
-        "database": s.safe_url(),
+        # No connection string. It used to name the host, the port, the
+        # database and the user here, masked only in the password - and
+        # this route answers anybody who can reach the port. Masking the
+        # password never made the rest useful to a stranger.
+        #
+        # Nothing consumed it. The load balancer reads `ok` and the
+        # status; the rig reads `rigIdentity`; `tools.preflight` reads
+        # the settings directly and prints it on the box, which is where
+        # it belongs. The switches below stay: a caller can learn each of
+        # them by probing anyway - try a push, count a few refusals - and
+        # the rig depends on reading one of them.
         "rigAuth": "on" if s.auth_is_on else "off",
         # Whether this service tells rigs apart at all. The rig reads it:
         # a floor that identifies its rigs and could not identify *this*

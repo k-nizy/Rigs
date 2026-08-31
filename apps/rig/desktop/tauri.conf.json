@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "rig",
+  "version": "0.1.0",
+  "identifier": "co.verlet.rigs.rig",
+  "build": {
+    "frontendDist": "shell"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": ["deb"],
+    "icon": ["../assets/icon-desktop-512.png"]
+  }
+}

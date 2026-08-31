@@ -1,0 +1,55 @@
+# The kiosk shell. One binary, twelve identical machines - which rig each
+# one is comes from the service, not from anything in here. See src/main.rs.
+
+[package]
+name = "rig-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Full-screen kiosk shell hosting the rig page served by the floor."
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# `dynamic-acl` is what lets a capability be built while the shell is
+# starting rather than compiled into it. RIG_URL is a deployment fact -
+# Ansible sets it, the same value on all twelve machines - so the origin
+# the page is served from is not known when this binary is built, and a
+# static capability could only name it with a wildcard that would trust
+# any page the shell was ever pointed at.
+tauri = { version = "2", features = ["dynamic-acl"] }
+
+# The journal reads and writes whatever the page hands it. It deliberately
+# does not model an event: the shape of one is settled by
+# `packages/schema/event.js` and validated by the service, and a second
+# definition here would be a second answer to what an event is - the same
+# mistake as a Python re-implementation of the rotation.
+serde_json = "1"
+
+# The episode id is the single most important join in the system - the
+# file on the SSD and the row in the ledger name the same thing - so it is
+# a parsed type rather than a string. A malformed id then cannot become a
+# directory name; it is refused at the boundary.
+uuid = "1"
+
+# Free space for Health, which the plan asks for by name. std has no API
+# for it, and reporting a number nobody measured is how a disk-full alert
+# fires on the wrong rig.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# v4 only for the tests, which mint ids the way the rig does. The shell
+# itself never generates one - it is handed the id the page minted at
+# pedal-press - so the binary does not carry a random number generator it
+# has no use for.
+[dev-dependencies]
+uuid = { version = "1", features = ["v4"] }
+
+# A kiosk that panics should not also be slow to notice. Nothing here is
+# hot, so optimise the release build for size and let it abort rather than
+# unwind into a half-lit screen.
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"

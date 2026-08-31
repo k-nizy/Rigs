@@ -206,7 +206,11 @@ async function mountRig(opts) {
   REGISTRY = byId;
 
   const at = (opts.at || "10:37").split(":").map(Number);
-  const FIXED = new Date(2026, 7, 23, at[0], at[1], at[2] || 0);
+  /* Not a constant. A rig's shift ENDS, and the only thing that tells it
+     so is the wall clock passing the window the desk wrote - so a test
+     that cannot move this clock cannot reach the end of a shift at all,
+     which is how that seam went untested. `clockTo` moves it. */
+  let FIXED = new Date(2026, 7, 23, at[0], at[1], at[2] || 0);
   const RealDate = global.Date;
   class FakeDate extends RealDate {
     constructor(...a) { if (!a.length) super(FIXED.getTime()); else super(...a); }
@@ -367,6 +371,15 @@ async function mountRig(opts) {
     /* What the stint has accumulated - the half of a restart that is not
        an event, and the half a reload used to lose. */
     stint() { return global.rigStint ? global.rigStint() : null; },
+
+    /* Move the wall clock to a time of day, same date. The rig reads the
+       floor's clock for everything about who is on, so this is the only
+       way to walk a live rig up to and over the end of its shift. */
+    clockTo(hhmm) {
+      const h = String(hhmm).split(":").map(Number);
+      FIXED = new RealDate(2026, 7, 23, h[0], h[1], h[2] || 0);
+      return this;
+    },
 
     /* Ask for a fresh schedule now rather than waiting on the timer. */
     async resync() { if (global.rigResync) await global.rigResync(); await this.settle(); },
