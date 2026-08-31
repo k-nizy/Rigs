@@ -295,6 +295,19 @@ pub fn init_script() -> String {
     .to_string()
 }
 
+/// What the local page reads when there is no journal to speak of.
+///
+/// The message is a path and an OS error, and the path comes from the
+/// environment, so it is escaped as JSON rather than pasted into the
+/// script: a directory with a quote in its name should make an ugly page,
+/// not a broken one.
+pub fn fault_script(fault: &str) -> String {
+    format!(
+        "window.RIG_SHELL_FAULT = {};",
+        serde_json::to_string(fault).unwrap_or_else(|_| String::from("\"\""))
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,5 +381,27 @@ mod tests {
     fn metadata_that_is_not_json_is_refused_rather_than_guessed() {
         assert!(meta("ep-1/wrist-l").is_err());
         assert!(video_meta(None).is_err());
+    }
+
+    // ----------------------------------------------------- fault_script
+
+    #[test]
+    fn a_fault_reaches_the_page_as_a_string_it_can_read() {
+        assert_eq!(
+            fault_script("/var/lib/rig: Permission denied (os error 13)"),
+            "window.RIG_SHELL_FAULT = \"/var/lib/rig: Permission denied (os error 13)\";"
+        );
+    }
+
+    #[test]
+    fn a_path_that_could_break_the_script_does_not() {
+        // The path comes from the environment. A quote or a newline in it
+        // must make an ugly page rather than a page with no message at all
+        // - which is the failure this whole fault page exists to prevent.
+        let js = fault_script("/var/\"lib\"/rig
+: no");
+        assert!(js.starts_with("window.RIG_SHELL_FAULT = \""));
+        assert!(js.ends_with("\";"));
+        assert!(!js.contains('\n'), "a raw newline would end the statement early");
     }
 }
