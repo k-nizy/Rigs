@@ -236,6 +236,27 @@ maintains. Accounts are minted with `python -m tools.mint_account`, which
 is also how the first manager exists at all - a seeded default would be a
 known password on every deployment.
 
+**But everybody can change their own password**, from either screen, at
+`POST /api/auth/password`. Minting is how an account *starts*; it is not
+how a password gets *changed*, and while it was both, every password on
+the floor travelled through a chat message at least once - somebody had
+to ask a manager, and the manager had to read the new one back.
+
+Three properties, each because the obvious version gets it wrong. The
+current password is required even though the caller is signed in: a
+cookie says this browser signed in once, not who is at the keyboard, and
+screens here are left open on a floor. Every *other* session is revoked,
+because the reason to change a password is usually that it might be
+known. This one is not - it is re-issued instead, since a flow that signs
+you out for using it is one people stop using, and they just proved the
+current password.
+
+The rule about what a password may be lives in
+`core/domains/accounts/passwords.py` and nowhere else. It used to sit
+inside `mint_account`'s interactive prompt, so `--password` set anything
+at all: the check was on how the password was typed rather than on the
+password.
+
 **Off until configured, like everything else here.** With no accounts in
 the database the desk opens exactly as it always did. The one switch that
 defaults the other way is `SESSION_COOKIE_SECURE`, because a security
@@ -491,6 +512,22 @@ down, and still agree with the models. That last one matters because the
 test suite builds its schema from the models while a deployment builds
 it from the migrations — a green suite on its own cannot tell you those
 two have not drifted apart.
+
+**A suite run stays inside its own schema, `public` included.** Each run
+takes a private schema in `rigs_test`, and the connection that gets it
+names that schema and *nothing else* — `search_path` is built in one
+place, `database.schema_connect_args()`, which both the fixtures and the
+app under test use.
+
+The single name is the whole point. SQLAlchemy emits unqualified table
+names, so Postgres resolves each by walking the path in order: with
+`run_X,public` on it, `CREATE TABLE` landed in the run schema while
+`DROP TABLE` walked past the still-empty schema on the first test and
+found the one in `public` instead. The suite dropped tables it had never
+created, which meant running a service against `rigs_test` — the way to
+do local end-to-end work without minting an account — was quietly
+incompatible with running the suite beside it. It looked like the
+service breaking.
 
 Before changing anything in `packages/engine/`, run the tests. Before
 changing the payload shape, remember it is a contract between three

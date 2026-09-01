@@ -1031,4 +1031,44 @@ pre.json .n { color: var(--accent); }
 .denied-who { font-size: 0.9rem; color: var(--ink); margin: 0 0 6px; }
 .denied-sub { font-size: 0.82rem; color: var(--ink-2); margin: 0 0 4px; }
 
-@media print { .who, #view-signin, #view-denied { display: none !important; } }
+/* =================================================================
+ * Change password
+ *
+ * A modal, because it is a short errand that must not lose the plan
+ * underneath it - a manager who has half a schedule laid out should
+ * not have to leave the page to change a password.
+ * ================================================================= */
+
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.45);
+  overflow-y: auto;
+}
+
+/* `hidden` is a browser default of display:block, which a display:flex
+   rule outranks - so the panel drew over the desk as an empty sheet
+   while claiming to be hidden. That has happened twice in this repo
+   now, once on My Shift, which is why it is stated rather than left
+   to the cascade. */
+.modal[hidden] { display: none; }
+
+.modal .card { margin: auto; max-width: 380px; width: 100%; }
+
+.modal-buttons { display: flex; gap: 8px; }
+.modal-buttons .btn { flex: 1; }
+
+.card-ok {
+  font-size: 0.82rem; color: var(--ok); background: var(--ok-soft);
+  border: 1px solid var(--ok); border-radius: 3px;
+  padding: 8px 10px; margin: 0 0 14px;
+}
+
+@media print {
+  .who, #view-signin, #view-denied, .modal { display: none !important; }
+}

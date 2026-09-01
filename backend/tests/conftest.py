@@ -207,9 +207,12 @@ async def _run_schema():
 async def engine(_run_schema):
     """A clean schema per test. Dropping and recreating is fast at this
     size and means no test can inherit another's rows."""
+    # The same confinement the app under test gets, from the same
+    # function, so the two halves of a run cannot be pointed at
+    # different places by fixing one of them.
     eng = create_async_engine(
         _test_url(), future=True,
-        connect_args={"server_settings": {"search_path": f"{RUN_SCHEMA},public"}},
+        connect_args=database.schema_connect_args(RUN_SCHEMA),
     )
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
