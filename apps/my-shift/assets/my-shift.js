@@ -613,9 +613,16 @@ async function loadShift() {
 function applyGate() {
   const open = S.mayUse("operator");
   const denied = S.wrongRole("operator");
+  /* A door of its own, and it outranks the sign-in card: somebody who
+     opened a reset link has no password to sign in with, so offering
+     them the box is offering the one thing they know does not work. */
+  const resetting = !open && !!doorState.resetToken;
+  const forgetting = !open && !denied && !resetting && doorState.forgot;
 
-  $("view-signin").hidden = open || denied;
+  $("view-signin").hidden = open || denied || resetting || forgetting;
   $("view-denied").hidden = !denied;
+  if ($("view-forgot")) $("view-forgot").hidden = !forgetting;
+  if ($("view-reset")) $("view-reset").hidden = !resetting;
   $("view-day").hidden = !open;
 
   const chip = $("who");
@@ -695,6 +702,88 @@ async function signIn(e) {
 async function signOut() {
   await S.signOut();
   applyGate();
+}
+
+/* --------------------------------------------- a password nobody remembers
+
+   Two doors that are not the sign-in card: asking for a link, and
+   opening one. Which is showing is `doorState`, read by applyGate. */
+
+const doorState = { forgot: false, resetToken: null };
+
+/* Take the token out of the address bar, keeping the token itself. It is
+   a credential while it lives, and a URL is the least private place on a
+   screen: history, referrers, and whoever is standing behind you. */
+function claimResetToken() {
+  const token = S.resetTokenInUrl();
+  if (!token) return;
+  doorState.resetToken = token;
+  if (window.history && window.history.replaceState) {
+    window.history.replaceState(
+      null, "", window.location.pathname + window.location.hash);
+  }
+}
+
+function showForgot(on) {
+  doorState.forgot = on;
+  if ($("forgot-error")) $("forgot-error").hidden = true;
+  if ($("forgot-ok")) $("forgot-ok").hidden = true;
+  if ($("forgot-email")) $("forgot-email").value = ($("in-email") || {}).value || "";
+  applyGate();
+}
+
+async function sendResetLink(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn = $("btn-forgot-send");
+  const err = $("forgot-error"), ok = $("forgot-ok");
+  if (err) err.hidden = true;
+  if (ok) ok.hidden = true;
+  if (btn) btn.disabled = true;
+  try {
+    const out = await S.requestReset($("forgot-email").value);
+    if (!out.ok) {
+      if (err) { err.textContent = out.message; err.hidden = false; }
+      return;
+    }
+    /* The service's own wording, which is careful not to say whether
+       that address exists. Rewriting it here would undo that. */
+    if (ok) { ok.textContent = out.message; ok.hidden = false; }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function saveResetPassword(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn = $("btn-reset-save"), err = $("reset-error");
+  if (err) err.hidden = true;
+
+  if ($("reset-new").value !== $("reset-again").value) {
+    if (err) {
+      err.textContent = "The two new passwords are not the same.";
+      err.hidden = false;
+    }
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  try {
+    const out = await S.finishReset(doorState.resetToken, $("reset-new").value);
+    if (!out.ok) {
+      if (err) { err.textContent = out.message; err.hidden = false; }
+      return;
+    }
+    /* Spent, and the service has already signed them in. Clearing it
+       stops a reload trying to use it again and being told, correctly
+       but confusingly, that it has been used. */
+    doorState.resetToken = null;
+    ["reset-new", "reset-again"].forEach(id => {
+      if ($(id)) $(id).value = "";
+    });
+    await openTheDay();
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 /* --------------------------------------------- changing your password
@@ -787,6 +876,10 @@ function on(id, type, fn) {
 on("signin-form", "submit", signIn);
 on("btn-signout", "click", signOut);
 on("btn-denied-out", "click", signOut);
+on("btn-forgot", "click", () => showForgot(true));
+on("btn-forgot-back", "click", () => showForgot(false));
+on("forgot-form", "submit", sendResetLink);
+on("reset-form", "submit", saveResetPassword);
 on("btn-passwd", "click", openPasswd);
 on("btn-passwd-cancel", "click", closePasswd);
 on("passwd-form", "submit", savePasswd);
@@ -842,6 +935,11 @@ function pageIsCurrent() {
 
 (async function boot() {
   if (!pageIsCurrent()) return;
+  /* Before the probe. Claiming the token takes it out of the address
+     bar, and the probe is the first thing that could be slow - a reset
+     link left in the URL while a fetch is in flight is a credential on
+     screen for as long as that takes. */
+  claimResetToken();
   await S.probe();
   await openTheDay();
 })();

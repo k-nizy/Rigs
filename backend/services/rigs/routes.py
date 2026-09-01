@@ -34,11 +34,13 @@ from services.rigs.auth import (
     desk_auth, desk_read_auth, rig_auth, rig_auth_for_key, rig_rate_limit,
 )
 from services.rigs.people import (
-    REFUSED, SESSION_COOKIE, PasswordRefused, change_password,
-    clear_session_cookies, current_account, issue_session_cookies, lockout,
-    lockout_key, login_key, login_limiter, require_account, require_csrf,
-    require_manager, require_operator, sign_in,
+    REFUSED, RESET_SENT, SESSION_COOKIE, PasswordRefused, begin_reset,
+    change_password, clear_session_cookies, current_account, finish_reset,
+    issue_session_cookies, lockout, lockout_key, login_key, login_limiter,
+    require_account, require_csrf, require_manager, require_operator,
+    reset_limiter, sign_in,
 )
+from services.rigs import mail
 from services.rigs.identity import caller_address, config_js, rig_at
 from core.infrastructure.storage import Storage, get_storage
 from core.workflows.video import VideoError, backlog, confirm, where_to_put
@@ -786,6 +788,108 @@ async def logout(
         await session.commit()
     clear_session_cookies(response, settings)
     return {"signedOut": bool(ended)}
+
+
+class ResetRequestIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
+class ResetFinishIn(BaseModel):
+    token: str = Field(min_length=8, max_length=512)
+    newPassword: str = Field(min_length=1, max_length=1024)
+
+
+def _reset_is_on(settings: Settings) -> None:
+    """Refuse both reset routes when there is no way to deliver a token.
+
+    404, not 503 and not a cheerful 200. A deployment with no relay
+    cannot complete this flow, and a route that accepted the request
+    anyway would leave somebody waiting at a screen for mail that was
+    never going to be sent - which is worse than being told plainly that
+    the floor does not do this.
+
+    Off until configured, and off meaning *refused* rather than open, for
+    the reason CLAUDE.md gives twice: the failures in this area have both
+    been something unverifiable read as permission.
+    """
+    if not mail.is_configured(settings):
+        raise HTTPException(
+            status_code=404,
+            detail="this floor has no mail relay configured, so it cannot send "
+                   "a reset link. Ask a manager to set your password.",
+        )
+
+
+@router.post("/auth/reset/request", tags=["people"],
+             summary="Ask for a link to set a new password")
+async def request_password_reset(
+    body: ResetRequestIn, request: Request,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Send a reset link to that address, if it belongs to an account.
+
+    **The reply is the same either way, and that is the whole design of
+    this route.** It is reached by anybody who can load the sign-in page,
+    and it takes an email address: a version that said "no such account"
+    would be a faster way to enumerate the floor's staff than the login
+    route the dummy hash exists to protect.
+
+    So: one message, one status, whatever happened - including when the
+    relay refused the mail. What that costs is a person who mistypes
+    their address waiting for something that will never arrive, which is
+    the accepted price and is why the message says *if*.
+
+    Throttled per calling address and per hour rather than per minute.
+    This route sends mail to somebody else's inbox, so an unbounded one
+    is a way to have the floor deliver a hundred messages to a person who
+    asked for none.
+    """
+    _reset_is_on(settings)
+
+    wait = reset_limiter(settings).allow(login_key(request))
+    if wait > 0:
+        raise HTTPException(
+            status_code=429, detail="too many reset requests",
+            headers={"Retry-After": str(max(1, int(wait + 0.5)))},
+        )
+
+    await begin_reset(session, body.email, settings,
+                      requested_from=login_key(request))
+    return {"ok": True, "detail": RESET_SENT}
+
+
+@router.post("/auth/reset", response_model=WhoOut, tags=["people"],
+             summary="Set a new password using a reset link")
+async def finish_password_reset(
+    body: ResetFinishIn, response: Response,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> WhoOut:
+    """Spend the token and set the password.
+
+    No cookie needed and no CSRF token: whoever holds this has proved
+    they can read the account's mailbox, which is the only thing a reset
+    can ever prove. The token is the credential, it works once, and using
+    it ends every session the account had - including whoever was signed
+    in with the password that was just replaced, which is the point if
+    the reason for the reset was that somebody else knew it.
+
+    They are signed in on the way out. Making somebody who has just
+    proved the mailbox and set a password then type that password into a
+    login box is a step with nothing behind it.
+    """
+    _reset_is_on(settings)
+
+    try:
+        account, token = await finish_reset(
+            session, body.token, body.newPassword, settings)
+    except PasswordRefused as refused:
+        raise HTTPException(status_code=400, detail=str(refused))
+
+    await session.commit()
+    csrf = issue_session_cookies(response, token, settings)
+    return _who(account, csrf)
 
 
 class ChangePasswordIn(BaseModel):

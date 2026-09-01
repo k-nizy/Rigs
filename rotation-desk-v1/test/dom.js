@@ -169,7 +169,21 @@ async function mountDesk(opts) {
   };
   global.__docListeners = docListeners;
   global.window = global;
-  global.location = { search: opts.search || "", hash: "" };
+  global.location = {
+    search: opts.search || "",
+    hash: "",
+    pathname: "/rotation-desk-v1/",
+  };
+  /* A real one, because the page uses `replaceState` to take a reset
+     token out of the address bar - and "did the credential leave the
+     URL" is a question only answerable if the stub actually moves. */
+  global.history = {
+    replaceState(_state, _title, url) {
+      const [path, query] = String(url).split("?");
+      global.location.pathname = path;
+      global.location.search = query ? "?" + query : "";
+    },
+  };
   global.fetch = opts.fetchImpl || (() => Promise.reject(new Error("no server")));
 
   require(path.join(REPO, "packages/session/session.js"));
@@ -204,6 +218,9 @@ async function mountDesk(opts) {
     key(name) {
       (docListeners["keydown"] || []).forEach(fn => fn({ key: name }));
     },
+
+    /* What is in the address bar now. */
+    url() { return global.location.pathname + global.location.search; },
 
     mode(name) { this.click(byId["modes"].children.find(b => b.dataset.mode === name)); },
 

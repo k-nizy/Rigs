@@ -18,7 +18,9 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, func, select, update
 
 from core.base.repository import BaseRepository
-from core.domains.accounts.model import Account, AccountSession
+from core.domains.accounts.model import (
+    Account, AccountSession, PasswordReset,
+)
 from core.domains.accounts.passwords import token_fingerprint
 
 
@@ -116,6 +118,92 @@ class AccountSessionRepository(BaseRepository[AccountSession]):
         result = await self.session.execute(
             delete(AccountSession).where(
                 AccountSession.expires_at <= (now or datetime.now(timezone.utc))
+            )
+        )
+        return result.rowcount or 0
+
+
+class PasswordResetRepository(BaseRepository[PasswordReset]):
+    model = PasswordReset
+
+    async def open(self, account_id: uuid.UUID, token: str, lifetime: timedelta,
+                   now: datetime | None = None,
+                   requested_from: str | None = None) -> PasswordReset:
+        """Mint one, and void every other live reset for this account.
+
+        Voiding the earlier ones is the point. Somebody who asks three
+        times because nothing seemed to arrive would otherwise have three
+        working ways into their account, all sitting in a mailbox, each
+        good until it expires. Only the newest should open the door.
+        """
+        now = now or datetime.now(timezone.utc)
+        await self.void_all(account_id, now=now)
+        return await self.add(PasswordReset(
+            account_id=account_id,
+            token_fingerprint=token_fingerprint(token),
+            issued_at=now,
+            expires_at=now + lifetime,
+            requested_from=requested_from,
+        ))
+
+    async def live(self, token: str, now: datetime | None = None
+                   ) -> tuple[PasswordReset, Account] | None:
+        """The reset this token names, with its account, or None.
+
+        Unused, unexpired, and the account still enabled - all conditions
+        of the query rather than checks after it, for the reason given on
+        `AccountSessionRepository.live`. A disabled account matters here
+        especially: somebody who has left must not be able to walk back
+        in through a link they were sent on their last day.
+        """
+        now = now or datetime.now(timezone.utc)
+        rows = await self.session.execute(
+            select(PasswordReset, Account)
+            .join(Account, Account.id == PasswordReset.account_id)
+            .where(
+                PasswordReset.token_fingerprint == token_fingerprint(token),
+                PasswordReset.used_at.is_(None),
+                PasswordReset.expires_at > now,
+                Account.disabled_at.is_(None),
+            )
+        )
+        return rows.first()
+
+    async def spend(self, token: str, now: datetime | None = None) -> int:
+        """Mark it used. Returns the row count, so a caller can tell a
+        first use from a second one without asking again - which is what
+        makes single-use a fact rather than an intention."""
+        result = await self.session.execute(
+            update(PasswordReset)
+            .where(
+                PasswordReset.token_fingerprint == token_fingerprint(token),
+                PasswordReset.used_at.is_(None),
+            )
+            .values(used_at=now or datetime.now(timezone.utc))
+        )
+        return result.rowcount or 0
+
+    async def void_all(self, account_id: uuid.UUID,
+                       now: datetime | None = None) -> int:
+        """Every outstanding reset for this person. What issuing a new one
+        does, and what setting a password by any route has to do - a link
+        still lying in a mailbox after the password has changed is a way
+        back in for whoever else can read that mailbox."""
+        result = await self.session.execute(
+            update(PasswordReset)
+            .where(
+                PasswordReset.account_id == account_id,
+                PasswordReset.used_at.is_(None),
+            )
+            .values(used_at=now or datetime.now(timezone.utc))
+        )
+        return result.rowcount or 0
+
+    async def purge_expired(self, now: datetime | None = None) -> int:
+        """Housekeeping. `live()` already refuses them."""
+        result = await self.session.execute(
+            delete(PasswordReset).where(
+                PasswordReset.expires_at <= (now or datetime.now(timezone.utc))
             )
         )
         return result.rowcount or 0

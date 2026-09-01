@@ -139,3 +139,60 @@ class AccountSession(TimestampedBase):
         # The sweep that clears expired rows, and nothing else reads this.
         Index("ix_account_sessions_expires", "expires_at"),
     )
+
+
+class PasswordReset(TimestampedBase):
+    """One outstanding "I have forgotten my password", until it is used.
+
+    The same shape as `AccountSession` above and for the same reasons: a
+    fingerprint rather than the token, so a dump of this table is a list
+    of expiry dates instead of a set of working ways in; and a row rather
+    than a signed value, so it can be withdrawn.
+
+    Withdrawal is not a nicety here. A reset token *is* the account for
+    as long as it lives, so it has to be single-use and short-lived, and
+    both of those are `used_at` and `expires_at` on a row.
+
+    `requested_by` and `requested_from` are kept because a run of resets
+    against one account is the shape of somebody working through a list,
+    and the log line alone is not queryable. `requested_by` is the
+    address as typed rather than the account's own: the request route
+    answers the same way for an address that does not exist, so there is
+    not always an account to attribute it to.
+    """
+
+    __tablename__ = "password_resets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("accounts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    # SHA-256 hex, never the token. Same argument as the session table.
+    token_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    # Set the moment it is spent. A reset link that works twice is a link
+    # that still works after it has been read out of a mailbox once.
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    requested_from: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    __table_args__ = (
+        Index("uq_password_resets_fingerprint", "token_fingerprint", unique=True),
+        Index("ix_password_resets_expires", "expires_at"),
+        # Every live reset for one account, which is what issuing a new
+        # one has to void and what a "who is being targeted" question asks.
+        Index("ix_password_resets_account", "account_id"),
+    )

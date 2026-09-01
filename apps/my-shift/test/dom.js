@@ -131,6 +131,21 @@ async function mountMyShift(opts) {
     },
   };
   global.window = global;
+  global.location = {
+    search: opts.search || "",
+    hash: "",
+    pathname: "/apps/my-shift/",
+  };
+  /* A real one, because the page uses `replaceState` to take a reset
+     token out of the address bar - and "did the credential leave the
+     URL" is a question only answerable if the stub actually moves. */
+  global.history = {
+    replaceState(_state, _title, url) {
+      const [path, query] = String(url).split("?");
+      global.location.pathname = path;
+      global.location.search = query ? "?" + query : "";
+    },
+  };
   /* The page listens for scroll to keep the perch in step. Nothing
      scrolls headlessly, so this only has to exist. */
   const listeners = {};
@@ -166,6 +181,9 @@ async function mountMyShift(opts) {
     key(name) {
       (docListeners["keydown"] || []).forEach(fn => fn({ key: name }));
     },
+
+    /* What is in the address bar now. */
+    url() { return global.location.pathname + global.location.search; },
 
     /* Which of the three screens is up, as one word. */
     showing() {

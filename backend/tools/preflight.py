@@ -309,6 +309,37 @@ def check_posture(s, accounts: int | None = None) -> None:
                "LOGIN_LOCKOUT_AFTER is 0 - a weak password can be found by "
                "working through a list at the rate limit")
 
+    # Password reset by email. Off until configured, and unlike most of
+    # what is checked here, being *on* is the state that needs saying.
+    if not s.smtp_host:
+        record(OK, "password reset",
+               "off - no SMTP_HOST, so the reset routes refuse. A manager "
+               "sets passwords with tools.mint_account passwd")
+    else:
+        if not s.public_base_url:
+            record(FAIL, "password reset",
+                   "SMTP_HOST is set but PUBLIC_BASE_URL is not, so the link "
+                   "in the email would have nowhere to point")
+        else:
+            record(OK, "password reset",
+                   f"on - links to {s.public_base_url}, good for "
+                   f"{s.password_reset_minutes} minutes, "
+                   f"{s.password_reset_per_hour}/hour per address")
+
+        # The part nobody thinks about when they turn it on.
+        record(WARN, "reset addresses",
+               "password reset is on, which makes the email on an account a "
+               "credential: whoever reads that mailbox can take the account. "
+               "Those addresses are typed once at mint_account time and "
+               "nothing has ever verified one, so a typo is a reset link "
+               "posted to a stranger. Check them with "
+               "`python -m tools.mint_account list`")
+
+        if not s.smtp_starttls:
+            record(WARN, "reset transport",
+                   "SMTP_STARTTLS is false - the reset link travels to the "
+                   "relay in cleartext, and that link is the account")
+
     if s.rig_rate_limit_per_min:
         record(OK, "rate limit", f"{s.rig_rate_limit_per_min}/min per rig")
     else:

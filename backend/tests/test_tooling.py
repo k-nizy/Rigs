@@ -20,22 +20,55 @@ import pytest
 from tools import mint_tokens, preflight
 
 
+# Everything a real Settings has, so a stand-in cannot be missing a
+# field the checks read. Listing them by hand is what broke this file:
+# five settings were added for password reset and all 28 tests in it died
+# on `AttributeError: no attribute 'smtp_host'` - the same shape as the
+# bug preflight's own table check had, where ten domains were listed by
+# hand and `accounts` was not one of them.
+#
+# A list maintained by hand next to a thing that grows is a list that
+# will be wrong, and the third time is enough.
+def _real_defaults() -> dict:
+    from pydantic_core import PydanticUndefined
+
+    from core.infrastructure.config import Settings
+
+    out = {}
+    for name, field in Settings.model_fields.items():
+        if field.default_factory is not None:
+            out[name] = field.default_factory()
+        elif field.default is not PydanticUndefined:
+            out[name] = field.default
+        else:
+            out[name] = ""          # required, so it has no default to copy
+    return out
+
+
 class FakeSettings:
-    """Only the fields check_posture reads."""
+    """A settings object for the checks, with everything a real one has.
+
+    Three layers, in order. The real model's defaults, so nothing is ever
+    missing. Then the deliberate "off" values below - this file's tests
+    want a bare deployment unless `FLOOR` turns something on, and several
+    of them assert on exactly that. Then whatever the test passed.
+    """
+
+    # Off, whatever the real default is. `session_cookie_secure` is the
+    # one that differs on purpose: it ships True, and these tests want to
+    # start from a deployment that has configured nothing.
+    OFF = dict(
+        rig_tokens={}, rig_addresses={}, desk_token="",
+        rig_rate_limit_per_min=0, session_cookie_secure=False,
+        login_rate_limit_per_min=0, login_lockout_after=0,
+        video_keep_days=0, test_database_url="",
+        database_url="postgresql+asyncpg://u:p@127.0.0.1:5432/rigs",
+    )
 
     def __init__(self, **kw):
-        self.rig_tokens = kw.get("rig_tokens", {})
-        self.rig_addresses = kw.get("rig_addresses", {})
-        self.desk_token = kw.get("desk_token", "")
-        self.rig_rate_limit_per_min = kw.get("rig_rate_limit_per_min", 0)
-        self.session_cookie_secure = kw.get("session_cookie_secure", False)
-        self.login_rate_limit_per_min = kw.get("login_rate_limit_per_min", 0)
-        self.login_lockout_after = kw.get("login_lockout_after", 0)
-        self.login_lockout_max_wait_secs = kw.get("login_lockout_max_wait_secs", 900)
-        self.video_keep_days = kw.get("video_keep_days", 0)
-        self.database_url = kw.get(
-            "database_url", "postgresql+asyncpg://u:p@127.0.0.1:5432/rigs")
-        self.test_database_url = kw.get("test_database_url", "")
+        for layer in (_real_defaults(), self.OFF, kw):
+            for name, value in layer.items():
+                setattr(self, name, value)
 
 
 @pytest.fixture(autouse=True)
@@ -321,6 +354,79 @@ class TestTheLoginThrottles:
         got = posture(**FLOOR)
         assert got["login rate limit"][0] == preflight.OK
         assert got["login lockout"][0] == preflight.OK
+
+
+def test_the_stand_in_has_every_field_a_real_settings_has():
+    """The guard on the stand-in itself.
+
+    Adding a setting and reading it in `check_posture` used to fail every
+    test in this file with an AttributeError, because the fake listed its
+    fields by hand. It derives them now, and this is what says so - if
+    somebody reverts that to a hand-written list, this fails rather than
+    twenty-eight unrelated tests failing for a reason none of them are
+    about.
+    """
+    from core.infrastructure.config import Settings
+
+    fake = FakeSettings()
+    missing = [n for n in Settings.model_fields if not hasattr(fake, n)]
+    assert missing == [], (
+        f"FakeSettings is missing {missing} - it has drifted from the real "
+        f"Settings, and every check that reads one of those will die on an "
+        f"AttributeError rather than on anything it is testing")
+
+
+# ============================================ password reset by email
+
+
+class TestPasswordReset:
+    def test_no_relay_is_reported_as_off_rather_than_as_a_problem(self):
+        """Off is the right state for most floors, so it is `ok` - but it
+        has to say what to do instead, or somebody locked out has nothing
+        to go on."""
+        state, detail = posture(**FLOOR)["password reset"]
+        assert state == preflight.OK
+        assert "off" in detail
+        assert "mint_account" in detail
+
+    def test_a_relay_with_nowhere_to_point_is_fatal(self):
+        """SMTP configured and no base URL is a flow that sends mail with
+        a broken link in it - worse than not sending any."""
+        got = posture(**dict(FLOOR, smtp_host="mail.test"))
+        assert got["password reset"][0] == preflight.FAIL
+        assert "PUBLIC_BASE_URL" in got["password reset"][1]
+
+    def test_configured_says_where_and_for_how_long(self):
+        got = posture(**dict(FLOOR, smtp_host="mail.test",
+                             public_base_url="https://floor.test",
+                             password_reset_minutes=30,
+                             password_reset_per_hour=5))
+        state, detail = got["password reset"]
+        assert state == preflight.OK
+        assert "https://floor.test" in detail
+        assert "30 minutes" in detail
+
+    def test_turning_it_on_warns_that_addresses_are_now_credentials(self):
+        """The part nobody thinks about when they switch it on. Those
+        addresses are typed once at mint time and nothing has ever checked
+        one, so a typo is a reset link posted to a stranger."""
+        got = posture(**dict(FLOOR, smtp_host="mail.test",
+                             public_base_url="https://floor.test"))
+        state, detail = got["reset addresses"]
+        assert state == preflight.WARN
+        assert "credential" in detail
+        assert "mint_account list" in detail
+
+    def test_that_warning_is_absent_when_reset_is_off(self):
+        """A warning on every deployment is a warning nobody reads."""
+        assert "reset addresses" not in posture(**FLOOR)
+
+    def test_cleartext_to_the_relay_is_a_warning(self):
+        got = posture(**dict(FLOOR, smtp_host="mail.test",
+                             public_base_url="https://floor.test",
+                             smtp_starttls=False))
+        assert got["reset transport"][0] == preflight.WARN
+        assert "cleartext" in got["reset transport"][1]
 
 
 def test_every_switch_that_can_be_off_is_reported():
