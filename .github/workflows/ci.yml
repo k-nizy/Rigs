@@ -147,6 +147,10 @@ jobs:
   end-to-end:
     name: pedal press to floor board
     runs-on: ubuntu-latest
+    # For the uploader binary. It costs this job its head start, which is
+    # worth it: the alternative is installing the webview headers and
+    # compiling the crate twice in one run.
+    needs: kiosk-shell
 
     services:
       postgres:
@@ -214,10 +218,53 @@ jobs:
           fi
           node tests/e2e_rig_to_floor.js
 
+      - name: The uploader, as built by the shell job
+        uses: actions/download-artifact@v4
+        with:
+          name: rig-uploader
+          path: /tmp/rig-bin
+
+      # The other half of the seam. `e2e_rig_to_floor.js` above drives the
+      # page; this drives the process that carries the journal when the
+      # page is not there. Its decisions are tested in the crate, headless
+      # and behind a trait - what only a live service can answer is whether
+      # what it actually sends is accepted, which is this.
+      #
+      # Its own service on its own port, because it needs RIG_ADDRESSES and
+      # RIG_TOKENS set and the run above deliberately has rig auth off.
+      # Setting them on the one gateway would change what that test is
+      # testing.
+      - name: The uploader against the service
+        working-directory: backend
+        env:
+          RIG_ADDRESSES: '{"RIG-01": "127.0.0.1"}'
+          RIG_TOKENS: '{"RIG-01": "e2e-uploader-token"}'
+        run: |
+          chmod +x /tmp/rig-bin/rig-uploader
+          # The first gateway is still running from the step above, and
+          # local_gateway runs the three workers in-process. Two of each
+          # against one database is a race nobody asked for, and the run
+          # above has finished with it.
+          pkill -f "uvicorn local_gateway" || true
+          sleep 2
+          nohup python -m uvicorn local_gateway:app --port 8001 --log-level warning \
+            > gateway-uploader.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8001/api/health > /dev/null && break
+            sleep 1
+          done
+          if ! curl -sf http://127.0.0.1:8001/api/health > /dev/null; then
+            echo "::error::the service never became healthy"
+            cat gateway-uploader.log
+            exit 1
+          fi
+          E2E_BASE=http://127.0.0.1:8001 RIG_UPLOADER=/tmp/rig-bin/rig-uploader \
+            node tests/e2e_uploader.js
+
       - name: Service log
         if: failure()
         working-directory: backend
-        run: cat gateway.log
+        run: cat gateway.log gateway-uploader.log 2>/dev/null || true
 
   kiosk-shell:
     name: the shell the rig runs in
@@ -269,3 +316,17 @@ jobs:
       # crates would be testing something the rig will not run.
       - name: And it does what it says
         run: cargo test --locked
+
+      # The end-to-end job runs the uploader against a live service, and
+      # needs a binary to run. Built here rather than there because this
+      # job already has the toolchain and the webview headers the crate
+      # links against - the uploader itself needs neither at runtime, but
+      # it is in the same crate as the shell, so building it a second time
+      # would mean installing all of that again for one binary.
+      - name: Keep the uploader for the end-to-end job
+        uses: actions/upload-artifact@v4
+        with:
+          name: rig-uploader
+          path: apps/rig/desktop/target/debug/rig-uploader
+          retention-days: 1
+          if-no-files-found: error
