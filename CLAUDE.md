@@ -513,6 +513,22 @@ test suite builds its schema from the models while a deployment builds
 it from the migrations — a green suite on its own cannot tell you those
 two have not drifted apart.
 
+**A suite run stays inside its own schema, `public` included.** Each run
+takes a private schema in `rigs_test`, and the connection that gets it
+names that schema and *nothing else* — `search_path` is built in one
+place, `database.schema_connect_args()`, which both the fixtures and the
+app under test use.
+
+The single name is the whole point. SQLAlchemy emits unqualified table
+names, so Postgres resolves each by walking the path in order: with
+`run_X,public` on it, `CREATE TABLE` landed in the run schema while
+`DROP TABLE` walked past the still-empty schema on the first test and
+found the one in `public` instead. The suite dropped tables it had never
+created, which meant running a service against `rigs_test` — the way to
+do local end-to-end work without minting an account — was quietly
+incompatible with running the suite beside it. It looked like the
+service breaking.
+
 Before changing anything in `packages/engine/`, run the tests. Before
 changing the payload shape, remember it is a contract between three
 things (desk, server, rig) — update `packages/schema/payload.js` at the
