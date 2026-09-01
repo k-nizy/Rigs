@@ -1734,14 +1734,27 @@ pre.json .n { color: var(--accent); }
 
   /* The reset token in this page's own URL, or null.
    *
+   * **The fragment, not the query string**, and the two halves of that
+   * have to move together: the service emits `#reset=TOKEN` and this
+   * reads `location.hash`. A browser never sends the fragment to the
+   * server, which is the point - as a query parameter the token went up
+   * in the request line and straight into nginx's access log, still
+   * valid for half an hour.
+   *
    * Read once at boot and then taken out of the address bar by the
-   * caller - a token left in the URL is a token in the browser history,
-   * in the referrer of anything the page loads, and on the screen of
-   * whoever is standing behind the person using it. */
-  function resetTokenInUrl(search) {
-    const q = search === undefined
-      ? (root.location ? root.location.search : "") : search;
-    const m = /[?&]reset=([^&]+)/.exec(q || "");
+   * caller. That is a separate problem and still worth doing: a token
+   * left in the URL is in the history, in the referrer of anything the
+   * page loads next, and on the screen of whoever is standing behind
+   * the person using it.
+   *
+   * `?reset=` is deliberately not accepted as a fallback. Nothing has
+   * ever issued one - the feature has not shipped - and a reader that
+   * takes both would let the service go back to emitting the logged
+   * form without anything noticing. */
+  function resetTokenInUrl(hash) {
+    const h = hash === undefined
+      ? (root.location ? root.location.hash : "") : hash;
+    const m = /[#&]reset=([^&]+)/.exec(h || "");
     return m ? decodeURIComponent(m[1]) : null;
   }
 
@@ -3760,8 +3773,9 @@ function claimResetToken() {
   if (!token) return;
   doorState.resetToken = token;
   if (window.history && window.history.replaceState) {
-    const clean = window.location.pathname + window.location.hash;
-    window.history.replaceState(null, "", clean);
+    /* The path alone. The token is in the hash now, so keeping the hash
+       would be keeping the token - which is the thing being removed. */
+    window.history.replaceState(null, "", window.location.pathname);
   }
 }
 

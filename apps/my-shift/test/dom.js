@@ -133,7 +133,9 @@ async function mountMyShift(opts) {
   global.window = global;
   global.location = {
     search: opts.search || "",
-    hash: "",
+    /* A reset link is a fragment now, so a test that opens one sets
+       this. The server never sees it, which is why the token is here. */
+    hash: opts.hash || "",
     pathname: "/apps/my-shift/",
   };
   /* A real one, because the page uses `replaceState` to take a reset
@@ -141,9 +143,11 @@ async function mountMyShift(opts) {
      URL" is a question only answerable if the stub actually moves. */
   global.history = {
     replaceState(_state, _title, url) {
-      const [path, query] = String(url).split("?");
+      const [rest, frag] = String(url).split("#");
+      const [path, query] = rest.split("?");
       global.location.pathname = path;
       global.location.search = query ? "?" + query : "";
+      global.location.hash = frag ? "#" + frag : "";
     },
   };
   /* The page listens for scroll to keep the perch in step. Nothing
@@ -183,7 +187,10 @@ async function mountMyShift(opts) {
     },
 
     /* What is in the address bar now. */
-    url() { return global.location.pathname + global.location.search; },
+    url() {
+      return global.location.pathname + global.location.search
+               + global.location.hash;
+    },
 
     /* Which of the three screens is up, as one word. */
     showing() {

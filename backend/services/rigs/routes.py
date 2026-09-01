@@ -9,7 +9,9 @@ import logging
 import uuid
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import (
+    APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +36,7 @@ from services.rigs.auth import (
     desk_auth, desk_read_auth, rig_auth, rig_auth_for_key, rig_rate_limit,
 )
 from services.rigs.people import (
-    REFUSED, RESET_SENT, SESSION_COOKIE, PasswordRefused, begin_reset,
+    REFUSED, RESET_SENT, SESSION_COOKIE, PasswordRefused, deliver_reset,
     change_password, clear_session_cookies, current_account, finish_reset,
     issue_session_cookies, lockout, lockout_key, login_key, login_limiter,
     require_account, require_csrf, require_manager, require_operator,
@@ -823,27 +825,40 @@ def _reset_is_on(settings: Settings) -> None:
 @router.post("/auth/reset/request", tags=["people"],
              summary="Ask for a link to set a new password")
 async def request_password_reset(
-    body: ResetRequestIn, request: Request,
-    session: AsyncSession = Depends(get_session),
+    body: ResetRequestIn, request: Request, background: BackgroundTasks,
     settings: Settings = Depends(get_settings),
 ) -> dict:
     """Send a reset link to that address, if it belongs to an account.
 
-    **The reply is the same either way, and that is the whole design of
-    this route.** It is reached by anybody who can load the sign-in page,
-    and it takes an email address: a version that said "no such account"
-    would be a faster way to enumerate the floor's staff than the login
-    route the dummy hash exists to protect.
+    **The reply is the same either way, and so is the time it takes.**
+    That is the whole design of this route. It is reached by anybody who
+    can load the sign-in page and it takes an email address, so a version
+    that said "no such account" would be a faster way to enumerate the
+    floor's staff than the login route the dummy hash exists to protect.
 
-    So: one message, one status, whatever happened - including when the
-    relay refused the mail. What that costs is a person who mistypes
-    their address waiting for something that will never arrive, which is
-    the accepted price and is why the message says *if*.
+    The clock is the half that is easy to write down and then not check,
+    and this route failed it. Looking the address up, minting a token,
+    writing two rows and holding the request open for an SMTP
+    conversation cost 977ms, against 16ms for an address with no account
+    - measured, with every real request slower than every invented one.
+    Identical wording and a sixty-fold difference in latency is not a
+    protected route, it is an oracle with a polite error message.
+
+    So nothing happens here. The work is handed to `deliver_reset` and
+    done once the reply has gone, which makes both paths cost the same
+    because both now do the same thing: schedule and return. There is
+    deliberately no database session on this route at all - acquiring one
+    is work, and work is what leaks.
+
+    What that costs is a person who mistypes their address waiting for
+    something that will never arrive, which is the accepted price and is
+    why the message says *if*.
 
     Throttled per calling address and per hour rather than per minute.
     This route sends mail to somebody else's inbox, so an unbounded one
     is a way to have the floor deliver a hundred messages to a person who
-    asked for none.
+    asked for none. The throttle is checked before scheduling, so a
+    refusal costs no more than an acceptance.
     """
     _reset_is_on(settings)
 
@@ -854,8 +869,7 @@ async def request_password_reset(
             headers={"Retry-After": str(max(1, int(wait + 0.5)))},
         )
 
-    await begin_reset(session, body.email, settings,
-                      requested_from=login_key(request))
+    background.add_task(deliver_reset, body.email, settings, login_key(request))
     return {"ok": True, "detail": RESET_SENT}
 
 

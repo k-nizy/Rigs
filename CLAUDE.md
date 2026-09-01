@@ -276,6 +276,22 @@ voids the earlier ones, or somebody who asked three times has three
 working ways in sitting in a mailbox. Setting a password by *either*
 route voids outstanding links and every session.
 
+**And it takes the same time, which is the half that got missed.** The
+wording was identical from the first version; the latency was not. An
+address with no account cost one SELECT and came back in 16ms, while a
+real one minted a token, wrote two rows, committed and then held the
+request open for an entire SMTP conversation - 977ms, with every real
+request slower than every invented one. Identical wording and a
+sixty-fold difference in latency is an oracle with a polite error
+message, and a better one than the login route's, because it needs no
+credential and no guessing.
+
+So the route does nothing at all: it checks the throttle, hands the work
+to a background task and returns. There is deliberately no database
+session on it, because acquiring one is work and work is what leaks.
+`tests/test_password_reset.py` asserts that structure rather than the
+clock, since a timing test in CI is a flaky test.
+
 **The request route answers the same way whatever happened** - unknown
 address, disabled account, relay that refused the mail. It is reachable
 by anybody who can load the sign-in page and it takes an email, so a
@@ -283,6 +299,23 @@ version that said "no such account" would be a quicker way to enumerate
 the floor's staff than the login route the dummy hash exists to protect.
 The cost is a person who mistypes their address waiting for nothing,
 which is why the message says *if*.
+
+**The token rides in the fragment, not the query string.** A browser
+never sends the part after `#` to a server, and that is the entire
+reason it is there. As `?reset=TOKEN` it travelled in the request line,
+and `deploy/nginx.conf` sets `access_log off` on `/healthz` and nothing
+else - so every reset link would have been written into the access log
+in the clear, still valid for `password_reset_minutes`. Stripping it
+from the address bar afterwards, which both pages do, does not cover
+that: it deals with history and referrers, and the GET has already
+happened.
+
+Both halves have to move together - the service emits `#reset=` and
+`resetTokenInUrl` reads `location.hash`. A reader that accepted either
+form would let the logged one come back unnoticed, so it accepts only
+the fragment, and the tests assert the link's *shape* rather than only
+pulling a token out of it. Splitting on `reset=` matches both forms and
+would have passed either way.
 
 **The link is built from `PUBLIC_BASE_URL`, never from the request.** The
 service sits behind nginx and `Host` is a header the caller writes, so a

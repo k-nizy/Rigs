@@ -719,8 +719,9 @@ function claimResetToken() {
   if (!token) return;
   doorState.resetToken = token;
   if (window.history && window.history.replaceState) {
-    window.history.replaceState(
-      null, "", window.location.pathname + window.location.hash);
+    /* The path alone - the token is in the hash, so keeping the hash
+       would be keeping the token. */
+    window.history.replaceState(null, "", window.location.pathname);
   }
 }
 

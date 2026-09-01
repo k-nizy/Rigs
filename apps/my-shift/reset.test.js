@@ -76,10 +76,11 @@ function service(opts) {
   return impl;
 }
 
-function withShift(opts, fn, search) {
+function withShift(opts, fn, where, search) {
   return async () => {
     const impl = service(opts);
-    const app = await mountMyShift({ fetchImpl: impl, search: search || "" });
+    const app = await mountMyShift({
+      fetchImpl: impl, hash: where || "", search: search || "" });
     await app.settle();
     try { await fn(app, impl); } finally { app.stop(); }
   };
@@ -153,13 +154,13 @@ test("a reset link opens the reset door, not the sign-in card",
   withShift({}, async app => {
     assert.equal(showing(app), "reset",
       "somebody who followed a reset link was shown a password box");
-  }, "?reset=a-token-from-the-email"));
+  }, "#reset=a-token-from-the-email"));
 
 test("the token comes straight out of the address bar",
   withShift({}, async app => {
     assert.ok(!String(app.url()).includes("a-token-from-the-email"),
       "the reset token is still in the address bar: " + app.url());
-  }, "?reset=a-token-from-the-email"));
+  }, "#reset=a-token-from-the-email"));
 
 test("setting a password sends the token, and lands on the day",
   withShift({}, async (app, impl) => {
@@ -173,7 +174,7 @@ test("setting a password sends the token, and lands on the day",
     assert.equal(JSON.parse(sent[0].init.body).token, "a-token-from-the-email");
     assert.equal(showing(app), "day",
       "after setting a password they were not shown their day");
-  }, "?reset=a-token-from-the-email"));
+  }, "#reset=a-token-from-the-email"));
 
 test("their own day is what loads, by the id the session gave",
   withShift({}, async (app, impl) => {
@@ -184,7 +185,7 @@ test("their own day is what loads, by the id the session gave",
     assert.ok(impl.hit("/api/me/shift").length >= 1
       || impl.calls.some(c => c.path.startsWith("/api/me/shift")),
       "it did not go on to read the operator's own shift");
-  }, "?reset=a-token-from-the-email"));
+  }, "#reset=a-token-from-the-email"));
 
 test("two different passwords are caught before the one-use link is spent",
   withShift({}, async (app, impl) => {
@@ -197,7 +198,7 @@ test("two different passwords are caught before the one-use link is spent",
     assert.match(app.$("reset-error").textContent, /not the same/i);
     assert.equal(impl.hit("/api/auth/reset").length, 0,
       "it spent the one-use link on a typo it could see for itself");
-  }, "?reset=a-token-from-the-email"));
+  }, "#reset=a-token-from-the-email"));
 
 test("a spent link says so and stays put",
   withShift({ useStatus: 400,
@@ -209,10 +210,23 @@ test("a spent link says so and stays put",
       await app.settle();
       assert.match(app.$("reset-error").textContent, /expired|used/i);
       assert.equal(showing(app), "reset");
-    }, "?reset=a-token-from-the-email"));
+    }, "#reset=a-token-from-the-email"));
+
+test("the token is read from the fragment, never the query string",
+  withShift({}, async app => {
+    assert.equal(showing(app), "reset", "a fragment token was not read");
+  }, "#reset=a-token-from-the-email"));
+
+test("a token in the query string is deliberately not accepted",
+  withShift({}, async app => {
+    /* The form that ends up in nginx's access log. Nothing issues it,
+       and nothing should quietly start working again if something does. */
+    assert.equal(showing(app), "signin",
+      "a `?reset=` token opened the reset door");
+  }, "", "?reset=a-token-from-the-email"));
 
 test("every id the reset screens wire actually exists in the markup",
   withShift({}, async app => {
     assert.deepEqual(app.missingIds, [],
       "the script asked for ids the page does not have: " + app.missingIds);
-  }, "?reset=a-token-from-the-email"));
+  }, "#reset=a-token-from-the-email"));

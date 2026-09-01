@@ -53,7 +53,7 @@ from core.domains.accounts.repository import (
     normalise_email,
 )
 from core.infrastructure.config import Settings, get_settings
-from core.infrastructure.database import get_session
+from core.infrastructure.database import get_session, sessionmaker
 from services.rigs import mail
 from services.rigs.identity import caller_address
 from services.rigs.lockout import Lockout
@@ -341,10 +341,23 @@ def reset_link(token: str, account: Account, settings: Settings) -> str:
     Managers land on the desk and operators on My Shift, because those
     are the screens they can actually use, and being sent to the one that
     will refuse you is a poor way to end a password reset.
+
+    **The token is in the fragment, not the query string.** A browser
+    never sends the part after `#` to the server, and that is the whole
+    reason it is there. As `?reset=TOKEN` the token travelled in the
+    request line, and `deploy/nginx.conf` turns `access_log off` on for
+    `/healthz` and nothing else - so every reset link would have been
+    written into the access log, in the clear, still valid for
+    `password_reset_minutes`. A credential with half an hour left on it
+    sitting in a log file that gets shipped to whatever aggregates logs.
+
+    Taking it out of the address bar afterwards, which the pages do, is
+    not a fix for that: it deals with history and referrers, and the GET
+    has already happened by then.
     """
     base = settings.public_base_url.rstrip("/")
     app = "/rotation-desk-v1/" if account.role == MANAGER else "/apps/my-shift/"
-    return f"{base}{app}?reset={token}"
+    return f"{base}{app}#reset={token}"
 
 
 def reset_message(token: str, account: Account, settings: Settings) -> tuple[str, str]:
@@ -368,6 +381,48 @@ def reset_message(token: str, account: Account, settings: Settings) -> tuple[str
     return "Set a new password for the Rigs floor", body
 
 
+async def deliver_reset(
+    email: str, settings: Settings, requested_from: str | None = None,
+) -> None:
+    """`begin_reset` below, run after the reply has already gone.
+
+    This exists because of the clock, not for throughput.
+
+    The reply is identical whether an address has an account or not. The
+    *time to produce it* was not: an unknown address cost one SELECT and
+    came back in 16ms, while a real one generated a token, wrote two rows,
+    committed, and then held the request open for an entire SMTP
+    conversation - 977ms, measured, with every real request slower than
+    every invented one. That is not a hint, it is a working oracle, and a
+    better one than the login route's because it needs no credential and
+    no guessing. It was the same leak the dummy hash exists to close,
+    reintroduced one function away from the docstring that says so.
+
+    Doing the work after the response is sent makes the two paths cost
+    the same thing, because they now do the same thing: nothing. Measured
+    again afterwards, probing one address at a time the way somebody
+    reading a staff list would: the medians land within a millisecond of
+    each other, the ranges overlap, and which side is slower changes from
+    run to run - which is what noise looks like and an oracle does not.
+
+    An `asyncio.sleep(0)` here, to let the socket flush before the work
+    starts, was tried and did not survive measurement: it made the
+    ordering *more* consistent rather than less. It is not here, because
+    a line whose justification is a theory the numbers did not support
+    is a line that will be believed by the next person.
+
+    Its own session, because the request's is closed by the time this
+    runs. Never raises: there is nobody left to tell, and an exception
+    escaping a background task is noise in a log at best.
+    """
+
+    try:
+        async with sessionmaker()() as session:
+            await begin_reset(session, email, settings, requested_from)
+    except Exception:                     # noqa: BLE001 - see above
+        log.exception("a password reset could not be processed")
+
+
 async def begin_reset(
     session: AsyncSession, email: str, settings: Settings,
     requested_from: str | None = None,
@@ -381,6 +436,8 @@ async def begin_reset(
     A disabled account is treated as no account. Somebody who has left
     must not be able to walk back in through a link, and their address
     may well have been handed to somebody else.
+
+    Called off the request path - see `deliver_reset` above for why.
     """
     account = await AccountRepository(session).by_email(email)
     if account is None or account.disabled_at is not None:

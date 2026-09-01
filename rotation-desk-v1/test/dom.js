@@ -171,7 +171,9 @@ async function mountDesk(opts) {
   global.window = global;
   global.location = {
     search: opts.search || "",
-    hash: "",
+    /* A reset link is a fragment now, so a test that opens one sets
+       this. The server never sees it, which is why the token is here. */
+    hash: opts.hash || "",
     pathname: "/rotation-desk-v1/",
   };
   /* A real one, because the page uses `replaceState` to take a reset
@@ -179,9 +181,11 @@ async function mountDesk(opts) {
      URL" is a question only answerable if the stub actually moves. */
   global.history = {
     replaceState(_state, _title, url) {
-      const [path, query] = String(url).split("?");
+      const [rest, frag] = String(url).split("#");
+      const [path, query] = rest.split("?");
       global.location.pathname = path;
       global.location.search = query ? "?" + query : "";
+      global.location.hash = frag ? "#" + frag : "";
     },
   };
   global.fetch = opts.fetchImpl || (() => Promise.reject(new Error("no server")));
@@ -220,7 +224,10 @@ async function mountDesk(opts) {
     },
 
     /* What is in the address bar now. */
-    url() { return global.location.pathname + global.location.search; },
+    url() {
+      return global.location.pathname + global.location.search
+               + global.location.hash;
+    },
 
     mode(name) { this.click(byId["modes"].children.find(b => b.dataset.mode === name)); },
 

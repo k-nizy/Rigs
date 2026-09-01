@@ -42,7 +42,9 @@ from core.domains.accounts.passwords import hash_password, verify_password
 from core.domains.accounts.repository import PasswordResetRepository
 from core.infrastructure.config import Settings, get_settings
 from services.rigs import mail, people
-from services.rigs.people import SESSION_COOKIE, reset_login_limiter
+from services.rigs.people import (
+    RESET_SENT as RESET_SENT_TEXT, SESSION_COOKIE, reset_login_limiter,
+)
 
 PASSWORD = "a-real-password-12"
 NEW = "a-brand-new-password-34"
@@ -82,7 +84,23 @@ class Outbox(list):
         return out
 
     def token_for(self, index=-1):
-        return self.links[index].split("reset=")[1]
+        """The token out of a link, and only from a *fragment* link.
+
+        Splitting on "reset=" alone matches `?reset=` and `#reset=`
+        identically, so every test that pulls a token this way would keep
+        passing whichever form the service emitted - including the
+        half-done state where the link is a fragment but the page still
+        reads the query string, which breaks every real link while CI
+        stays green. So the shape is asserted here, once, where no test
+        that uses a token can get past it.
+        """
+        link = self.links[index]
+        assert "#reset=" in link, (
+            f"the reset link is not a fragment: {link}. As a query "
+            f"parameter the token goes up in the request line and into "
+            f"nginx's access log, still valid for half an hour")
+        assert "?reset=" not in link, f"the token is in the query string: {link}"
+        return link.split("#reset=")[1]
 
 
 @pytest.fixture
@@ -472,6 +490,136 @@ class TestTheMailModule:
         assert len(outbox) == 1, (
             "the service did not go through the patched sender, so these "
             "tests are not asserting what they appear to")
+
+
+class TestTheTokenIsNotInTheQueryString:
+    """A browser never sends the fragment to the server. That is the only
+    reason the token is in one.
+
+    `deploy/nginx.conf` sets `access_log off` on `/healthz` and nothing
+    else, so `/apps/my-shift/` and `/rotation-desk-v1/` are logged with
+    the full request line. As `?reset=TOKEN` every reset link would have
+    been written into the access log in the clear, still good for
+    `password_reset_minutes` - a live credential in a file that gets
+    shipped wherever logs get shipped.
+
+    Taking it out of the address bar afterwards, which both pages do,
+    does not help with that: it covers history and referrers, and the GET
+    has already happened.
+    """
+
+    async def test_the_link_puts_the_token_in_the_fragment(
+            self, engine, session, outbox):
+        await accounts(session)
+        async with serving() as c:
+            await ask(c, MANAGER)
+        link = outbox.links[0]
+        assert "#reset=" in link, link
+        assert "?reset=" not in link, link
+        assert "?" not in link, f"nothing should be in the query string: {link}"
+
+    async def test_it_holds_for_an_operator_too(self, engine, session, outbox):
+        await accounts(session)
+        async with serving() as c:
+            await ask(c, OPERATOR)
+        assert "#reset=" in outbox.links[0]
+        assert "?" not in outbox.links[0]
+
+    def test_the_builder_itself_emits_a_fragment(self):
+        """Asserted on the function, not only through a sent mail, so it
+        cannot be satisfied by a test helper that rewrites the link."""
+        from core.domains.accounts.model import Account
+        from services.rigs.people import reset_link
+
+        s = Settings(database_url="postgresql+asyncpg://x@y/z",
+                     public_base_url="https://floor.test")
+        who = Account(email=MANAGER, name="R", role="manager",
+                      password_hash="x")
+        link = reset_link("a-token", who, s)
+        assert link == "https://floor.test/rotation-desk-v1/#reset=a-token", link
+
+
+# ------------------------------------------------------------- the clock
+
+
+class TestTheClockSaysNothingEither:
+    """The reply is identical by construction. The time to produce it was
+    not, and that is the half easy to write down and then not check.
+
+    Measured on a live service before this was fixed: an address with no
+    account came back in 16ms, one with an account in 977ms - a token
+    minted, two rows written, committed, and an entire SMTP conversation
+    held open inside the request. Every real request was slower than
+    every invented one. Identical wording and a sixty-fold difference in
+    latency is an oracle with a polite error message, and a better one
+    than the login route's, because it needs no credential and no
+    guessing.
+
+    Timing is not asserted here - a clock test in CI is a flaky test.
+    What is asserted is the structure that makes the property hold, which
+    is deterministic: the route does no work, so there is no work to
+    measure.
+    """
+
+    def test_the_route_does_no_database_work(self):
+        """No session dependency at all. Acquiring one is work, and work
+        is what leaks - so the absence is the property, not an oversight."""
+        import inspect
+
+        from services.rigs.routes import request_password_reset
+
+        params = inspect.signature(request_password_reset).parameters
+        assert "session" not in params, (
+            "the reset request route took a database session again. Whatever "
+            "it does with one happens on the request path, and the request "
+            "path is what an attacker times")
+
+    def test_the_route_hands_the_work_to_a_background_task(self):
+        source = inspect_source("request_password_reset")
+        assert "background.add_task" in source, (
+            "the work is back on the request path; the reply now takes as "
+            "long as the mail does, which says which addresses are real")
+        assert "await begin_reset" not in source, (
+            "begin_reset is being awaited inline again - that is the leak")
+
+    def test_the_throttle_is_checked_before_anything_is_scheduled(self):
+        """So a refusal costs no more than an acceptance."""
+        source = inspect_source("request_password_reset")
+        assert source.index("reset_limiter") < source.index("background.add_task")
+
+    async def test_the_work_still_happens(self, engine, session, outbox):
+        """The obvious way to make the timings match is to stop sending
+        the mail, so this is here to make that not count as a fix."""
+        await accounts(session)
+        async with serving() as c:
+            r = await ask(c, MANAGER)
+        assert r.status_code == 200
+        assert len(outbox) == 1, "backgrounding the work stopped it happening"
+        assert outbox.links[0].startswith("https://floor.test")
+
+    async def test_a_background_failure_does_not_reach_the_caller(
+            self, engine, session, monkeypatch):
+        """The reply must not depend on how the work went, including when
+        the work throws. A 500 on a real address and a 200 on an invented
+        one is the same oracle by another route."""
+        await accounts(session)
+
+        async def explode(*a, **kw):
+            raise RuntimeError("the relay fell over")
+
+        monkeypatch.setattr(people.mail, "send", explode)
+        async with serving() as c:
+            r = await ask(c, MANAGER)
+        assert r.status_code == 200
+        assert r.json()["detail"] == RESET_SENT_TEXT
+
+
+def inspect_source(name: str) -> str:
+    import inspect
+
+    from services.rigs import routes
+
+    return inspect.getsource(getattr(routes, name))
 
 
 # ------------------------------------------- the link is not caller-supplied

@@ -153,12 +153,15 @@ class PasswordReset(TimestampedBase):
     as long as it lives, so it has to be single-use and short-lived, and
     both of those are `used_at` and `expires_at` on a row.
 
-    `requested_by` and `requested_from` are kept because a run of resets
+    `requested_from` is the calling address, kept because a run of resets
     against one account is the shape of somebody working through a list,
-    and the log line alone is not queryable. `requested_by` is the
-    address as typed rather than the account's own: the request route
-    answers the same way for an address that does not exist, so there is
-    not always an account to attribute it to.
+    and the log line alone is not queryable.
+
+    There is no column for the address that was *typed*. It would only
+    ever equal the account's own - a row exists only when the address
+    matched an account - so it would be a second copy of something the
+    join already gives, and the requests that name nobody, which are the
+    interesting ones, write no row at all. Those are in the log.
     """
 
     __tablename__ = "password_resets"
