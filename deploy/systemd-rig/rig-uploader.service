@@ -1,0 +1,56 @@
+# The uploader, on a rig - not on the server.
+#
+# Its own directory for a reason worth stating: `deploy/systemd/` is
+# copied to the floor server wholesale, `*.service` and all, so a rig's
+# unit left in there would be installed on the server - pointing at a
+# `rig` user, an /etc/rigs/rig.env and a binary that are none of them
+# there. It would not start, and `systemctl status 'rigs-*'` would not
+# even list it, which is the kind of wrong that sits unnoticed until
+# somebody enables it by hand.
+#
+# So: everything in deploy/systemd/ is the server. Everything here is a
+# rig. The two are provisioned by different things and should not share
+# a glob.
+#
+# It outlives the page on purpose. Uploading used to happen inside the
+# webview, so a reload, a crash or a screen being restarted stopped it -
+# the work stayed safe on disk, but nothing was carrying it. This process
+# has no window and no webview: `ldd` on it names no GTK and no WebKit, so
+# it keeps running when the graphical session does not.
+
+[Unit]
+Description=Rig uploader - carries the journal to the floor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=rig
+Group=rig
+EnvironmentFile=/etc/rigs/rig.env
+ExecStart=/usr/bin/rig-uploader
+Restart=always
+RestartSec=5
+
+# The journal is the only thing it writes, and it must exist before this
+# starts. StateDirectory creates it, owns it to this user, and survives a
+# reboot - which is the whole reason the journal is on disk at all.
+#
+# The shell writes here too, as the same user. That is not a shared
+# writer: the shell appends to the log and the uploader never does. See
+# src/upload.rs.
+StateDirectory=rig
+StateDirectoryMode=0750
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# It reads a journal and posts it. It has no business anywhere else.
+ReadWritePaths=/var/lib/rig
+
+[Install]
+WantedBy=multi-user.target

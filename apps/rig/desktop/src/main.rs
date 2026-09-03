@@ -82,14 +82,46 @@ fn main() {
             // The disk half of the outbox. Opened before the window, so a
             // page cannot call into a journal that is not there yet.
             let dir = bridge::journal_dir();
-            app.manage(Journal::open(&dir)?);
-            bridge::allow_remote(app.handle(), remote.as_deref())?;
+            let journal = Journal::open(&dir);
 
-            WebviewWindowBuilder::new(app, "rig", target)
-                .title("Rig")
-                .fullscreen(std::env::var_os(WINDOWED).is_none())
-                .initialization_script(bridge::init_script())
-                .build()?;
+            // A shell that cannot write down what it records must not open
+            // a rig page at all. rig.js falls back to the browser's own
+            // journal when `window.RIG_JOURNAL` is missing, and that
+            // fallback reports itself durable too - so an operator would be
+            // promised their work was safe by the one machine that had just
+            // failed to make it so.
+            //
+            // So this lands where an unset RIG_URL lands, for the same
+            // reason: the local page, saying what is wrong, on the screen.
+            // Returning the error instead kills the process before the
+            // window exists, and a kiosk showing nothing looks exactly like
+            // a slow network.
+            let fault = journal
+                .as_ref()
+                .err()
+                .map(|e| format!("{}: {e}", dir.display()));
+
+            let mut window = WebviewWindowBuilder::new(
+                app,
+                "rig",
+                if fault.is_some() { WebviewUrl::App("index.html".into()) } else { target },
+            )
+            .title("Rig")
+            .fullscreen(std::env::var_os(WINDOWED).is_none());
+
+            match journal {
+                Ok(open) => {
+                    app.manage(open);
+                    bridge::allow_remote(app.handle(), remote.as_deref())?;
+                    window = window.initialization_script(bridge::init_script());
+                }
+                // No bridge and no capability: there is nothing behind them.
+                Err(_) => {
+                    window = window
+                        .initialization_script(bridge::fault_script(fault.as_deref().unwrap_or("")));
+                }
+            }
+            window.build()?;
 
             Ok(())
         })
