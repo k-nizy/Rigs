@@ -39,14 +39,21 @@ from core.domains.sessions.model import Session
 
 
 def _key(ev: RigEvent) -> dict[str, Any]:
-    """The five fields every fact row carries, all of them from the
-    schedule the desk pushed."""
+    """The fields every fact row carries, all of them from the schedule
+    the desk pushed.
+
+    operator_id is the seat; operator_name is the person who sat in it.
+    Both, because the seat is what the sheet is written in and the person
+    is what a take has to be traced to. None on a row projected from an
+    event filed before the name travelled.
+    """
     return dict(
         rig_id=ev.rig_id,
         shift_date=ev.shift_date,
         shift_label=ev.shift_label,
         turn_from=ev.turn_from,
         operator_id=ev.operator_id,
+        operator_name=ev.operator_name,
     )
 
 

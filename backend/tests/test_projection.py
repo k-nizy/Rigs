@@ -24,17 +24,21 @@ RIG = "RIG-03"
 T0 = datetime(2026, 8, 24, 9, 0, tzinfo=timezone.utc)
 
 
-def env(seq, event, bucket, data, turn="09:00", op="op-a4", secs=None):
+_NO_NAME = object()
+
+
+def env(seq, event, bucket, data, turn="09:00", op="op-a4", secs=None,
+        name="Nadia Haddad", date="2026-08-24"):
     """One envelope. `secs` overrides the default 30-seconds-per-seq
     spacing, for the events whose real place in the turn matters - a
     stint's length is now read from its own timestamps rather than taken
     from the payload."""
-    return {
+    ev = {
         "eventId": str(uuid.uuid4()),
         "seq": seq,
         "at": (T0 + timedelta(seconds=seq * 30 if secs is None else secs)).isoformat(),
         "rigId": RIG,
-        "shiftDate": "2026-08-24",
+        "shiftDate": date,
         "shiftLabel": "Morning",
         "turnFrom": turn,
         "operatorId": op,
@@ -42,6 +46,11 @@ def env(seq, event, bucket, data, turn="09:00", op="op-a4", secs=None):
         "event": event,
         "data": data,
     }
+    # name=_NO_NAME leaves the key out altogether, which is what every
+    # event already in a rig's journal looks like.
+    if name is not _NO_NAME:
+        ev["operatorName"] = name
+    return ev
 
 
 def a_stint() -> list[dict]:
@@ -93,6 +102,80 @@ async def test_a_stint_becomes_the_five_facts(client, session):
 
     c = await counts(session)
     assert c == {"episodes": 3, "checks": 1, "downtime": 1, "blocks": 1, "sessions": 1}
+
+
+async def test_an_event_with_no_operator_name_at_all_is_accepted_and_projects(client, session):
+    """The shape of every event already queued on a rig the day this ships.
+
+    `operatorName` is accepted, never demanded. A rig that is refused does
+    not retry: rig.js takes a 422 batch out of the outbox and calls
+    forgetEvents on the journal, because a batch the server refuses would
+    be refused again on every boot for ever. The uploader advances its
+    mark past a refused batch for the same reason. So a required field
+    would not delay the events written before it existed - it would
+    destroy them, on every rig with a queue, with certainty rather than
+    risk.
+    """
+    ev = env(0, "episode_saved", "episodes",
+             {"episodeId": str(uuid.uuid4()), "durationSecs": 92, "score": 4},
+             name=_NO_NAME)
+    assert "operatorName" not in ev, "this test is pointless if the key is present"
+
+    await ingest(client, [ev])
+    await project_batch(session)
+
+    rows = await session.execute(select(Episode))
+    ep = rows.scalars().one()
+    assert ep.operator_name is None, "an absent name must read as no name, not fail"
+    assert ep.operator_id == "op-a4", "the rest of the event still lands"
+
+
+async def test_one_seat_two_people_and_each_take_keeps_the_right_one(client, session):
+    """The reason an operator has an identity at all: any take can be
+    traced to who recorded it.
+
+    `operator_id` is a seat, not a person - rotation-engine builds it as
+    "op-" + group + slot - so the same string is a different human on a
+    cover day. Nadia holds op-a4 on the 24th; Priya covers the same seat
+    on the 25th. Answering "who recorded this" by the id alone credits
+    one of them for both, and the ledger stores no name anywhere else to
+    correct it with.
+    """
+    ep_nadia, ep_priya = str(uuid.uuid4()), str(uuid.uuid4())
+    await ingest(client, [
+        env(0, "episode_saved", "episodes",
+            {"episodeId": ep_nadia, "durationSecs": 92, "score": 4},
+            op="op-a4", name="Nadia Haddad", date="2026-08-24"),
+        env(1, "episode_saved", "episodes",
+            {"episodeId": ep_priya, "durationSecs": 88, "score": 5},
+            op="op-a4", name="Priya Anand", date="2026-08-25"),
+    ])
+    await project_batch(session)
+
+    rows = await session.execute(select(Episode))
+    by_id = {str(e.episode_id): e for e in rows.scalars().all()}
+    assert len(by_id) == 2
+    assert by_id[ep_nadia].operator_name == "Nadia Haddad"
+    assert by_id[ep_priya].operator_name == "Priya Anand"
+
+    # The seat really is shared - which is why the id could not have
+    # answered this on its own.
+    assert by_id[ep_nadia].operator_id == by_id[ep_priya].operator_id == "op-a4"
+    assert by_id[ep_nadia].shift_date != by_id[ep_priya].shift_date
+
+
+async def test_the_name_reaches_every_fact_table_the_key_feeds(client, session):
+    """operator_name rides in _key(), so all five fact rows carry it and a
+    replay rebuilds every one of them with the person still on it."""
+    await ingest(client, a_stint())
+    await project_batch(session)
+
+    for model in (Episode, RigShiftCheck, RigDowntimeEvent,
+                  RigProductivityBlock, Session):
+        rows = await session.execute(select(model))
+        got = rows.scalars().all()
+        assert got, f"{model.__tablename__} projected nothing"
+        assert all(r.operator_name == "Nadia Haddad" for r in got),             f"{model.__tablename__} lost the name"
 
 
 async def test_a_discarded_take_is_a_row_not_an_absence(client, session):
