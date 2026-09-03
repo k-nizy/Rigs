@@ -1201,6 +1201,12 @@ function envelope(event, bucket, data, who) {
     // Null on standby: nothing is scheduled, but the rig still reports.
     turnFrom: c ? c.turn.from : null,
     operatorId: c ? c.turn.operator.id : null,
+    // The id is the seat on the sheet; the name is who sat in it today.
+    // A cover means one id is two people across two dates, and nothing
+    // downstream keeps a name to tell them apart. The server has accepted
+    // this field since the release before this one - see DEPLOY.md on why
+    // that order is not optional.
+    operatorName: c ? c.turn.operator.name : null,
     bucket: bucket,
     event: event,
     data: data || {},

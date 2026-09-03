@@ -94,6 +94,18 @@
     if (ev.operatorId != null && typeof ev.operatorId !== "string") {
       e.push("operatorId must be a string or null");
     }
+    /* The id is a seat - rotation-engine builds it as "op-" + group +
+       slot - so the same string is a different person on a cover day,
+       and nothing downstream keeps a name to tell them apart.
+
+       Optional on purpose, and it must stay optional: every event
+       already queued on a rig was written before this field existed,
+       and a rig drops a refused batch from its outbox and forgets it
+       from the journal rather than retrying. Demanding it would destroy
+       that backlog rather than delay it. */
+    if (ev.operatorName != null && typeof ev.operatorName !== "string") {
+      e.push("operatorName must be a string or null");
+    }
 
     // ---- what happened
     reqString(ev, "bucket", e);

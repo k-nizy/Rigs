@@ -276,8 +276,15 @@ function todaysPayload() {
     assert.ok(one.durationSecs > 0, "duration did not survive: " + one.durationSecs);
     assert.equal(one.operatorId, mine.operatorId,
       "the episode was attributed to somebody else");
+    /* The id is the seat; this is the person who sat in it. Without it the
+       only answer to "who recorded this" is a join back to the pushed
+       schedule, which returns whoever holds the seat now. */
+    assert.equal(one.operatorName, mine.operatorName,
+      "the operator's name did not survive the trip to the floor");
+    assert.ok(one.operatorName, "the episode reached the floor with no name on it");
     ok(`episode ${one.episodeId.slice(0, 8)} scored ${one.score}, ` +
-       `${one.durationSecs}s, ${one.operatorId} - the one this run recorded`);
+       `${one.durationSecs}s, ${one.operatorName} (${one.operatorId}) - ` +
+       `the one this run recorded`);
 
     step("8. the desk's board can read it");
     const beat = await api("POST", `/api/rigs/${RIG}/heartbeat`,
