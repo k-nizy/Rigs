@@ -47,6 +47,7 @@ async def episodes(rig_id: str, session: AsyncSession = Depends(get_session)) ->
             {
                 "episodeId": str(e.episode_id), "outcome": e.outcome, "score": e.score,
                 "durationSecs": e.duration_secs, "operatorId": e.operator_id,
+                "operatorName": e.operator_name,
                 "turnFrom": e.turn_from, "at": e.at.isoformat(),
             }
             for e in rows.scalars().all()

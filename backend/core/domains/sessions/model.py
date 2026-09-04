@@ -29,6 +29,11 @@ class Session(TimestampedBase):
     shift_label: Mapped[str] = mapped_column(String(16), nullable=False)
     turn_from: Mapped[str | None] = mapped_column(String(5), nullable=True)
     operator_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Who held the turn this session covers. operator_id names the seat the
+    # schedule put them in, and a seat is held by different people on
+    # different days. Nullable: events filed before the field existed
+    # carry no name, and they are not to be refused.
+    operator_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

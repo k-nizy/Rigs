@@ -153,6 +153,30 @@ Do not skip it. Every failure it names is five minutes to fix here and an
 hour to find later, because the symptom always appears somewhere else -
 rigs refused, a board that never updates, a disk that quietly fills.
 
+### Changing the event envelope: backend first, always
+
+**Any change to the event envelope ships backend-first, in its own
+release.** The backend learns to accept the new shape; only the release
+*after* that does the rig start sending it. Never both at once.
+
+The reason is that a rig discards a rejected batch rather than retrying
+it. On a 422 the rig takes the batch out of its outbox and calls
+`forgetEvents` on the journal, because a batch the server refuses would
+be refused again on every boot for ever; the uploader advances its mark
+past a refused batch for the same reason. So a field the server does not
+yet know is **lost work, not delayed work**.
+
+Shipping both halves together opens a window with no safe size. nginx
+serves the apps straight from the checkout, so a rig picks up the new
+page the moment the files land - but the API only changes shape when it
+restarts. Every event filed in between is refused, and refused means
+gone. Two releases cost one extra merge and close the window completely.
+
+The same asymmetry runs the other way and is why the field is *optional*
+rather than required: every event already queued on a rig was written
+before the field existed, and demanding it would destroy exactly the
+backlog the journal exists to protect.
+
 ## 5a. The people who sign in
 
 Nothing above creates an account, and with none in the database both the
