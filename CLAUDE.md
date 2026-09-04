@@ -135,7 +135,7 @@ The desk emits one payload per rig. Its shape is:
 {
   "rigId": "RIG-03", "group": "A", "task": "...",
   "shift": { "label": "Morning", "date": "...", "start": "08:00", "end": "16:00" },
-  "blockMinutes": 15, "rotation": "hold", "autoSignIn": true,
+  "blockMinutes": 15, "rotation": "hold",
   "turns": [
     { "from": "08:15", "to": "09:00", "minutes": 45,
       "operator": { "id": "op-a4", "name": "Nadia Haddad" },

@@ -141,7 +141,6 @@ test("what a rig is handed says the same thing as the sheet", () => {
   const payload = RE.rigPayload(plan, "Rig 1");
   assert.equal(payload.blockMinutes, 15);
   assert.equal(payload.rotation, "hold");
-  assert.equal(payload.autoSignIn, true);
 
   // Read the payload back the way the rig platform does - by the clock -
   // and check it against the sheet block by block. This is the whole

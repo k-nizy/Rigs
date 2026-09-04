@@ -119,7 +119,7 @@ def a_payload(rig="RIG-01", turns=None, day=None):
         "rigId": rig, "group": "A", "task": "Box transfer - bin to conveyor",
         "shift": {"label": "Morning", "date": (day or today()).isoformat(),
                   "start": "00:00", "end": "00:00", "tz": "UTC"},
-        "blockMinutes": 15, "rotation": "hold", "autoSignIn": True,
+        "blockMinutes": 15, "rotation": "hold",
         "turns": turns or [],
     }
 

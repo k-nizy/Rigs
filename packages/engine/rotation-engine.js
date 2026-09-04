@@ -415,7 +415,6 @@
       },
       blockMinutes: plan.blockMin,
       rotation: plan.mode,
-      autoSignIn: true,
       turns: turns,
     };
   }
