@@ -15,14 +15,19 @@ in the database rather than in the application.
 the account it no longer is.
 
 Revision ID: 73909a57ffda
-Revises: 7d8934168889
+Revises: 82b63639e349
 """
 from alembic import op
 import sqlalchemy as sa
 
 
 revision = '73909a57ffda'
-down_revision = '7d8934168889'
+# Chained after the operatorName migration rather than beside it.
+# Both were written against 7d8934168889 on separate branches, and
+# git merged them cleanly because they are separate files - which
+# left alembic with two heads and `upgrade head` refusing to run.
+# A clean merge is not the same as a correct one.
+down_revision = '82b63639e349'
 branch_labels = None
 depends_on = None
 
