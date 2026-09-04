@@ -7,6 +7,7 @@
   "shiftLabel": "Morning",
   "turnFrom": null,
   "operatorId": null,
+  "operatorName": null,
   "bucket": "rig_shift_checks",
   "event": "shift_check",
   "data": {

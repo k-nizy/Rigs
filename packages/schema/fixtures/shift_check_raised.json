@@ -7,6 +7,7 @@
   "shiftLabel": "Morning",
   "turnFrom": "09:00",
   "operatorId": "op-a4",
+  "operatorName": "Nadia Haddad",
   "bucket": "rig_shift_checks",
   "event": "shift_check",
   "data": {
