@@ -639,15 +639,25 @@ calibration may be a fault *class* rather than a fact table of its own.
 Both of those want confirming against the real hardware before anybody
 builds them.
 
-**And it collides with a rule worth naming.** *"A turn boundary never
-interrupts a take"* is deliberate: `handoverDue` waits for the episode to
-land before rotating. Calibration mid-episode is not an interruption of a
-good take, it is the discovery that the take was already bad - the arms
-were wrong while it was being recorded. So the take is spoiled, and
-`episode_discarded` already exists for exactly that. What nobody has
-designed is the moment in between: whether the rig discards the take on
-its own when calibration begins, or asks the operator first, and what
-that screen says when the footage in question is already worthless.
+**The take in progress looked like an open question and is not.** It
+seemed to need a decision - does the rig discard a spoiled take on its
+own when calibration begins, or ask first? - and the answer is neither,
+because the pedals on Recording are `Discard`, inert, `Save`, and there
+is no route to the issue tree from that screen at all. An operator who
+notices a drifted arm mid-take discards it, which is the honest act
+regardless since the footage was already bad, and only then reports the
+problem from Handover or Resetting. The rig never has to guess, the
+recording screen keeps three unambiguous pedals, and
+`episode_discarded` is filed by the person who knew.
+
+**So what calibration needs is a node in `ISSUE_TREE`.** Not a screen,
+not a column, not a change to the formula. The tree already carries
+Gripper broken, Camera mount, Software, Robot, Gello, Cable and an Other
+that sets `needsManager`; nothing in it says calibration, and that is the
+whole of the gap. Worth deciding at the same time whether it sets
+`needsManager`: both the manager and the operator calibrate, so probably
+not, but it is the kind of flag that is easier to set correctly than to
+correct later.
 
 **And whichever is chosen, say so on the screen.** The operator watches
 this number. If calibration is charged to them they should be told, and
