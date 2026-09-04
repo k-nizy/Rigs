@@ -155,6 +155,13 @@ also why `packages/schema/` has a slot waiting.
 
 ## The rig, briefly
 
+**This page is the station, not a panel beside one.** The screen at a rig
+runs it and nothing else, the three foot pedals under the bench drive it,
+and the arms and cameras are what it is driving. Anything the operator
+does at a rig has to be reachable from here, which is the reason
+calibration is an open question below rather than somebody else's
+problem.
+
 Single full-screen page, three foot pedals (keys `1`/`2`/`3`), nine
 addressable screens. State machine:
 
@@ -230,11 +237,15 @@ cannot be withdrawn before it expires. Being able to end somebody's
 access on the day they leave is the whole argument for having people here
 instead of one shared secret.
 
-**There is no sign-up page and there should not be.** A floor has two or
-three managers and sixteen operators on a roster somebody already
-maintains. Accounts are minted with `python -m tools.mint_account`, which
-is also how the first manager exists at all - a seeded default would be a
-known password on every deployment.
+**There is no sign-up page and there should not be.** That argument is
+against people creating their own accounts; it is not against a manager
+creating one for somebody else, which is a different thing and is where
+this is going - see "Who a person is" below. The *first* manager is still
+minted with `python -m tools.mint_account`, because a seeded default
+would be a known password on every deployment. After that the desk is the
+main path, and the command stays as the recovery route and the
+developer's one - documented, supported, and not what anybody uses to
+add a new hire.
 
 **But everybody can change their own password**, from either screen, at
 `POST /api/auth/password`. Minting is how an account *starts*; it is not
@@ -267,6 +278,71 @@ the code has made both: reading a 401 as "this deployment has no
 accounts", and reading a 500 as the same. Either one opens the door at
 the moment nothing can be verified. Only an explicitly recognised signal
 opens it; everything else keeps it shut.
+
+## Who a person is, and who is on the floor
+
+Decided here; only the first part is built. Read this before touching the
+roster, the payload's `operator`, or anything that answers "who did this".
+
+**Operator identity exists for the video.** That is the whole of it. The
+question the floor has to answer months later is who recorded a
+particular take, and nothing else in this system needs an operator's name
+at all - the rig has no login and never will.
+
+**A seat is not a person.** `rotation-engine.js` builds the id as `"op-" +
+group + slot`, so `op-a4` names the fourth chair in group A, not whoever
+is sitting in it. Assign Ben to Sara's seat for a day and the id is still
+`op-a4`. It is a desk number: file work under it and two people's takes
+land in one folder, and the natural report - group by `operator_id` -
+credits the wrong person. That is why every event now carries the
+operator's *name* beside the seat, which is what makes a cover day
+readable, and it is why the id has to change next.
+
+**A person gets an id that is theirs.** Minted once when a manager adds
+them, never reused, travelling with them into every seat they ever work.
+Then the id and the name always agree and "everything Ben recorded" is a
+question with an answer. The seat keeps its own id, used for drawing the
+sheet and nothing else.
+
+**Created deliberately; assigned by picking.** Never by typing a name
+into a schedule. One typo is a second person, their takes split across
+two ids, and nobody finds out until somebody runs a report - silent,
+permanent, the shape of failure this repository keeps designing against.
+So the plan side of the desk has no free-text name field; it has a search
+over people who already exist. Two *real* people with one name is a
+different problem with a different answer: the desk says so and the
+manager disambiguates. Names stay editable afterwards and ids do not, so
+correcting a spelling never orphans a take.
+
+**An email is optional.** It is what My Shift signs in with and nothing
+else. An operator who never opens My Shift is still created, assigned,
+recorded and reported on. Give an address and they are sent an invite -
+which is the password reset flow doing the same job for somebody who has
+no password yet, not a second mechanism.
+
+**The roster moves server-side, and that retires machinery.** Today the
+roster has no permanent home: it lives in the pushed payloads, and the
+desk rebuilds it by reading twelve of them back and proving the
+reconstruction turn by turn. That was the right fix for a compiled-in
+file going stale - see "The roster travels the other way" below - but the
+reason it exists is that there is no list of people anywhere. Once there
+is one, the desk reads who is on the floor instead of reconstructing it,
+and the read-back-and-prove path goes with it.
+
+The objection to answer first is what the desk does with no service.
+On a floor it does nothing either way: a desk that cannot reach the
+service cannot push, and pushing is its whole job. The graceful-
+degradation test is about a laptop with no service behind it - the demo -
+and the compiled-in roster stays for exactly that and nothing else.
+
+**The desk has to work off site.** Managers are on the floor most days,
+but a schedule sometimes has to be set from somewhere else, so the
+service is reachable from outside the floor network - which makes
+`SESSION_COOKIE_SECURE` a requirement rather than a preference, and
+HTTPS with it. Rig identity is unaffected: rigs are placed by the address
+they call from, so they stay on the floor network, and a manager calling
+from anywhere is told by `rig-config.js` that it is nobody, which is
+correct because managers authenticate with a password instead.
 
 ## The return arrow (built)
 
@@ -476,6 +552,16 @@ The sheet defines the scope. It does not speak to:
 - **Whether anyone reviews the scores an operator gives their own
   takes.** Who may read which screen is now settled and built - see "Who
   signs in, and who does not" above - but nobody checks the marking.
+- **Where calibrating the arms belongs.** The station has two teleop arms
+  and they need aligning; the state machine has nowhere for that to
+  happen. It is not the checklist, which asks whether the rig is fit to
+  work rather than making it so. The question that decides the shape is
+  whether calibration counts *against* the operator: efficiency is
+  `recordedSecs / (assignedSecs - faultSecs - downSecs)`, so faults and
+  downtime are subtracted because they are not the operator's doing. Ten
+  minutes of calibration a shift that is *not* subtracted drops every
+  score for doing as they were told. Work, downtime, or a third thing -
+  undecided.
 
 These are open questions to answer when the product is ready, not
 implicit requirements to fill in.
