@@ -610,12 +610,44 @@ is cheap in one specific way: efficiency is computed at read time from
 one definition, so adding a term corrects every shift ever recorded
 rather than only the ones after it.
 
-**What has to be known before choosing.** How often - every shift, after
-a fault, when an arm drifts, or between every episode? How long - seconds
-or ten minutes? Who - the operator at the rig, or a technician who is not
-on the roster and has no seat? And does it produce a result worth keeping
-- a measured offset, a pass or fail - or only time spent? The last one
-decides whether this is a bucket of seconds or a fact table of its own.
+**What the floor says.** Asked directly, and the answers are not what the
+question assumed:
+
+- It happens **when a problem occurs**, not on a timer - and it can
+  happen in the middle of an episode.
+- **Both the manager and the operator** do it. There is no separate
+  technician who is not on the roster.
+- It **produces a result worth keeping**.
+- How long it takes is not known until the hardware is on the bench.
+- Which bucket the time falls in is not decided.
+
+**So calibration is a fault, not a ritual.** Something goes wrong, work
+stops, whoever is there fixes it, and a record is left behind. That is
+the shape the state machine already has a path for - `issue-menu →
+fault-class → fault-fixing` - and a drifted arm is precisely a rig that
+cannot produce good work until somebody makes it able to. It is not a
+checklist step, and it is not a shift-start ritual; the first draft of
+this section assumed both and was wrong on each.
+
+If that reading holds, two things get easier rather than harder. The
+efficiency question may answer itself: `faultSecs` is already subtracted,
+so calibration time would be treated correctly with no formula change and
+no new column. And the record worth keeping is already a shape this
+system has - `rig_shift_checks` holds `fault_opened`,
+`fault_reclassified` and `fault_closed`, each carrying a subsystem - so
+calibration may be a fault *class* rather than a fact table of its own.
+Both of those want confirming against the real hardware before anybody
+builds them.
+
+**And it collides with a rule worth naming.** *"A turn boundary never
+interrupts a take"* is deliberate: `handoverDue` waits for the episode to
+land before rotating. Calibration mid-episode is not an interruption of a
+good take, it is the discovery that the take was already bad - the arms
+were wrong while it was being recorded. So the take is spoiled, and
+`episode_discarded` already exists for exactly that. What nobody has
+designed is the moment in between: whether the rig discards the take on
+its own when calibration begins, or asks the operator first, and what
+that screen says when the footage in question is already worthless.
 
 **And whichever is chosen, say so on the screen.** The operator watches
 this number. If calibration is charged to them they should be told, and
