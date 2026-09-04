@@ -50,7 +50,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 /// What a boot is still holding: events not yet acknowledged, takes not
 /// yet confirmed, and the stint that was in progress.
@@ -68,6 +68,25 @@ pub struct Journal {
 const EVENTS: &str = "journal.ndjson";
 const STINT: &str = "stint.json";
 const VIDEO_DIR: &str = "video";
+const MARK: &str = "uploaded.json";
+
+/// Where the journal lives. `/var/lib/rig` on a rig, overridable so a
+/// developer - and a test - does not need a system directory.
+///
+/// Here rather than beside either reader, because the shell and the
+/// uploader have to agree about it and a second copy of a default path is
+/// a second answer waiting to drift.
+pub const JOURNAL_DIR_ENV: &str = "RIG_JOURNAL_DIR";
+const DEFAULT_DIR: &str = "/var/lib/rig";
+
+pub fn dir_from_env() -> PathBuf {
+    std::env::var(JOURNAL_DIR_ENV)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_DIR))
+}
 
 impl Journal {
     /// Open (and create) the journal directory. `/var/lib/rig` on a rig,
@@ -180,15 +199,68 @@ impl Journal {
             .unwrap_or_default()
     }
 
+    // -------------------------------------------------------------- mark
+
+    /// How far the uploader has got, as the rig's own `seq`.
+    ///
+    /// Its own file, and the only thing that writes it is the uploader.
+    /// That is the whole point: `journal.ndjson` keeps one writer - this
+    /// process - and a second process can still say what it has managed
+    /// to hand over without ever touching it.
+    ///
+    /// By `seq` rather than by a byte offset or a line number, because
+    /// `compact` rewrites the file and renames it into place. An offset
+    /// would name a different event afterwards, or none. `seq` travels
+    /// with the event and does not change.
+    ///
+    /// The rig id travels with it too. A mark is only ever applied to the
+    /// rig it was recorded for, so a journal that somehow held two rigs
+    /// could not have one rig's progress drop the other's work.
+    pub fn read_mark(&self) -> Option<(String, i64)> {
+        let raw = fs::read(self.dir.join(MARK)).ok()?;
+        let v: Value = serde_json::from_slice(&raw).ok()?;
+        let rig = v.get("rigId").and_then(Value::as_str)?.to_string();
+        let seq = v.get("seq").and_then(Value::as_i64)?;
+        Some((rig, seq))
+    }
+
+    /// Record that the service holds everything up to and including `seq`.
+    ///
+    /// Only ever moves forward. A mark that went backwards would offer
+    /// work the service already has - harmless, because it dedupes - but
+    /// a mark that went backwards *by mistake* is indistinguishable from
+    /// one that never advanced, and this is the file that decides what
+    /// may be thrown away.
+    pub fn set_mark(&self, rig_id: &str, seq: i64) -> std::io::Result<()> {
+        if let Some((held, at)) = self.read_mark() {
+            if held == rig_id && at >= seq {
+                return Ok(());
+            }
+        }
+        let body = serde_json::to_vec(&json!({ "rigId": rig_id, "seq": seq }))
+            .map_err(std::io::Error::other)?;
+        write_atomic(&self.dir.join(MARK), &body)
+    }
+
     // -------------------------------------------------------------- load
 
     /// What this rig still owes, oldest first. Compacts on the way past.
     pub fn load(&self, rig_id: &str) -> std::io::Result<Held> {
-        let live = self.replay()?;
+        let (live, lines) = self.replay()?;
+        let mark = self.read_mark();
 
         let mut events: Vec<Value> = live
             .values()
             .filter(|e| e.get("rigId").and_then(Value::as_str) == Some(rig_id))
+            // Not what the uploader has already handed over. The page is
+            // still an uploader too, so without this a restart would put
+            // its outbox back to work the service already holds.
+            .filter(|e| match &mark {
+                Some((rig, seq)) => {
+                    rig != rig_id || e.get("seq").and_then(Value::as_i64).unwrap_or(i64::MAX) > *seq
+                }
+                None => true,
+            })
             .cloned()
             .collect();
         // seq is the cursor the server reads, and rig.js raises its own
@@ -196,7 +268,7 @@ impl Journal {
         // rather than a presentational choice.
         events.sort_by_key(|e| e.get("seq").and_then(Value::as_i64).unwrap_or(0));
 
-        self.compact(&live)?;
+        self.compact(&live, lines)?;
 
         Ok(Held {
             events,
@@ -208,19 +280,21 @@ impl Journal {
     /// Replay the log into what is still owed, keyed by eventId so that
     /// re-appending the same event cannot produce two of it - the same
     /// rule as the server's unique `(rigId, eventId)`.
-    fn replay(&self) -> std::io::Result<BTreeMap<String, Value>> {
+    fn replay(&self) -> std::io::Result<(BTreeMap<String, Value>, usize)> {
         let file = match File::open(self.dir.join(EVENTS)) {
             Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((BTreeMap::new(), 0)),
             Err(e) => return Err(e),
         };
 
         let mut live: BTreeMap<String, Value> = BTreeMap::new();
+        let mut lines = 0usize;
         for line in BufReader::new(file).lines() {
             let line = line?;
             if line.trim().is_empty() {
                 continue;
             }
+            lines += 1;
             // A line that will not parse is the one the power cut caught.
             let parsed: Value = match serde_json::from_str(&line) {
                 Ok(v) => v,
@@ -244,12 +318,34 @@ impl Journal {
                 _ => {}
             }
         }
-        Ok(live)
+        Ok((live, lines))
     }
 
     /// Write what is still owed to a fresh file and rename it over.
-    fn compact(&self, live: &BTreeMap<String, Value>) -> std::io::Result<()> {
-        let mut ordered: Vec<&Value> = live.values().collect();
+    ///
+    /// Owed means two things now: not acknowledged by the page, and not
+    /// already handed over by the uploader. The second is what lets a
+    /// separate process drain this file without writing to it.
+    fn compact(&self, live: &BTreeMap<String, Value>, lines: usize) -> std::io::Result<()> {
+        let mark = self.read_mark();
+        let sent = |e: &&Value| match &mark {
+            Some((rig, seq)) => {
+                e.get("rigId").and_then(Value::as_str) == Some(rig.as_str())
+                    && e.get("seq").and_then(Value::as_i64).unwrap_or(i64::MAX) <= *seq
+            }
+            None => false,
+        };
+        let mut ordered: Vec<&Value> = live.values().filter(|e| !sent(e)).collect();
+
+        // Nothing to drop means the file already says exactly this, so
+        // rewriting it would be a write for no reason. That matters now
+        // that the uploader reads this every couple of seconds all day:
+        // an idle rig was rewriting its journal forty thousand times a
+        // day, which is flash wear bought with nothing. Order is not a
+        // reason to rewrite - `load` sorts what it hands back.
+        if ordered.len() == lines {
+            return Ok(());
+        }
         // Ordered by seq so the compacted file reads the way it was
         // written, rather than in eventId order, which means nothing.
         ordered.sort_by_key(|e| e.get("seq").and_then(Value::as_i64).unwrap_or(0));
@@ -632,5 +728,122 @@ mod tests {
         let dir = Dir::new();
         let held = dir.open().load("RIG-03").unwrap();
         assert!(held.events.is_empty() && held.videos.is_empty() && held.stint.is_none());
+    }
+
+    // ------------------------------------------------------ idle writes
+
+    #[test]
+    fn an_idle_load_does_not_rewrite_the_log() {
+        // The uploader reads this every couple of seconds for the length
+        // of a shift. Rewriting a file that already says the right thing
+        // is flash wear bought with nothing.
+        let dir = Dir::new();
+        let j = dir.open();
+        j.append_event(&event("e1", 0, "RIG-03")).unwrap();
+
+        let path = dir.0.join(EVENTS);
+        let before = fs::metadata(&path).unwrap().modified().unwrap();
+        j.load("RIG-03").unwrap();
+        j.load("RIG-03").unwrap();
+        let after = fs::metadata(&path).unwrap().modified().unwrap();
+
+        assert_eq!(before, after, "an idle rig rewrote its journal for nothing");
+    }
+
+    #[test]
+    fn a_load_with_something_to_drop_still_rewrites() {
+        // And the saving must not have turned compaction off.
+        let dir = Dir::new();
+        let j = dir.open();
+        j.append_event(&event("e1", 0, "RIG-03")).unwrap();
+        j.append_event(&event("e2", 1, "RIG-03")).unwrap();
+        j.forget_events(&["e1".to_string()]).unwrap();
+
+        let path = dir.0.join(EVENTS);
+        let before = fs::read_to_string(&path).unwrap();
+        assert!(before.contains("\"e1\""));
+
+        j.load("RIG-03").unwrap();
+
+        let after = fs::read_to_string(&path).unwrap();
+        assert!(!after.contains("\"e1\""), "the log never shrinks");
+        assert!(after.contains("\"e2\""));
+    }
+
+    // ------------------------------------------------- the uploader's mark
+
+    #[test]
+    fn the_uploaders_mark_retires_what_it_has_handed_over() {
+        let dir = Dir::new();
+        let j = dir.open();
+        for (id, seq) in [("e1", 0), ("e2", 1), ("e3", 2)] {
+            j.append_event(&event(id, seq, "RIG-03")).unwrap();
+        }
+        // The service holds everything up to and including seq 1.
+        j.set_mark("RIG-03", 1).unwrap();
+
+        let held = dir.open().load("RIG-03").unwrap();
+        assert_eq!(
+            held.events.iter().map(|e| e["eventId"].as_str().unwrap()).collect::<Vec<_>>(),
+            vec!["e3"],
+            "the page was offered work the service already holds"
+        );
+
+        // And it is gone from the file, not merely hidden - otherwise the
+        // journal grows for the length of a shift and never shrinks.
+        let again = dir.open().load("RIG-03").unwrap();
+        assert_eq!(again.events.len(), 1);
+        let raw = fs::read_to_string(dir.0.join(EVENTS)).unwrap();
+        assert!(!raw.contains("\"e1\""), "a handed-over event was left in the log");
+    }
+
+    #[test]
+    fn a_mark_belongs_to_one_rig() {
+        // One machine is one rig, but the log is not rig-scoped, and a
+        // mark that retired another rig's work would be silent and
+        // permanent - the worst shape of bug this system has.
+        let dir = Dir::new();
+        let j = dir.open();
+        j.append_event(&event("mine", 5, "RIG-03")).unwrap();
+        j.append_event(&event("theirs", 5, "RIG-07")).unwrap();
+        j.set_mark("RIG-03", 9).unwrap();
+
+        assert!(dir.open().load("RIG-03").unwrap().events.is_empty());
+        assert_eq!(
+            dir.open().load("RIG-07").unwrap().events.len(),
+            1,
+            "one rig's progress retired another rig's work"
+        );
+    }
+
+    #[test]
+    fn a_mark_only_ever_moves_forward() {
+        let dir = Dir::new();
+        let j = dir.open();
+        j.set_mark("RIG-03", 7).unwrap();
+        j.set_mark("RIG-03", 3).unwrap();
+        assert_eq!(j.read_mark(), Some(("RIG-03".to_string(), 7)),
+            "the mark went backwards, which is the one direction it must not");
+
+        j.set_mark("RIG-03", 9).unwrap();
+        assert_eq!(j.read_mark(), Some(("RIG-03".to_string(), 9)));
+    }
+
+    #[test]
+    fn a_rig_the_mark_does_not_name_keeps_everything() {
+        let dir = Dir::new();
+        let j = dir.open();
+        j.append_event(&event("e1", 0, "RIG-03")).unwrap();
+        j.set_mark("RIG-07", 99).unwrap();
+        assert_eq!(dir.open().load("RIG-03").unwrap().events.len(), 1);
+    }
+
+    #[test]
+    fn with_no_mark_nothing_changes() {
+        let dir = Dir::new();
+        let j = dir.open();
+        j.append_event(&event("e1", 0, "RIG-03")).unwrap();
+        assert_eq!(j.read_mark(), None);
+        assert_eq!(dir.open().load("RIG-03").unwrap().events.len(), 1);
     }
 }

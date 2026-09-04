@@ -39,6 +39,10 @@
       "type": ["string", "null"],
       "description": "The operator the schedule places at this rig for this turn. Null on standby. The rig never asks anyone who they are; this comes from the payload."
     },
+    "operatorName": {
+      "type": ["string", "null"],
+      "description": "The name of the person in that seat, as the pushed payload named them. operatorId is a seat rather than a person - rotation-engine builds it as \"op-\" + group + slot, so the same id is a different human on a cover day - and no other table keeps a name. Optional, never required: events queued before the field existed have none, and a rig discards a refused batch rather than retrying it."
+    },
     "bucket": {
       "type": "string",
       "enum": ["episodes", "rig_shift_checks", "rig_downtime_events", "rig_productivity_blocks", "sessions"],

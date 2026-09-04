@@ -120,6 +120,7 @@ async def ingest(
                 shift_label=ev.shift_label,
                 turn_from=ev.turn_from,
                 operator_id=ev.operator_id,
+                operator_name=ev.operator_name,
                 bucket=ev.bucket,
                 event=ev.event,
                 envelope=ev.model_dump(by_alias=True, mode="json"),

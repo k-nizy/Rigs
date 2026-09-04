@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>No floor address</title>
+<title>This shell cannot start a shift</title>
 <!--
   The only page this shell carries, and it is deliberately not a rig.
 
@@ -42,7 +42,7 @@
   }
   .note { color: #a8998a; font-size: 0.9rem; border-top: 1px solid #3a2a1c; padding-top: 1rem; }
 </style>
-<main>
+<main id="no-address">
   <h1>This shell has no floor address</h1>
   <p>
     <code>RIG_URL</code> is not set, is empty, or is not a URL, so there is
@@ -58,3 +58,41 @@
     it is nobody rather than guessed at.
   </p>
 </main>
+
+<main id="no-journal" hidden>
+  <h1>This rig cannot write down what it records</h1>
+  <p>
+    The shell could not open its journal, so nothing recorded here would
+    survive a power cut — or a reload.
+  </p>
+  <pre id="journal-error"></pre>
+  <p>
+    It is deliberately <em>not</em> opening the floor’s rig page. A page with
+    no journal quietly falls back to the browser’s own, and that one also
+    reports itself durable, so an operator would be told their work was safe
+    by the one machine that had just failed to make it so.
+  </p>
+  <p>
+    <code>RIG_JOURNAL_DIR</code> says where the journal lives; without it the
+    shell uses <code>/var/lib/rig</code>. Whatever starts this shell has to
+    create that directory and let this user write to it.
+  </p>
+  <p class="note">
+    Idle time is loud, cheap and recoverable. Work filed by a rig that could
+    not write it down is none of those, which is why this screen is here
+    instead of a working-looking pedal.
+  </p>
+</main>
+
+<script>
+  /* src/main.rs sets RIG_SHELL_FAULT before this runs, and only when the
+     journal would not open. With no fault the page is exactly what it has
+     always been. */
+  (function () {
+    var fault = window.RIG_SHELL_FAULT;
+    if (!fault) return;
+    document.getElementById("no-address").hidden = true;
+    document.getElementById("no-journal").hidden = false;
+    document.getElementById("journal-error").textContent = fault;
+  })();
+</script>

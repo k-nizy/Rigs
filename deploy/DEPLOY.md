@@ -153,6 +153,30 @@ Do not skip it. Every failure it names is five minutes to fix here and an
 hour to find later, because the symptom always appears somewhere else -
 rigs refused, a board that never updates, a disk that quietly fills.
 
+### Changing the event envelope: backend first, always
+
+**Any change to the event envelope ships backend-first, in its own
+release.** The backend learns to accept the new shape; only the release
+*after* that does the rig start sending it. Never both at once.
+
+The reason is that a rig discards a rejected batch rather than retrying
+it. On a 422 the rig takes the batch out of its outbox and calls
+`forgetEvents` on the journal, because a batch the server refuses would
+be refused again on every boot for ever; the uploader advances its mark
+past a refused batch for the same reason. So a field the server does not
+yet know is **lost work, not delayed work**.
+
+Shipping both halves together opens a window with no safe size. nginx
+serves the apps straight from the checkout, so a rig picks up the new
+page the moment the files land - but the API only changes shape when it
+restarts. Every event filed in between is refused, and refused means
+gone. Two releases cost one extra merge and close the window completely.
+
+The same asymmetry runs the other way and is why the field is *optional*
+rather than required: every event already queued on a rig was written
+before the field existed, and demanding it would destroy exactly the
+backlog the journal exists to protect.
+
 ## 5a. The people who sign in
 
 Nothing above creates an account, and with none in the database both the
@@ -229,7 +253,8 @@ never receives a floor credential.
 
 ## 8. Each rig machine
 
-Nothing is copied to the rig. A kiosk browser, pointed at the server:
+Nothing is copied to the rig **while the kiosk is a browser**. A kiosk
+browser, pointed at the server:
 
 ```sh
 chromium --kiosk --noerrdialogs --disable-infobars \
@@ -254,6 +279,40 @@ exactly what one very busy rig looks like.
 So the server decides. `/apps/rig/rig-config.js` is proxied to the
 service, which answers per caller from `RIG_ADDRESSES` and hands back
 that rig's id and its own token - never another's.
+
+### When the Tauri shell replaces the browser
+
+Not yet - `apps/rig/desktop/` builds and is tested, and this floor still
+runs the chromium kiosk above. When it does land, two things go on each
+rig and neither of them comes from `deploy/systemd/`, which is the
+server's directory and is copied to the server wholesale:
+
+```sh
+sudo useradd --system --create-home --shell /usr/sbin/nologin rig
+sudo install -m755 rig-desktop rig-uploader /usr/bin/
+sudo install -d -m750 /etc/rigs
+sudo tee /etc/rigs/rig.env <<'ENV'
+RIG_URL=http://<server>/apps/rig/
+ENV
+sudo cp /srv/rigs/deploy/systemd-rig/*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now rig-uploader
+```
+
+That env file carries the one deployment fact both of them read, and the
+unit will refuse to start without it - which is the right way round, since
+a rig with no floor address has nowhere to send anything.
+
+The same address on all twelve machines - it is not an identity. Which
+rig this is still comes from the address the request arrives on, exactly
+as it does for the browser kiosk above.
+
+The uploader is a separate process on purpose. Uploading used to happen
+inside the page, so a reload or a crashed webview stopped it - the work
+stayed safe on disk and nothing was carrying it. This one has no window:
+`ldd` on it names no GTK and no WebKit, so it keeps running when the
+graphical session does not. It writes only `/var/lib/rig`, which its
+unit creates with `StateDirectory`.
 
 A machine the floor cannot place is told it is nobody, and the rig then
 **refuses to work**: it shows "This rig has no identity", names the

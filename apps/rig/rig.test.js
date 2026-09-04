@@ -640,6 +640,8 @@ test("every envelope carries the schedule it happened under",
     assert.equal(e.shiftDate, p.shift.date, "shiftDate comes from the payload, not the rig's own clock");
     assert.equal(e.shiftLabel, p.shift.label);
     assert.equal(e.operatorId, FIRST.operator.id, "the rig never asks who anyone is - the payload says");
+    assert.equal(e.operatorName, FIRST.operator.name,
+      "the id is a seat; the name is the person who sat in it that day");
     assert.equal(e.turnFrom, FIRST.from);
   }));
 

@@ -155,6 +155,13 @@ also why `packages/schema/` has a slot waiting.
 
 ## The rig, briefly
 
+**This page is the station, not a panel beside one.** The screen at a rig
+runs it and nothing else, the three foot pedals under the bench drive it,
+and the arms and cameras are what it is driving. Anything the operator
+does at a rig has to be reachable from here, which is the reason
+calibration is an open question below rather than somebody else's
+problem.
+
 Single full-screen page, three foot pedals (keys `1`/`2`/`3`), nine
 addressable screens. State machine:
 
@@ -230,11 +237,15 @@ cannot be withdrawn before it expires. Being able to end somebody's
 access on the day they leave is the whole argument for having people here
 instead of one shared secret.
 
-**There is no sign-up page and there should not be.** A floor has two or
-three managers and sixteen operators on a roster somebody already
-maintains. Accounts are minted with `python -m tools.mint_account`, which
-is also how the first manager exists at all - a seeded default would be a
-known password on every deployment.
+**There is no sign-up page and there should not be.** That argument is
+against people creating their own accounts; it is not against a manager
+creating one for somebody else, which is a different thing and is where
+this is going - see "Who a person is" below. The *first* manager is still
+minted with `python -m tools.mint_account`, because a seeded default
+would be a known password on every deployment. After that the desk is the
+main path, and the command stays as the recovery route and the
+developer's one - documented, supported, and not what anybody uses to
+add a new hire.
 
 **But everybody can change their own password**, from either screen, at
 `POST /api/auth/password`. Minting is how an account *starts*; it is not
@@ -340,6 +351,89 @@ accounts", and reading a 500 as the same. Either one opens the door at
 the moment nothing can be verified. Only an explicitly recognised signal
 opens it; everything else keeps it shut.
 
+## Who a person is, and who is on the floor
+
+Decided here; only the first part is built. Read this before touching the
+roster, the payload's `operator`, or anything that answers "who did this".
+
+**Operator identity exists for the video.** That is the whole of it. The
+question the floor has to answer months later is who recorded a
+particular take, and nothing else in this system needs an operator's name
+at all - the rig has no login and never will.
+
+**A seat is not a person.** `rotation-engine.js` builds the id as `"op-" +
+group + slot`, so `op-a4` names the fourth chair in group A, not whoever
+is sitting in it. Assign Ben to Sara's seat for a day and the id is still
+`op-a4`. It is a desk number: file work under it and two people's takes
+land in one folder, and the natural report - group by `operator_id` -
+credits the wrong person. That is why every event now carries the
+operator's *name* beside the seat, which is what makes a cover day
+readable, and it is why the id has to change next.
+
+**And nobody sits in one seat for long.** The manager assigns whoever
+the schedule needs, group by group, as often as they like. The freedom is
+correct and should stay - it is how a floor actually runs - but it does
+mean `op-a4` is a proxy for nothing at all. If people stayed in group A
+for months it would at least be a rough stand-in for a person; reshuffled
+freely it is only ever the name of a chair.
+
+**Be clear about what that does and does not cost, because it is easy to
+overstate.** The take itself is fine: the manager assigns Ben, the rig
+shows Ben, the episode is filed with Ben's name, and "who recorded this
+video" is answered by reading the row. That works today. What the seat id
+costs is narrower and worth naming exactly - correcting a spelling later
+does not reach the takes already filed, since the name was copied in as
+each one happened; and a report grouped by `operator_id` will silently
+merge people, which is a habit to avoid rather than damage already done.
+Both are fixed by the same thing, both come free with a people table, and
+neither is a reason to hurry.
+
+**A person gets an id that is theirs.** Minted once when a manager adds
+them, never reused, travelling with them into every seat they ever work.
+Then the id and the name always agree and "everything Ben recorded" is a
+question with an answer. The seat keeps its own id, used for drawing the
+sheet and nothing else.
+
+**Created deliberately; assigned by picking.** Never by typing a name
+into a schedule. One typo is a second person, their takes split across
+two ids, and nobody finds out until somebody runs a report - silent,
+permanent, the shape of failure this repository keeps designing against.
+So the plan side of the desk has no free-text name field; it has a search
+over people who already exist. Two *real* people with one name is a
+different problem with a different answer: the desk says so and the
+manager disambiguates. Names stay editable afterwards and ids do not, so
+correcting a spelling never orphans a take.
+
+**An email is optional.** It is what My Shift signs in with and nothing
+else. An operator who never opens My Shift is still created, assigned,
+recorded and reported on. Give an address and they are sent an invite -
+which is the password reset flow doing the same job for somebody who has
+no password yet, not a second mechanism.
+
+**The roster moves server-side, and that retires machinery.** Today the
+roster has no permanent home: it lives in the pushed payloads, and the
+desk rebuilds it by reading twelve of them back and proving the
+reconstruction turn by turn. That was the right fix for a compiled-in
+file going stale - see "The roster travels the other way" below - but the
+reason it exists is that there is no list of people anywhere. Once there
+is one, the desk reads who is on the floor instead of reconstructing it,
+and the read-back-and-prove path goes with it.
+
+The objection to answer first is what the desk does with no service.
+On a floor it does nothing either way: a desk that cannot reach the
+service cannot push, and pushing is its whole job. The graceful-
+degradation test is about a laptop with no service behind it - the demo -
+and the compiled-in roster stays for exactly that and nothing else.
+
+**The desk has to work off site.** Managers are on the floor most days,
+but a schedule sometimes has to be set from somewhere else, so the
+service is reachable from outside the floor network - which makes
+`SESSION_COOKIE_SECURE` a requirement rather than a preference, and
+HTTPS with it. Rig identity is unaffected: rigs are placed by the address
+they call from, so they stay on the floor network, and a manager calling
+from anywhere is told by `rig-config.js` that it is nobody, which is
+correct because managers authenticate with a password instead.
+
 ## The return arrow (built)
 
 `backend/` is the other half: a FastAPI service on Postgres, laid out in
@@ -416,6 +510,10 @@ stands by and keeps asking. Same trade as everything else here: idle is
 loud and recoverable, misfiled work is silent and permanent.
 
 ## The roster travels the other way
+
+*Standing, but superseded in direction - "Who a person is, and who is on
+the floor" above explains why this whole mechanism goes away once there
+is a list of people. Read that before building on this.*
 
 A push replaces the whole day on all twelve rigs. It is not a merge, and
 that made the roster the one thing in this system that could go
@@ -548,9 +646,141 @@ The sheet defines the scope. It does not speak to:
 - **Whether anyone reviews the scores an operator gives their own
   takes.** Who may read which screen is now settled and built - see "Who
   signs in, and who does not" above - but nobody checks the marking.
+- **Where calibrating the arms belongs.** The station has two teleop
+  arms, they drift, and nothing in the loop makes room for aligning them.
+  Written out below, because the answer decides a column and a formula
+  rather than a screen.
 
 These are open questions to answer when the product is ready, not
 implicit requirements to fill in.
+
+### Calibration, and why the answer decides more than a screen
+
+Two teleop arms, a marked work surface and several cameras. The arms
+drift, and bringing what an arm believes back into line with what the
+cameras see is a real task somebody performs, for real minutes, on a real
+shift. None of the nine screens is that task.
+
+**It is not the checklist.** The checklist asks whether the rig is fit to
+work. Calibration is what *makes* it fit. Folding one into the other
+gives a checklist that can take ten minutes and fail halfway, which is a
+different thing wearing the same name.
+
+**The decision is which bucket the time falls in**, because efficiency is
+
+```
+recordedSecs / (assignedSecs - faultSecs - downSecs)
+```
+
+and the two subtractions are there for one reason: a fault and a
+breakdown are not the operator's doing, so the operator is not charged
+for them. Calibration is the same kind of time - required, unskippable,
+and not a failure of the person doing it - which is what makes this a
+question rather than an oversight. Three answers, and they are not
+equally good:
+
+**Work.** Counted in assigned time like anything else. Simplest, and
+honest if calibration is quick and occasional. But at ten minutes on
+every eight-hour shift it removes about two per cent from every score on
+the floor, permanently, for doing as instructed. A measure that punishes
+required work is one people stop reading, and a measure people stop
+reading stops being worth collecting.
+
+**Downtime.** Subtracted like a fault: `downSecs` grows, the denominator
+shrinks, nobody is charged. It matches how the formula already treats
+what is outside the operator's control, and it costs nothing to build.
+What it loses is meaning: `rig_downtime_events` currently says *the rig
+could not work*, and calibration is the rig being made ready. Filing them
+together makes every downtime report answer a blurrier question than it
+does today.
+
+**Its own bucket.** A `calibrationSecs` column beside the other four,
+subtracted like them but countable on its own. Most work - a column, a
+migration, a projection change, and a term in the read-time formula - and
+the most honest. It also answers something the other two cannot: how much
+of the floor's time goes into calibration at all, which is exactly the
+number that says whether automating it is worth anything. Note that this
+is cheap in one specific way: efficiency is computed at read time from
+one definition, so adding a term corrects every shift ever recorded
+rather than only the ones after it.
+
+**What the floor says.** Asked directly, and the answers are not what the
+question assumed:
+
+- It happens **when a problem occurs**, not on a timer - and it can
+  happen in the middle of an episode.
+- **Both the manager and the operator** do it. There is no separate
+  technician who is not on the roster.
+- It **produces a result worth keeping**.
+- How long it takes is not known until the hardware is on the bench.
+- Which bucket the time falls in is not decided.
+
+**So calibration is a fault, not a ritual.** Something goes wrong, work
+stops, whoever is there fixes it, and a record is left behind. That is
+the shape the state machine already has a path for - `issue-menu →
+fault-class → fault-fixing` - and a drifted arm is precisely a rig that
+cannot produce good work until somebody makes it able to. It is not a
+checklist step, and it is not a shift-start ritual; the first draft of
+this section assumed both and was wrong on each.
+
+If that reading holds, two things get easier rather than harder. The
+efficiency question may answer itself: `faultSecs` is already subtracted,
+so calibration time would be treated correctly with no formula change and
+no new column. And the record worth keeping is already a shape this
+system has - `rig_shift_checks` holds `fault_opened`,
+`fault_reclassified` and `fault_closed`, each carrying a subsystem - so
+calibration may be a fault *class* rather than a fact table of its own.
+Both of those want confirming against the real hardware before anybody
+builds them.
+
+**The take in progress looked like an open question and is not.** It
+seemed to need a decision - does the rig discard a spoiled take on its
+own when calibration begins, or ask first? - and the answer is neither,
+because the pedals on Recording are `Discard`, inert, `Save`, and there
+is no route to the issue tree from that screen at all. An operator who
+notices a drifted arm mid-take discards it, which is the honest act
+regardless since the footage was already bad, and only then reports the
+problem from Handover or Resetting. The rig never has to guess, the
+recording screen keeps three unambiguous pedals, and
+`episode_discarded` is filed by the person who knew.
+
+**So what calibration needs is a node in `ISSUE_TREE`.** Not a screen,
+not a column, not a change to the formula. And it is a *Gello* matter
+specifically: GELLO is the leader arm the operator holds, calibration is
+bringing it back into line with the follower, and `gello_problem` is
+already in the tree. Worth deciding at the same time whether it sets
+`needsManager` - both the manager and the operator calibrate, so probably
+not, but that flag is easier to set correctly than to correct later.
+
+**Which exposes something about the tree's shape.** Gello sits at the
+bottom of it:
+
+```
+Hardware issue → Other → Other hardware → Gello        four presses
+                                        → Calibration  five
+```
+
+while `Gripper broken` and `Camera mount` are one press each. If
+calibration is among the commonest reasons work stops - and "whenever the
+problem occurs, sometimes mid-episode" suggests it is - then the tree is
+ordered backwards from how it is used, and the operator pays for that
+with their feet, mid-shift, every time.
+
+The tree's rule is sound and should stay: two specific choices and an
+Other on every level, so the right pedal is always "deeper" and there is
+one rule rather than three menus. What is not established is the
+*ordering* within that rule, which was guessed before anybody had run a
+shift. Nobody knows the real frequencies yet, so this is not a change to
+make now - it is a measurement to take once the hardware is on the bench.
+The events are already there to take it from: every `fault_opened`
+carries its subsystem, so a month of them says exactly which two belong
+at the top.
+
+**And whichever is chosen, say so on the screen.** The operator watches
+this number. If calibration is charged to them they should be told, and
+if it is not they should see that too - otherwise the first person to
+spend fifteen minutes on a stubborn arm learns only that their score
+fell, and the lesson they take is about the score rather than the arm.
 
 ## Working on this repo
 

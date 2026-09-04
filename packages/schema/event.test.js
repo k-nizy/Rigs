@@ -34,6 +34,7 @@ function good(over) {
     shiftLabel: "Morning",
     turnFrom: "09:00",
     operatorId: "op-a4",
+    operatorName: "Nadia Haddad",
     bucket: "episodes",
     event: "episode_saved",
     data: { episodeId: "11111111-1111-4111-8111-111111111111", durationSecs: 92, score: 4 },
@@ -78,6 +79,24 @@ test("the schedule's own fields are required", () => {
 test("turn and operator may be null, because a rig on standby still reports", () => {
   assert.ok(validate(good({ turnFrom: null, operatorId: null })).ok);
   assert.match(why(good({ turnFrom: "9:00" })), /turnFrom must be HH:MM/);
+});
+
+/* The id is a seat - rotation-engine builds it as "op-" + group + slot -
+   so the same string is a different person on a cover day, and no table
+   downstream keeps a name to tell them apart. */
+test("an event carries the operator's name, not only the seat they sat in", () => {
+  assert.ok(validate(good()).ok);
+  assert.match(why(good({ operatorName: 42 })), /operatorName must be a string or null/);
+});
+
+/* The shape of every event already queued on a rig the day this ships.
+   A rig does not retry a refused batch - it drops it from the outbox and
+   forgets it from the journal - so a demanded field is destroyed work. */
+test("an event with no operator name at all is still a valid event", () => {
+  const ev = good();
+  delete ev.operatorName;
+  assert.ok(validate(ev).ok, why(ev));
+  assert.ok(validate(good({ operatorName: null })).ok, "and null is fine on standby");
 });
 
 /* ------------------------------------------------------- bucket and event */

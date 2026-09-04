@@ -50,6 +50,16 @@ class EventEnvelope(BaseModel):
     # Null when nothing is scheduled - a rig on standby still reports.
     turn_from: HHMM | None = Field(default=None, alias="turnFrom")
     operator_id: str | None = Field(default=None, alias="operatorId")
+    # operator_id is a seat - "op-" + group + slot - so the same id is a
+    # different person on a cover day, and no other table keeps a name to
+    # tell them apart.
+    #
+    # Optional, and it must stay optional. Every event already queued on a
+    # rig when this ships was written without it, and a rig that is
+    # refused does not retry: rig.js drops a 422 batch from the outbox and
+    # forgets it from the journal. Demanding this field would destroy that
+    # work rather than delay it.
+    operator_name: str | None = Field(default=None, alias="operatorName", max_length=128)
 
     bucket: Literal[
         "episodes", "rig_shift_checks", "rig_downtime_events",

@@ -42,6 +42,11 @@ class RigEvent(TimestampedBase):
     shift_label: Mapped[str] = mapped_column(String(16), nullable=False)
     turn_from: Mapped[str | None] = mapped_column(String(5), nullable=True)
     operator_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Accepted, never demanded. The ledger is the system and every fact
+    # table derives from it, so a name that is not here cannot survive a
+    # replay - but events written before the field existed have none, and
+    # a rig discards a refused batch rather than retrying it.
+    operator_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     bucket: Mapped[str] = mapped_column(String(32), nullable=False)
     event: Mapped[str] = mapped_column(String(32), nullable=False)
