@@ -552,19 +552,76 @@ The sheet defines the scope. It does not speak to:
 - **Whether anyone reviews the scores an operator gives their own
   takes.** Who may read which screen is now settled and built - see "Who
   signs in, and who does not" above - but nobody checks the marking.
-- **Where calibrating the arms belongs.** The station has two teleop arms
-  and they need aligning; the state machine has nowhere for that to
-  happen. It is not the checklist, which asks whether the rig is fit to
-  work rather than making it so. The question that decides the shape is
-  whether calibration counts *against* the operator: efficiency is
-  `recordedSecs / (assignedSecs - faultSecs - downSecs)`, so faults and
-  downtime are subtracted because they are not the operator's doing. Ten
-  minutes of calibration a shift that is *not* subtracted drops every
-  score for doing as they were told. Work, downtime, or a third thing -
-  undecided.
+- **Where calibrating the arms belongs.** The station has two teleop
+  arms, they drift, and nothing in the loop makes room for aligning them.
+  Written out below, because the answer decides a column and a formula
+  rather than a screen.
 
 These are open questions to answer when the product is ready, not
 implicit requirements to fill in.
+
+### Calibration, and why the answer decides more than a screen
+
+Two teleop arms, a marked work surface and several cameras. The arms
+drift, and bringing what an arm believes back into line with what the
+cameras see is a real task somebody performs, for real minutes, on a real
+shift. None of the nine screens is that task.
+
+**It is not the checklist.** The checklist asks whether the rig is fit to
+work. Calibration is what *makes* it fit. Folding one into the other
+gives a checklist that can take ten minutes and fail halfway, which is a
+different thing wearing the same name.
+
+**The decision is which bucket the time falls in**, because efficiency is
+
+```
+recordedSecs / (assignedSecs - faultSecs - downSecs)
+```
+
+and the two subtractions are there for one reason: a fault and a
+breakdown are not the operator's doing, so the operator is not charged
+for them. Calibration is the same kind of time - required, unskippable,
+and not a failure of the person doing it - which is what makes this a
+question rather than an oversight. Three answers, and they are not
+equally good:
+
+**Work.** Counted in assigned time like anything else. Simplest, and
+honest if calibration is quick and occasional. But at ten minutes on
+every eight-hour shift it removes about two per cent from every score on
+the floor, permanently, for doing as instructed. A measure that punishes
+required work is one people stop reading, and a measure people stop
+reading stops being worth collecting.
+
+**Downtime.** Subtracted like a fault: `downSecs` grows, the denominator
+shrinks, nobody is charged. It matches how the formula already treats
+what is outside the operator's control, and it costs nothing to build.
+What it loses is meaning: `rig_downtime_events` currently says *the rig
+could not work*, and calibration is the rig being made ready. Filing them
+together makes every downtime report answer a blurrier question than it
+does today.
+
+**Its own bucket.** A `calibrationSecs` column beside the other four,
+subtracted like them but countable on its own. Most work - a column, a
+migration, a projection change, and a term in the read-time formula - and
+the most honest. It also answers something the other two cannot: how much
+of the floor's time goes into calibration at all, which is exactly the
+number that says whether automating it is worth anything. Note that this
+is cheap in one specific way: efficiency is computed at read time from
+one definition, so adding a term corrects every shift ever recorded
+rather than only the ones after it.
+
+**What has to be known before choosing.** How often - every shift, after
+a fault, when an arm drifts, or between every episode? How long - seconds
+or ten minutes? Who - the operator at the rig, or a technician who is not
+on the roster and has no seat? And does it produce a result worth keeping
+- a measured offset, a pass or fail - or only time spent? The last one
+decides whether this is a bucket of seconds or a fact table of its own.
+
+**And whichever is chosen, say so on the screen.** The operator watches
+this number. If calibration is charged to them they should be told, and
+if it is not they should see that too - otherwise the first person to
+spend fifteen minutes on a stubborn arm learns only that their score
+fell, and the lesson they take is about the score rather than the arm.
 
 ## Working on this repo
 
