@@ -651,13 +651,36 @@ recording screen keeps three unambiguous pedals, and
 `episode_discarded` is filed by the person who knew.
 
 **So what calibration needs is a node in `ISSUE_TREE`.** Not a screen,
-not a column, not a change to the formula. The tree already carries
-Gripper broken, Camera mount, Software, Robot, Gello, Cable and an Other
-that sets `needsManager`; nothing in it says calibration, and that is the
-whole of the gap. Worth deciding at the same time whether it sets
-`needsManager`: both the manager and the operator calibrate, so probably
-not, but it is the kind of flag that is easier to set correctly than to
-correct later.
+not a column, not a change to the formula. And it is a *Gello* matter
+specifically: GELLO is the leader arm the operator holds, calibration is
+bringing it back into line with the follower, and `gello_problem` is
+already in the tree. Worth deciding at the same time whether it sets
+`needsManager` - both the manager and the operator calibrate, so probably
+not, but that flag is easier to set correctly than to correct later.
+
+**Which exposes something about the tree's shape.** Gello sits at the
+bottom of it:
+
+```
+Hardware issue → Other → Other hardware → Gello        four presses
+                                        → Calibration  five
+```
+
+while `Gripper broken` and `Camera mount` are one press each. If
+calibration is among the commonest reasons work stops - and "whenever the
+problem occurs, sometimes mid-episode" suggests it is - then the tree is
+ordered backwards from how it is used, and the operator pays for that
+with their feet, mid-shift, every time.
+
+The tree's rule is sound and should stay: two specific choices and an
+Other on every level, so the right pedal is always "deeper" and there is
+one rule rather than three menus. What is not established is the
+*ordering* within that rule, which was guessed before anybody had run a
+shift. Nobody knows the real frequencies yet, so this is not a change to
+make now - it is a measurement to take once the hardware is on the bench.
+The events are already there to take it from: every `fault_opened`
+carries its subsystem, so a month of them says exactly which two belong
+at the top.
 
 **And whichever is chosen, say so on the screen.** The operator watches
 this number. If calibration is charged to them they should be told, and
