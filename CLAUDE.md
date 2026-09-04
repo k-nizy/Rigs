@@ -298,6 +298,17 @@ credits the wrong person. That is why every event now carries the
 operator's *name* beside the seat, which is what makes a cover day
 readable, and it is why the id has to change next.
 
+**And nobody sits in one seat for long.** The manager assigns whoever
+the schedule needs, group by group, as often as they like - there is no
+fixed membership to fall back on. That is what turns the seat problem
+from untidy into broken: if people stayed in group A for months, `op-a4`
+would at least be a rough proxy for a person, and a report grouped by it
+would be roughly right. Reshuffled freely, it is a proxy for nothing, and
+every reshuffle cuts another person's history in half while joining two
+strangers' together. The freedom is correct and should stay - it is how a
+floor actually runs - which is exactly why the identity underneath it
+cannot be the seat.
+
 **A person gets an id that is theirs.** Minted once when a manager adds
 them, never reused, travelling with them into every seat they ever work.
 Then the id and the name always agree and "everything Ben recorded" is a
