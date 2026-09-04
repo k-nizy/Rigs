@@ -439,6 +439,10 @@ loud and recoverable, misfiled work is silent and permanent.
 
 ## The roster travels the other way
 
+*Standing, but superseded in direction - "Who a person is, and who is on
+the floor" above explains why this whole mechanism goes away once there
+is a list of people. Read that before building on this.*
+
 A push replaces the whole day on all twelve rigs. It is not a merge, and
 that made the roster the one thing in this system that could go
 *backwards*.
