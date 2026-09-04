@@ -299,15 +299,22 @@ operator's *name* beside the seat, which is what makes a cover day
 readable, and it is why the id has to change next.
 
 **And nobody sits in one seat for long.** The manager assigns whoever
-the schedule needs, group by group, as often as they like - there is no
-fixed membership to fall back on. That is what turns the seat problem
-from untidy into broken: if people stayed in group A for months, `op-a4`
-would at least be a rough proxy for a person, and a report grouped by it
-would be roughly right. Reshuffled freely, it is a proxy for nothing, and
-every reshuffle cuts another person's history in half while joining two
-strangers' together. The freedom is correct and should stay - it is how a
-floor actually runs - which is exactly why the identity underneath it
-cannot be the seat.
+the schedule needs, group by group, as often as they like. The freedom is
+correct and should stay - it is how a floor actually runs - but it does
+mean `op-a4` is a proxy for nothing at all. If people stayed in group A
+for months it would at least be a rough stand-in for a person; reshuffled
+freely it is only ever the name of a chair.
+
+**Be clear about what that does and does not cost, because it is easy to
+overstate.** The take itself is fine: the manager assigns Ben, the rig
+shows Ben, the episode is filed with Ben's name, and "who recorded this
+video" is answered by reading the row. That works today. What the seat id
+costs is narrower and worth naming exactly - correcting a spelling later
+does not reach the takes already filed, since the name was copied in as
+each one happened; and a report grouped by `operator_id` will silently
+merge people, which is a habit to avoid rather than damage already done.
+Both are fixed by the same thing, both come free with a people table, and
+neither is a reason to hurry.
 
 **A person gets an id that is theirs.** Minted once when a manager adds
 them, never reused, travelling with them into every seat they ever work.
