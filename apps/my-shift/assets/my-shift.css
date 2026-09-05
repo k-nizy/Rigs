@@ -521,3 +521,13 @@ body {
 }
 
 @media print { .modal { display: none !important; } }
+
+/* A button that reads as a link. It changes what this page shows rather
+   than going anywhere, and an <a href="#"> that does that lies to a
+   screen reader and to a middle-click. */
+.linkish {
+  font: inherit; font-size: 0.78rem;
+  color: var(--accent); background: none; border: 0; padding: 0;
+  text-decoration: underline; cursor: pointer;
+}
+.linkish:hover { opacity: 0.85; }

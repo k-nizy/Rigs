@@ -268,6 +268,78 @@ inside `mint_account`'s interactive prompt, so `--password` set anything
 at all: the check was on how the password was typed rather than on the
 password.
 
+**And a forgotten one is emailed back, where a floor has a relay.**
+`POST /api/auth/reset/request` sends a link, `POST /api/auth/reset`
+spends it. Changing a password you know is a different problem from one
+you have forgotten - there is no session to lean on - so the only thing
+this can ever prove is that whoever asked can read the account's mailbox.
+
+The case that decided it is the night shift. Night runs 00:00-08:00, and
+an operator locked out at two in the morning with no manager in the
+building would otherwise wait until the crew changes. A manager-issued
+code needs a manager on site; this does not.
+
+The properties that follow from a token being the account for as long as
+it lives: it is a row, so it can be withdrawn; single-use, spent by an
+`UPDATE ... WHERE used_at IS NULL` so the database decides a race rather
+than an if-statement with a gap in it; short-lived; and asking again
+voids the earlier ones, or somebody who asked three times has three
+working ways in sitting in a mailbox. Setting a password by *either*
+route voids outstanding links and every session.
+
+**And it takes the same time, which is the half that got missed.** The
+wording was identical from the first version; the latency was not. An
+address with no account cost one SELECT and came back in 16ms, while a
+real one minted a token, wrote two rows, committed and then held the
+request open for an entire SMTP conversation - 977ms, with every real
+request slower than every invented one. Identical wording and a
+sixty-fold difference in latency is an oracle with a polite error
+message, and a better one than the login route's, because it needs no
+credential and no guessing.
+
+So the route does nothing at all: it checks the throttle, hands the work
+to a background task and returns. There is deliberately no database
+session on it, because acquiring one is work and work is what leaks.
+`tests/test_password_reset.py` asserts that structure rather than the
+clock, since a timing test in CI is a flaky test.
+
+**The request route answers the same way whatever happened** - unknown
+address, disabled account, relay that refused the mail. It is reachable
+by anybody who can load the sign-in page and it takes an email, so a
+version that said "no such account" would be a quicker way to enumerate
+the floor's staff than the login route the dummy hash exists to protect.
+The cost is a person who mistypes their address waiting for nothing,
+which is why the message says *if*.
+
+**The token rides in the fragment, not the query string.** A browser
+never sends the part after `#` to a server, and that is the entire
+reason it is there. As `?reset=TOKEN` it travelled in the request line,
+and `deploy/nginx.conf` sets `access_log off` on `/healthz` and nothing
+else - so every reset link would have been written into the access log
+in the clear, still valid for `password_reset_minutes`. Stripping it
+from the address bar afterwards, which both pages do, does not cover
+that: it deals with history and referrers, and the GET has already
+happened.
+
+Both halves have to move together - the service emits `#reset=` and
+`resetTokenInUrl` reads `location.hash`. A reader that accepted either
+form would let the logged one come back unnoticed, so it accepts only
+the fragment, and the tests assert the link's *shape* rather than only
+pulling a token out of it. Splitting on `reset=` matches both forms and
+would have passed either way.
+
+**The link is built from `PUBLIC_BASE_URL`, never from the request.** The
+service sits behind nginx and `Host` is a header the caller writes, so a
+link derived from it would let somebody request a reset with a host of
+their choosing and have the floor mail the victim a link pointing at it.
+
+**What turning it on costs, stated plainly:** it makes the address on an
+account a credential. Those addresses are typed once at `mint_account`
+time and nothing has ever verified one, so a typo is a reset link posted
+to a stranger. `tools.preflight` warns about it whenever the relay is
+configured, and that warning is deliberately absent when it is not -
+a warning on every deployment is one nobody reads.
+
 **Off until configured, like everything else here.** With no accounts in
 the database the desk opens exactly as it always did. The one switch that
 defaults the other way is `SESSION_COOKIE_SECURE`, because a security
