@@ -356,8 +356,10 @@ opens it; everything else keeps it shut.
 
 ## Who a person is, and who is on the floor
 
-Decided here; only the first part is built. Read this before touching the
-roster, the payload's `operator`, or anything that answers "who did this".
+Decided here, and being built in order - the table itself is in, and
+nothing reads it yet; the end of this section says what reads it next.
+Read this before touching the roster, the payload's `operator`, or
+anything that answers "who did this".
 
 **Operator identity exists for the video.** That is the whole of it. The
 question the floor has to answer months later is who recorded a
@@ -446,6 +448,25 @@ HTTPS with it. Rig identity is unaffected: rigs are placed by the address
 they call from, so they stay on the floor network, and a manager calling
 from anywhere is told by `rig-config.js` that it is nobody, which is
 correct because managers authenticate with a password instead.
+
+**What is built, and the order the rest lands in.** Each piece lands on
+its own, so each can be reverted on its own.
+
+- **The table** - built. `core/domains/people/` and migration
+  `d137b5150ea3`. A person has an id minted once and never reused, a name
+  that stays editable, an email that is optional and unique only when
+  given, and `disabled_at` in place of deletion. `people` and `accounts`
+  do not import each other, and `.importlinter` enforces it. Nothing
+  reads the table.
+- **The episode row** - next. The person id lands on the episode itself,
+  beside the seat id, because the QC platform asks "who recorded this"
+  of the row it is looking at.
+- **The desk picks.** A search over people who already exist, in place
+  of a free-text name; two people with one name come back as two rows.
+- **The roster reads server-side**, and the read-back-and-prove path
+  retires with it.
+- **Invites**, through the password reset flow, for anybody given an
+  address.
 
 ## The return arrow (built)
 

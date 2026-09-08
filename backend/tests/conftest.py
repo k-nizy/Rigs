@@ -32,6 +32,7 @@ from core.domains.accounts import model as _accounts  # noqa: E402,F401
 from core.domains.alerts import model as _alerts  # noqa: E402,F401
 from core.domains.episode_videos import model as _episode_videos  # noqa: E402,F401
 from core.domains.episodes import model as _episodes  # noqa: E402,F401
+from core.domains.people import model as _people  # noqa: E402,F401
 from core.domains.rig_downtime_events import model as _downtime  # noqa: E402,F401
 from core.domains.rig_events import model as _rig_events  # noqa: E402,F401
 from core.domains.rig_productivity_blocks import model as _blocks  # noqa: E402,F401
