@@ -421,6 +421,26 @@ class TestWithNoRelayConfigured:
                              json={"email": MANAGER, "password": PASSWORD})
         assert r.status_code == 200
 
+    async def test_health_reports_it_and_never_disagrees_with_the_routes(
+            self, engine, session, outbox):
+        """A deploy check reads this, so the two are asserted together.
+
+        A switch that could say "on" while the routes answer 404 - or
+        the reverse - would be believed, and a floor would be told it
+        had a way back in that it does not have. Reporting it through
+        the same `mail.is_configured` the routes ask is what makes them
+        agree; this is the test that would notice if they stopped.
+        """
+        await accounts(session)
+
+        async with serving(smtp_host="") as c:
+            assert (await c.get("/api/health")).json()["passwordReset"] == "off"
+            assert (await ask(c)).status_code == 404
+
+        async with serving() as c:
+            assert (await c.get("/api/health")).json()["passwordReset"] == "on"
+            assert (await ask(c)).status_code != 404
+
 
 # ------------------------------------------------------------ throttling
 

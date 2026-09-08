@@ -388,7 +388,8 @@ async def health(
     a real query now, and says 503 when that fails.
 
     It also reports every cross-cutting thing that can be off: rig auth,
-    desk auth, whether floor reads are protected, and the rate limit. A
+    desk auth, whether floor reads are protected, the rate limit, and
+    whether a forgotten password can be mailed back at all. A
     service that is quietly open looks exactly like a correctly
     configured one until the day it does not, so all of it is something a
     deploy check can fail on rather than something to remember.
@@ -438,6 +439,17 @@ async def health(
             f"after {s.login_lockout_after}, up to {s.login_lockout_max_wait_secs}s"
             if s.login_lockout_after else "off"
         ),
+        # Whether a forgotten password can be mailed back at all. Asked
+        # through the same function the two reset routes ask before they
+        # answer anything, rather than re-derived from settings here: a
+        # deploy check that could disagree with the routes it describes
+        # is worse than not having one, because it would be believed.
+        #
+        # Only the relay. A deployment with a relay and no
+        # PUBLIC_BASE_URL would send mail whose link points nowhere, and
+        # `tools.preflight` fails on exactly that - which is the right
+        # place for it, on the box, where the person who can fix it is.
+        "passwordReset": "on" if mail.is_configured(s) else "off",
     }
     try:
         await session.execute(text("SELECT 1"))
