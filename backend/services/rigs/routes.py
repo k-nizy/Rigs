@@ -9,7 +9,9 @@ import logging
 import uuid
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import (
+    APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,11 +36,13 @@ from services.rigs.auth import (
     desk_auth, desk_read_auth, rig_auth, rig_auth_for_key, rig_rate_limit,
 )
 from services.rigs.people import (
-    REFUSED, SESSION_COOKIE, PasswordRefused, change_password,
-    clear_session_cookies, current_account, issue_session_cookies, lockout,
-    lockout_key, login_key, login_limiter, require_account, require_csrf,
-    require_manager, require_operator, sign_in,
+    REFUSED, RESET_SENT, SESSION_COOKIE, PasswordRefused, deliver_reset,
+    change_password, clear_session_cookies, current_account, finish_reset,
+    issue_session_cookies, lockout, lockout_key, login_key, login_limiter,
+    require_account, require_csrf, require_manager, require_operator,
+    reset_limiter, sign_in,
 )
+from services.rigs import mail
 from services.rigs.identity import caller_address, config_js, rig_at
 from core.infrastructure.storage import Storage, get_storage
 from core.workflows.video import VideoError, backlog, confirm, where_to_put
@@ -384,7 +388,8 @@ async def health(
     a real query now, and says 503 when that fails.
 
     It also reports every cross-cutting thing that can be off: rig auth,
-    desk auth, whether floor reads are protected, and the rate limit. A
+    desk auth, whether floor reads are protected, the rate limit, and
+    whether a forgotten password can be mailed back at all. A
     service that is quietly open looks exactly like a correctly
     configured one until the day it does not, so all of it is something a
     deploy check can fail on rather than something to remember.
@@ -434,6 +439,17 @@ async def health(
             f"after {s.login_lockout_after}, up to {s.login_lockout_max_wait_secs}s"
             if s.login_lockout_after else "off"
         ),
+        # Whether a forgotten password can be mailed back at all. Asked
+        # through the same function the two reset routes ask before they
+        # answer anything, rather than re-derived from settings here: a
+        # deploy check that could disagree with the routes it describes
+        # is worse than not having one, because it would be believed.
+        #
+        # Only the relay. A deployment with a relay and no
+        # PUBLIC_BASE_URL would send mail whose link points nowhere, and
+        # `tools.preflight` fails on exactly that - which is the right
+        # place for it, on the box, where the person who can fix it is.
+        "passwordReset": "on" if mail.is_configured(s) else "off",
     }
     try:
         await session.execute(text("SELECT 1"))
@@ -787,6 +803,120 @@ async def logout(
         await session.commit()
     clear_session_cookies(response, settings)
     return {"signedOut": bool(ended)}
+
+
+class ResetRequestIn(BaseModel):
+    email: str = Field(min_length=3, max_length=255)
+
+
+class ResetFinishIn(BaseModel):
+    token: str = Field(min_length=8, max_length=512)
+    newPassword: str = Field(min_length=1, max_length=1024)
+
+
+def _reset_is_on(settings: Settings) -> None:
+    """Refuse both reset routes when there is no way to deliver a token.
+
+    404, not 503 and not a cheerful 200. A deployment with no relay
+    cannot complete this flow, and a route that accepted the request
+    anyway would leave somebody waiting at a screen for mail that was
+    never going to be sent - which is worse than being told plainly that
+    the floor does not do this.
+
+    Off until configured, and off meaning *refused* rather than open, for
+    the reason CLAUDE.md gives twice: the failures in this area have both
+    been something unverifiable read as permission.
+    """
+    if not mail.is_configured(settings):
+        raise HTTPException(
+            status_code=404,
+            detail="this floor has no mail relay configured, so it cannot send "
+                   "a reset link. Ask a manager to set your password.",
+        )
+
+
+@router.post("/auth/reset/request", tags=["people"],
+             summary="Ask for a link to set a new password")
+async def request_password_reset(
+    body: ResetRequestIn, request: Request, background: BackgroundTasks,
+    settings: Settings = Depends(get_settings),
+) -> dict:
+    """Send a reset link to that address, if it belongs to an account.
+
+    **The reply is the same either way, and so is the time it takes.**
+    That is the whole design of this route. It is reached by anybody who
+    can load the sign-in page and it takes an email address, so a version
+    that said "no such account" would be a faster way to enumerate the
+    floor's staff than the login route the dummy hash exists to protect.
+
+    The clock is the half that is easy to write down and then not check,
+    and this route failed it. Looking the address up, minting a token,
+    writing two rows and holding the request open for an SMTP
+    conversation cost 977ms, against 16ms for an address with no account
+    - measured, with every real request slower than every invented one.
+    Identical wording and a sixty-fold difference in latency is not a
+    protected route, it is an oracle with a polite error message.
+
+    So nothing happens here. The work is handed to `deliver_reset` and
+    done once the reply has gone, which makes both paths cost the same
+    because both now do the same thing: schedule and return. There is
+    deliberately no database session on this route at all - acquiring one
+    is work, and work is what leaks.
+
+    What that costs is a person who mistypes their address waiting for
+    something that will never arrive, which is the accepted price and is
+    why the message says *if*.
+
+    Throttled per calling address and per hour rather than per minute.
+    This route sends mail to somebody else's inbox, so an unbounded one
+    is a way to have the floor deliver a hundred messages to a person who
+    asked for none. The throttle is checked before scheduling, so a
+    refusal costs no more than an acceptance.
+    """
+    _reset_is_on(settings)
+
+    wait = reset_limiter(settings).allow(login_key(request))
+    if wait > 0:
+        raise HTTPException(
+            status_code=429, detail="too many reset requests",
+            headers={"Retry-After": str(max(1, int(wait + 0.5)))},
+        )
+
+    background.add_task(deliver_reset, body.email, settings, login_key(request))
+    return {"ok": True, "detail": RESET_SENT}
+
+
+@router.post("/auth/reset", response_model=WhoOut, tags=["people"],
+             summary="Set a new password using a reset link")
+async def finish_password_reset(
+    body: ResetFinishIn, response: Response,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> WhoOut:
+    """Spend the token and set the password.
+
+    No cookie needed and no CSRF token: whoever holds this has proved
+    they can read the account's mailbox, which is the only thing a reset
+    can ever prove. The token is the credential, it works once, and using
+    it ends every session the account had - including whoever was signed
+    in with the password that was just replaced, which is the point if
+    the reason for the reset was that somebody else knew it.
+
+    They are signed in on the way out. Making somebody who has just
+    proved the mailbox and set a password then type that password into a
+    login box is a step with nothing behind it.
+    """
+    _reset_is_on(settings)
+
+    try:
+        account, token = await finish_reset(
+            session, body.token, body.newPassword, settings)
+    except PasswordRefused as refused:
+        raise HTTPException(status_code=400, detail=str(refused))
+
+    await session.commit()
+    csrf = issue_session_cookies(response, token, settings)
+    return _who(account, csrf)
 
 
 class ChangePasswordIn(BaseModel):

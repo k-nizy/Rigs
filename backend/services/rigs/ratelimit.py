@@ -48,9 +48,16 @@ class RateLimiter:
 
     `per_minute = 0` disables it entirely and `allow()` always says yes,
     so callers do not need to check twice.
+
+    A float, because not every limit here is per minute. The password
+    reset route is bounded per *hour* - it sends mail to somebody else's
+    inbox, so its natural rate is a fraction of one a minute - and the
+    arithmetic below already divides by 60. Such a caller passes `burst`
+    explicitly, or a rate under one would give it a burst of one and a
+    limit stricter than it asked for.
     """
 
-    per_minute: int
+    per_minute: float
     burst: int = 0
     clock: object = time.monotonic
     _buckets: dict = field(default_factory=dict, repr=False)

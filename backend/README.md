@@ -100,8 +100,10 @@ Four things this service does that a deployment has to get right.
 placed by Ansible. Unset, any caller may file events for any rig - right
 for a laptop demo, wrong for a floor. It is not silent: startup logs it
 and `/api/health` answers `{"rigAuth": "off"}`. It reports all four
-switches - `rigAuth`, `deskAuth`, `floorReads`, `rigRateLimit` - so a
-deploy check can fail on any of them rather than somebody remembering. Never share one token across rigs; a token names a
+switches that can be off - `rigAuth`, `deskAuth`, `floorReads`,
+`rigRateLimit`, `passwordReset`, and the session and login ones below -
+so a deploy check can fail on any of them rather than somebody
+remembering. Never share one token across rigs; a token names a
 rig, and one that speaks for all twelve is one compromised machine away
 from unattributable work.
 

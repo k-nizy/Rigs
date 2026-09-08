@@ -49,10 +49,12 @@ from core.domains.accounts.passwords import (
     hash_password, password_complaint, verify_password,
 )
 from core.domains.accounts.repository import (
-    AccountRepository, AccountSessionRepository, normalise_email,
+    AccountRepository, AccountSessionRepository, PasswordResetRepository,
+    normalise_email,
 )
 from core.infrastructure.config import Settings, get_settings
-from core.infrastructure.database import get_session
+from core.infrastructure.database import get_session, sessionmaker
+from services.rigs import mail
 from services.rigs.identity import caller_address
 from services.rigs.lockout import Lockout
 from services.rigs.ratelimit import RateLimiter
@@ -136,9 +138,27 @@ def login_limiter(settings: Settings) -> RateLimiter:
 
 def reset_login_limiter() -> None:
     """Tests call this. Nothing in the request path does."""
-    global _login_limiter, _lockout
+    global _login_limiter, _lockout, _reset_limiter
     _login_limiter = None
     _lockout = None
+    _reset_limiter = None
+
+
+# A third limiter, and a separate one again. This bounds the route that
+# sends mail, per hour rather than per minute: the cost of an unbounded
+# one is not CPU here, it is a hundred messages delivered to somebody who
+# asked for none. `burst` is passed explicitly - a rate below one a
+# minute would otherwise be given a burst of one, which is a stricter
+# limit than the setting asks for.
+_reset_limiter: RateLimiter | None = None
+
+
+def reset_limiter(settings: Settings) -> RateLimiter:
+    global _reset_limiter
+    want = settings.password_reset_per_hour
+    if _reset_limiter is None or _reset_limiter.burst != max(want, 1):
+        _reset_limiter = RateLimiter(per_minute=want / 60.0, burst=max(want, 1))
+    return _reset_limiter
 
 
 # The other half of the same job. The limiter caps how fast one address
@@ -263,10 +283,30 @@ async def change_password(
         # have somebody believe they had changed something.
         raise PasswordRefused("that is already your password")
 
+    return await _set_password(session, account, new, settings)
+
+
+async def _set_password(
+    session: AsyncSession, account: Account, new: str, settings: Settings
+) -> str:
+    """Store the new password, void everything it should void, and hand
+    back a session token for the browser that did it.
+
+    Both ways of setting a password end here - the signed-in change above
+    and the forgotten-password reset below - because the three things
+    that have to happen afterwards are the same either way and a second
+    copy is a second chance to forget one of them.
+
+    Outstanding reset links are voided too, not just sessions. A link
+    still lying in a mailbox after the password has changed is a way back
+    in for anybody else who can read that mailbox, and the reset flow is
+    the one that puts links in mailboxes.
+    """
     account.password_hash = hash_password(new)
 
     sessions = AccountSessionRepository(session)
     await sessions.revoke_all(account.id)
+    await PasswordResetRepository(session).void_all(account.id)
 
     token = secrets.token_urlsafe(32)
     await sessions.open(
@@ -276,6 +316,190 @@ async def change_password(
     # when is the part worth having.
     log.info("password changed: %s (%s)", account.email, account.role)
     return token
+
+
+# ------------------------------------------- a password nobody remembers
+
+
+# What the request route always says, whoever asked. It must not depend
+# on whether the address exists, or the reply is a way to ask "does this
+# person work here" - the same leak the dummy hash closes on login, in a
+# route that would otherwise announce it far more plainly.
+RESET_SENT = ("If that address belongs to an account, a link to set a new "
+              "password is on its way to it.")
+
+
+def reset_link(token: str, account: Account, settings: Settings) -> str:
+    """Where the link points.
+
+    Built from a configured base rather than from the request. The
+    service sits behind nginx and `Host` is a header the caller writes,
+    so a link derived from it would let somebody ask for a reset with a
+    Host of their choosing and have the floor mail the victim a link
+    pointing at them.
+
+    Managers land on the desk and operators on My Shift, because those
+    are the screens they can actually use, and being sent to the one that
+    will refuse you is a poor way to end a password reset.
+
+    **The token is in the fragment, not the query string.** A browser
+    never sends the part after `#` to the server, and that is the whole
+    reason it is there. As `?reset=TOKEN` the token travelled in the
+    request line, and `deploy/nginx.conf` turns `access_log off` on for
+    `/healthz` and nothing else - so every reset link would have been
+    written into the access log, in the clear, still valid for
+    `password_reset_minutes`. A credential with half an hour left on it
+    sitting in a log file that gets shipped to whatever aggregates logs.
+
+    Taking it out of the address bar afterwards, which the pages do, is
+    not a fix for that: it deals with history and referrers, and the GET
+    has already happened by then.
+    """
+    base = settings.public_base_url.rstrip("/")
+    app = "/rotation-desk-v1/" if account.role == MANAGER else "/apps/my-shift/"
+    return f"{base}{app}#reset={token}"
+
+
+def reset_message(token: str, account: Account, settings: Settings) -> tuple[str, str]:
+    """The subject and body. Plain text, and no more than it needs.
+
+    It names the floor's own link and how long it lasts, and it says what
+    to do if the request was not theirs - which on a shared address is
+    the only warning anybody gets.
+    """
+    minutes = settings.password_reset_minutes
+    body = (
+        f"Hello {account.name},\n\n"
+        f"Somebody asked to set a new password for this account on the "
+        f"Rigs floor. If that was you, open this link:\n\n"
+        f"    {reset_link(token, account, settings)}\n\n"
+        f"It works once, and it stops working in {minutes} minutes.\n\n"
+        f"If it was not you, nothing has changed and you do not need to do "
+        f"anything - but tell your manager, because somebody typed this "
+        f"address into a floor screen.\n"
+    )
+    return "Set a new password for the Rigs floor", body
+
+
+async def deliver_reset(
+    email: str, settings: Settings, requested_from: str | None = None,
+) -> None:
+    """`begin_reset` below, run after the reply has already gone.
+
+    This exists because of the clock, not for throughput.
+
+    The reply is identical whether an address has an account or not. The
+    *time to produce it* was not: an unknown address cost one SELECT and
+    came back in 16ms, while a real one generated a token, wrote two rows,
+    committed, and then held the request open for an entire SMTP
+    conversation - 977ms, measured, with every real request slower than
+    every invented one. That is not a hint, it is a working oracle, and a
+    better one than the login route's because it needs no credential and
+    no guessing. It was the same leak the dummy hash exists to close,
+    reintroduced one function away from the docstring that says so.
+
+    Doing the work after the response is sent makes the two paths cost
+    the same thing, because they now do the same thing: nothing. Measured
+    again afterwards, probing one address at a time the way somebody
+    reading a staff list would: the medians land within a millisecond of
+    each other, the ranges overlap, and which side is slower changes from
+    run to run - which is what noise looks like and an oracle does not.
+
+    An `asyncio.sleep(0)` here, to let the socket flush before the work
+    starts, was tried and did not survive measurement: it made the
+    ordering *more* consistent rather than less. It is not here, because
+    a line whose justification is a theory the numbers did not support
+    is a line that will be believed by the next person.
+
+    Its own session, because the request's is closed by the time this
+    runs. Never raises: there is nobody left to tell, and an exception
+    escaping a background task is noise in a log at best.
+    """
+
+    try:
+        async with sessionmaker()() as session:
+            await begin_reset(session, email, settings, requested_from)
+    except Exception:                     # noqa: BLE001 - see above
+        log.exception("a password reset could not be processed")
+
+
+async def begin_reset(
+    session: AsyncSession, email: str, settings: Settings,
+    requested_from: str | None = None,
+) -> None:
+    """Send a reset link, if there is anybody to send one to. Never says.
+
+    Returns nothing on purpose. The route above it answers the same way
+    whatever happened here, and a return value it could branch on is a
+    return value that will eventually be branched on.
+
+    A disabled account is treated as no account. Somebody who has left
+    must not be able to walk back in through a link, and their address
+    may well have been handed to somebody else.
+
+    Called off the request path - see `deliver_reset` above for why.
+    """
+    account = await AccountRepository(session).by_email(email)
+    if account is None or account.disabled_at is not None:
+        # Nothing to do, and nothing to say. Logged because a run of
+        # requests for addresses that do not exist is somebody working
+        # through a list, and that is worth being able to see.
+        log.info("password reset asked for an address with no account, from %s",
+                 requested_from or "unknown")
+        return
+
+    token = secrets.token_urlsafe(32)
+    await PasswordResetRepository(session).open(
+        account.id, token,
+        timedelta(minutes=settings.password_reset_minutes),
+        requested_from=requested_from,
+    )
+    await session.commit()
+
+    subject, body = reset_message(token, account, settings)
+    sent = await mail.send(account.email, subject, body, settings)
+    if not sent:
+        # The reply cannot say this - it is the same reply either way -
+        # so the log is the only place it exists. Somebody is standing at
+        # a screen waiting for mail that is not coming.
+        log.error("a password reset for %s could not be delivered; the person "
+                  "is waiting for mail that will not arrive", account.email)
+    else:
+        log.info("password reset sent for %s (%s)", account.email, account.role)
+
+
+async def finish_reset(
+    session: AsyncSession, token: str, new: str, settings: Settings
+) -> tuple[Account, str]:
+    """Spend the token and set the password. Raises PasswordRefused.
+
+    The order matters and is the whole of single-use. `spend` is an
+    UPDATE with `used_at IS NULL` in its WHERE, so the database decides
+    which of two racing requests wins, and the loser gets a row count of
+    zero rather than a second reset. Checking a column and then writing
+    it would be two statements with a gap in the middle.
+    """
+    found = await PasswordResetRepository(session).live(token)
+    if found is None:
+        raise PasswordRefused(
+            "that link has expired or has already been used. Ask for a new one.")
+
+    reset, account = found
+
+    complaint = password_complaint(new)
+    if complaint:
+        # Deliberately before spending it. Somebody who chooses a short
+        # password should get to try again, not be sent back to their
+        # mailbox for a fresh link.
+        raise PasswordRefused(complaint)
+
+    if await PasswordResetRepository(session).spend(token) != 1:
+        raise PasswordRefused(
+            "that link has expired or has already been used. Ask for a new one.")
+
+    session_token = await _set_password(session, account, new, settings)
+    log.info("password set from a reset link: %s (%s)", account.email, account.role)
+    return account, session_token
 
 
 # ------------------------------------------------- who is calling, later

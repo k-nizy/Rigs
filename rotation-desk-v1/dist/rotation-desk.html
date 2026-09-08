@@ -1248,8 +1248,20 @@ pre.json .n { color: var(--accent); }
   padding: 8px 10px; margin: 0 0 14px;
 }
 
+
+/* A button that reads as a link. The "forgotten your password" control
+   is a button because it changes what this page shows rather than going
+   anywhere, and an <a href="#"> that does that is a link that lies to a
+   screen reader and to a middle-click. */
+.linkish {
+  font: inherit; font-size: 0.72rem;
+  color: var(--accent); background: none; border: 0; padding: 0;
+  text-decoration: underline; cursor: pointer;
+}
+.linkish:hover { opacity: 0.8; }
+
 @media print {
-  .who, #view-signin, #view-denied, .modal { display: none !important; }
+  .who, #view-signin, #view-denied, #view-forgot, #view-reset, .modal { display: none !important; }
 }
 </style>
 
@@ -1334,7 +1346,59 @@ pre.json .n { color: var(--accent); }
              autocomplete="current-password" required>
 
       <button type="submit" class="btn" id="btn-signin">Sign in</button>
+      <p class="card-foot">
+        <button type="button" class="linkish" id="btn-forgot">Forgotten your password?</button>
+      </p>
       <p class="card-foot">Rigs do not sign in. A rig authenticates as a machine.</p>
+    </form>
+  </main>
+
+  <!-- =============================================================
+       FORGOTTEN - ask for a link.
+
+       The reply is the same whether or not that address has an
+       account, because the service makes it so. This screen must not
+       undo that by saying "no such account" - it would be a faster way
+       to enumerate the floor's staff than the login box next to it.
+       ============================================================= -->
+  <main id="view-forgot" hidden>
+    <form class="card" id="forgot-form" autocomplete="on">
+      <h2 class="card-title">Set a new password</h2>
+      <p class="card-sub">We will send a link to the address on your account.</p>
+
+      <p class="card-error" id="forgot-error" hidden></p>
+      <p class="card-ok" id="forgot-ok" hidden></p>
+
+      <label class="field-label" for="forgot-email">Email</label>
+      <input type="email" id="forgot-email" name="email" autocomplete="username" required>
+
+      <div class="modal-buttons">
+        <button type="submit" class="btn" id="btn-forgot-send">Send the link</button>
+        <button type="button" class="btn ghost" id="btn-forgot-back">Back</button>
+      </div>
+    </form>
+  </main>
+
+  <!-- =============================================================
+       THE LINK WAS OPENED - set a new password with the token from
+       the URL. No sign-in needed: holding the link is the proof.
+       ============================================================= -->
+  <main id="view-reset" hidden>
+    <form class="card" id="reset-form" autocomplete="off">
+      <h2 class="card-title">Choose a new password</h2>
+      <p class="card-sub">This link works once. Everything else stays signed out.</p>
+
+      <p class="card-error" id="reset-error" hidden></p>
+
+      <label class="field-label" for="reset-new">New password</label>
+      <input type="password" id="reset-new" autocomplete="new-password" required autofocus>
+
+      <label class="field-label" for="reset-again">New password again</label>
+      <input type="password" id="reset-again" autocomplete="new-password" required>
+
+      <button type="submit" class="btn" id="btn-reset-save">Set it and sign in</button>
+      <p class="card-foot">Twelve characters at the very least. A phrase beats
+        a short scramble.</p>
     </form>
   </main>
 
@@ -1604,6 +1668,96 @@ pre.json .n { color: var(--accent); }
     return mins + " minute" + (mins === 1 ? "" : "s");
   }
 
+  /* Ask for a link to set a new password.
+   *
+   * The reply is the same whether or not that address has an account -
+   * deliberately, on the service - so this returns the same thing too.
+   * A page that said "no such account" would put the enumeration leak
+   * back in the one place the service went to the trouble of closing it.
+   *
+   * 404 means this floor has no mail relay, which is a real answer and
+   * has to be shown rather than swallowed: the person needs to know to
+   * ask a manager instead of waiting for mail that is not coming. */
+  async function requestReset(email) {
+    try {
+      const r = await api("/api/auth/reset/request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: email }),
+      });
+      const body = await r.json().catch(() => ({}));
+
+      if (!r.ok) {
+        return {
+          ok: false,
+          message: r.status === 429
+            ? "Too many requests. Try again in " + waitFor(r) + "."
+            : (body.detail || "Could not send a link."),
+        };
+      }
+      return { ok: true, message: body.detail || "" };
+    } catch (ignored) {
+      return { ok: false, message: "Could not reach the server." };
+    }
+  }
+
+  /* Spend a reset token and set the password.
+   *
+   * The service signs them in on the way out, so the reply carries a
+   * session and a CSRF token like a login does - and this has to record
+   * both, or the page is signed in without knowing it. */
+  async function finishReset(token, newPassword) {
+    try {
+      const r = await api("/api/auth/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: token, newPassword: newPassword }),
+      });
+      const body = await r.json().catch(() => ({}));
+
+      if (!r.ok) {
+        return { ok: false, message: body.detail || "That did not work." };
+      }
+
+      state.personAuth = "on";
+      state.broken = false;
+      state.reachable = true;
+      state.account = {
+        name: body.name, role: body.role, operatorId: body.operatorId,
+      };
+      state.csrf = body.csrfToken || null;
+      return { ok: true };
+    } catch (ignored) {
+      return { ok: false, message: "Could not reach the server." };
+    }
+  }
+
+  /* The reset token in this page's own URL, or null.
+   *
+   * **The fragment, not the query string**, and the two halves of that
+   * have to move together: the service emits `#reset=TOKEN` and this
+   * reads `location.hash`. A browser never sends the fragment to the
+   * server, which is the point - as a query parameter the token went up
+   * in the request line and straight into nginx's access log, still
+   * valid for half an hour.
+   *
+   * Read once at boot and then taken out of the address bar by the
+   * caller. That is a separate problem and still worth doing: a token
+   * left in the URL is in the history, in the referrer of anything the
+   * page loads next, and on the screen of whoever is standing behind
+   * the person using it.
+   *
+   * `?reset=` is deliberately not accepted as a fallback. Nothing has
+   * ever issued one - the feature has not shipped - and a reader that
+   * takes both would let the service go back to emitting the logged
+   * form without anything noticing. */
+  function resetTokenInUrl(hash) {
+    const h = hash === undefined
+      ? (root.location ? root.location.hash : "") : hash;
+    const m = /[#&]reset=([^&]+)/.exec(h || "");
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+
   /* Change the password of whoever is signed in here.
    *
    * Unlike signIn, this says which half was wrong. There is no account
@@ -1679,6 +1833,9 @@ pre.json .n { color: var(--accent); }
     signIn: signIn,
     signOut: signOut,
     changePassword: changePassword,
+    requestReset: requestReset,
+    finishReset: finishReset,
+    resetTokenInUrl: resetTokenInUrl,
     mayUse: mayUse,
     wrongRole: wrongRole,
   };
@@ -3519,9 +3676,17 @@ function probeSession() { return S.probe(); }
 function applyGate() {
   const open = mayUseTheDesk();
   const denied = !open && S.wrongRole("manager");   // signed in, wrong role
+  /* A door of its own, and it outranks the other two: somebody who has
+     opened a reset link has no password to sign in with, so showing
+     them the sign-in card would be showing them the one thing they
+     already know does not work. */
+  const resetting = !open && !!doorState.resetToken;
+  const forgetting = !open && !denied && !resetting && doorState.forgot;
 
-  $("view-signin").hidden = open || !!denied;
+  $("view-signin").hidden = open || !!denied || resetting || forgetting;
   $("view-denied").hidden = !denied;
+  $("view-forgot").hidden = !forgetting;
+  $("view-reset").hidden = !resetting;
   $("modes").hidden = !open;
 
   /* The chip is hidden entirely where nobody signs in, so a floor that
@@ -3585,6 +3750,93 @@ async function signOut() {
   floor.pushedAt = null;
   floor.source = "plan";
   applyGate();
+}
+
+/* ===================================================================
+ * A password nobody remembers
+ *
+ * Two doors that are not the sign-in card: asking for a link, and
+ * opening one. Which is showing is `doorState`, read by applyGate above.
+ * =================================================================== */
+
+const doorState = { forgot: false, resetToken: null };
+
+/* Take the token out of the address bar, keeping the token itself.
+ *
+ * A token left in the URL is a token in the browser history, in the
+ * referrer of anything this page loads afterwards, and on the screen of
+ * whoever is standing behind the person using it. It is a credential
+ * for as long as it is live, so it is read once and then removed. */
+function claimResetToken() {
+  const token = S.resetTokenInUrl();
+  if (!token) return;
+  doorState.resetToken = token;
+  if (window.history && window.history.replaceState) {
+    /* The path alone. The token is in the hash now, so keeping the hash
+       would be keeping the token - which is the thing being removed. */
+    window.history.replaceState(null, "", window.location.pathname);
+  }
+}
+
+function showForgot(on) {
+  doorState.forgot = on;
+  $("forgot-error").hidden = true;
+  $("forgot-ok").hidden = true;
+  $("forgot-email").value = $("in-email").value || "";
+  applyGate();
+}
+
+async function sendResetLink(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn = $("btn-forgot-send");
+  const err = $("forgot-error"), ok = $("forgot-ok");
+  err.hidden = true;
+  ok.hidden = true;
+  btn.disabled = true;
+  try {
+    const out = await S.requestReset($("forgot-email").value);
+    if (!out.ok) {
+      err.textContent = out.message;
+      err.hidden = false;
+      return;
+    }
+    /* The service's own wording, which is careful not to say whether
+       that address exists. Rewriting it here would undo that. */
+    ok.textContent = out.message;
+    ok.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function saveResetPassword(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn = $("btn-reset-save"), err = $("reset-error");
+  err.hidden = true;
+
+  if ($("reset-new").value !== $("reset-again").value) {
+    err.textContent = "The two new passwords are not the same.";
+    err.hidden = false;
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    const out = await S.finishReset(doorState.resetToken, $("reset-new").value);
+    if (!out.ok) {
+      err.textContent = out.message;
+      err.hidden = false;
+      return;
+    }
+    /* Spent, and the service has already signed them in. Clearing it
+       stops a reload of this page trying to use it a second time and
+       being told, correctly but confusingly, that it has been used. */
+    doorState.resetToken = null;
+    ["reset-new", "reset-again"].forEach(id => { $(id).value = ""; });
+    openTheDesk();
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /* ===================================================================
@@ -3689,6 +3941,10 @@ $("btn-refresh").addEventListener("click", () => loadFloor(true));
 $("signin-form").addEventListener("submit", signIn);
 $("btn-signout").addEventListener("click", signOut);
 $("btn-denied-out").addEventListener("click", signOut);
+$("btn-forgot").addEventListener("click", () => showForgot(true));
+$("btn-forgot-back").addEventListener("click", () => showForgot(false));
+$("forgot-form").addEventListener("submit", sendResetLink);
+$("reset-form").addEventListener("submit", saveResetPassword);
 $("btn-passwd").addEventListener("click", openPasswd);
 $("btn-passwd-cancel").addEventListener("click", closePasswd);
 $("passwd-form").addEventListener("submit", savePasswd);
@@ -3706,6 +3962,11 @@ document.addEventListener("keydown", e => {
    masthead waits on that answer - a screen that renders the floor and
    then hides it has already put it on the wire. */
 (async function boot() {
+  /* Before the probe, because claiming the token takes it out of the
+     address bar and the probe is the first thing that could be slow. A
+     reset link left in the URL while a fetch is in flight is a
+     credential sitting on screen for as long as that takes. */
+  claimResetToken();
   await probeSession();
   openTheDesk();
 })();

@@ -189,6 +189,43 @@ class Settings(BaseSettings):
     # at three in the morning on a floor there is not one.
     login_lockout_max_wait_secs: int = 900
 
+    # ---------------------------------------------- forgotten passwords
+    #
+    # Off until configured, and off means refused rather than open. With
+    # no relay set the reset routes answer 404 - the deployment has no way
+    # to deliver a token, and a flow that cannot deliver one must not
+    # pretend to. Everything else here is inert without it.
+    #
+    # Worth naming what turning this on does: it makes the address on an
+    # account into a credential. Those addresses are typed once at
+    # `mint_account` time and nothing has ever verified one, so a typo is
+    # a reset link posted to a stranger. `tools.preflight` says so out
+    # loud when this is on.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    # STARTTLS on the connection. Off only for a local capture server.
+    smtp_starttls: bool = True
+    # Who the mail is from. Falls back to the user when unset.
+    smtp_from: str = ""
+
+    # Where the reset link points. There is no way to derive this from a
+    # request: the service sits behind nginx, and Host is a header a
+    # caller writes. Building a link from it would let somebody request a
+    # reset with a Host of their own choosing and have the floor mail the
+    # victim a link to it.
+    public_base_url: str = ""
+
+    # A reset token is the account for as long as it lives, so it does not
+    # live long. Long enough to walk to a screen and read a mailbox.
+    password_reset_minutes: int = 30
+
+    # Requests per hour per calling address. Separate from the login
+    # limiter: this one sends mail, so an unbounded route is a way to have
+    # the floor spam somebody.
+    password_reset_per_hour: int = 5
+
     # Whether reading the floor needs the desk token as well as writing to
     # it. Off by default: /floor/state is what a wall display shows and
     # what the desk polls, and making it need a secret is a product
