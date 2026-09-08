@@ -25,46 +25,53 @@ single-file distributions.
 
 ```
 index.html                     landing page linking the three apps
-serve.sh                       serve the whole tree
+serve.sh                       serve the whole tree - python, static only
 build.sh                       rebuild both dist/ files
 package.json                   just for `npm test` - no runtime deps
 
 packages/                      code that is imported, not deployed
   engine/rotation-engine.js    THE SCHEDULE. no DOM, no globals, runs under node too
-  engine/engine.test.js        headless assertions on the engine
-  engine/reference-sheet.test.js  the sheet transcribed cell by cell
+  engine/*.test.js             engine, reference sheet, rotate, in-force
   demo-roster/demo-roster.js   the example floor the apps open with
   schema/payload.js            the shape the desk pushes and the rig consumes
-  schema/schema.test.js        every demo payload has to validate
+  schema/*.test.js             the payload shape, and the event shape
   session/session.js           who is signed in - desk and my-shift share it
   brand/                       the mark and the palette, inlined at build
 
 rotation-desk-v1/              the manager's app - the name is the version
   README.md                    the format, and what is deliberately fixed
-  index.html
-  assets/desk.css
   assets/desk.js               roster state, the sheets, "Push to floor"
+  *.test.js                    the sheets, the sign-in gate, the roster, passwords
   dist/rotation-desk.html      single-file build, for publishing
   tools/make-single-file.py
 
 apps/                          things that are deployed
   my-shift/                    an operator's own day, read only
-    index.html
     assets/my-shift.js         the countdown, the timeline, no controls
-    my-shift.test.js
+    *.test.js                  the screen, and changing a password
   rig/                         the operator's app, one per rig
-    index.html
-    assets/rig.css
     assets/rig.js              screen state machine, pedal map, event log
     schedule.json              fallback payload for a plain static deploy
-    dist/rig.html              single-file build, push baked in
+    dist/rig.html              single-file build
+    desktop/                   the shell the rig runs in, and its uploader
+    docs/                      rig-side notes and the backend asks
+    *.test.js                  thirteen - the clock, the journal, resync, faults
     manifest.webmanifest       installs full-screen landscape on the rig display
-    tools/make-icons.py
-    tools/make-single-file.py
   server/                      the push transport
     server.js                  plain-node http, serves the tree and the push
+    pushes.jsonl               append-only, one line per accepted push (gitignored)
+    state.json                 a cache of the log's last line (gitignored)
     server.test.js             end-to-end: push a full floor, read each rig back
-    state.json                 current pushed state, regenerated on every push
+    store.test.js              the log survives a crash, a torn write, a wrong day
+
+backend/                       the return arrow - FastAPI on Postgres
+  core/                        domains and infrastructure, laid out to lift
+  services/rigs/               routes, auth, people, mail
+  alembic/versions/            the migrations
+  tests/                       ledger, projection, floor, video, auth, reset
+  tools/                       mint_account, preflight, benchmark
+
+deploy/                        nginx, systemd, and DEPLOY.md
 ```
 
 ## Why the engine is shared
@@ -96,13 +103,27 @@ npm test
 ### API
 
 ```
-buildPlan(cfg, groups)     -> plan
-auditPlan(plan)            -> { level, text, note, checks }
-rigPayload(plan, rigId)    -> what one rig receives
-whoIsOn(payload, minute)   -> { turn, minutesLeft }
-cleanStints(blockMin)      -> times on rig that divide the hour
-cleanBlocks(options)       -> grid sizes that give equal break and think
+buildPlan(cfg, groups)         -> plan
+auditPlan(plan)                -> { level, text, note, checks }
+rigPayload(plan, rigId)        -> what one rig receives
+whoIsOn(payload, minutes)      -> { turn, minutesLeft }, or null
+holderAt(group, rigIndex, b)   -> who is on that rig in that block
+rigStintLengths(plan)          -> the turn lengths a rig sees
 ```
+
+Four more decide whether a sheet may be believed at all, which is the
+mechanism behind a rig refusing an expired one:
+
+```
+shiftWindow(payload)           -> the half-open [start, end) it covers, or null
+coversAt(payload, at)          -> whether it covers that instant
+inForce(payloads, at)          -> the one whose window contains `at`, or null
+minutesOnFloor(payload, at)    -> the clock helper My Shift borrows
+```
+
+`inForce` deliberately does not fall back. What to show when no shift is
+running is the caller's decision, and choosing one here would let a
+finished schedule look like a live one.
 
 `cfg` is `{ shift, date, blockMin, stintBlocks, mode }`, mode `"hold"` or
 `"rotate"`.
@@ -137,10 +158,24 @@ a fact about *their* day, not about this rig, and the rig cannot derive it.
 
 ### Endpoints
 
+`apps/server/` carries the push and nothing else:
+
 ```
 POST /api/push                       body: { payloads: [...] }
 GET  /api/rigs/:rigId/schedule.json  -> the payload for that rig
 GET  /api/state                      -> { pushedAt, rigs: [...] }
+```
+
+`backend/` is the other half, and the routes the screens actually sign in
+against live there - `npm run serve` has none of them, which is why the
+desk and My Shift open unlocked on it:
+
+```
+POST /api/rigs/:rigId/events         the ledger - append-only, resend-safe
+GET  /api/rigs/:rigId/events/cursor  where a rig got to
+GET  /api/me/shift                   an operator's own day, derived from nothing
+POST /api/auth/login, /logout, /password, /reset
+GET  /api/health                     every switch that can be off
 ```
 
 ## The desk is locked to the sheet
@@ -191,11 +226,22 @@ time.
 
 ## Scope
 
-Everything the reference sheet calls for is now wired up: the desk
-generates a schedule, pushes it to the floor, and each rig reads its own
-payload and signs the right operator in when their turn starts.
+The reference sheet is wired up end to end: the desk builds a schedule,
+pushes it to the floor, and each rig reads its own payload and runs the
+right operator's turn from the clock. The rig has no login - given the
+payload and the time there is nothing left to ask.
 
-The sheet does not call for anything else. In particular it does not
-speak to episode persistence, offline recovery, authentication, or crew
-changeover at the shift boundary - those are open questions to raise
-when the product is ready to answer them, not implicit requirements.
+Three things this section used to list as open are now built. Episodes
+persist, in an append-only ledger every other table is derived from.
+Offline recovery works, because a rig journals to IndexedDB before the
+network is touched and a resend is safe on `(rigId, eventId)`.
+Authentication exists for the two screens that answer "whose" - the desk
+and My Shift - as revocable session rows rather than signed tokens.
+
+Crew changeover is settled too, and settled as *cold*: a rig comes to
+rest at the end of the shift it was pushed and waits for a manager to
+push the next day, rather than carrying on under yesterday's sheet.
+
+What is genuinely still open is where calibrating the arms belongs, and
+it is waiting on hardware rather than on a decision. `CLAUDE.md` carries
+the reasoning for all of it.

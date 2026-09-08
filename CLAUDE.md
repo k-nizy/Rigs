@@ -36,6 +36,9 @@ apps/               deployed
   my-shift/             operator's own day, read only
   rig/                  operator's per-rig screen
   server/               push transport
+
+backend/            deployed - the return arrow. FastAPI on Postgres
+deploy/             nginx, systemd, and the deploy guide
 ```
 
 If code is *imported by an app*, it lives under `packages/`. If code is
@@ -150,8 +153,8 @@ goes is a fact about *their day*, not derivable from *this* rig. That is
 exactly what let the rig drop its login screen and task picker: given the
 payload and the clock, there is nothing left to ask.
 
-Once `apps/server/` exists, this JSON is what it will publish; that is
-also why `packages/schema/` has a slot waiting.
+This JSON is what `apps/server/` publishes, and `packages/schema/` is
+what it is validated against on the way through - see "The push" below.
 
 ## The rig, briefly
 
@@ -393,6 +396,16 @@ them, never reused, travelling with them into every seat they ever work.
 Then the id and the name always agree and "everything Ben recorded" is a
 question with an answer. The seat keeps its own id, used for drawing the
 sheet and nothing else.
+
+**The person reaches the episode row itself.** Decided: an episode names
+the person who recorded it, directly, and not only through a projection
+built from it afterwards. The QC platform is what asks - it watches a
+take and checks the marking was honest, so "who recorded this" has to be
+answerable from the row it is looking at.
+
+The seat id stays on the row beside it. Which chair the work came from is
+a real fact about the schedule and worth keeping; it is simply not the
+answer to who did it.
 
 **Created deliberately; assigned by picking.** Never by typing a name
 into a schedule. One typo is a second person, their takes split across
