@@ -10,7 +10,6 @@
   },
   "blockMinutes": 15,
   "rotation": "hold",
-  "autoSignIn": true,
   "turns": [
     {
       "from": "08:00",

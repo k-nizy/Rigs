@@ -142,7 +142,7 @@ def payload_for(rig: str, day) -> dict:
         "rigId": rig, "group": "A", "task": "Box transfer",
         "shift": {"label": "Morning", "date": day.isoformat(),
                   "start": "08:00", "end": "16:00", "tz": "UTC"},
-        "blockMinutes": 15, "rotation": "hold", "autoSignIn": True, "turns": turns,
+        "blockMinutes": 15, "rotation": "hold", "turns": turns,
     }
 
 
