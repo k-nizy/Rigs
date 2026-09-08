@@ -33,5 +33,6 @@ name = One domain never imports another
 type = independence
 modules =
     core.domains.accounts
+    core.domains.people
     core.domains.schedules
     core.domains.rig_events
