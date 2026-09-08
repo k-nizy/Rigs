@@ -154,3 +154,37 @@ test("what a rig is handed says the same thing as the sheet", () => {
       RE.hhmm(at) + " on Rig 1");
   }
 });
+
+/* The rig-side table says who takes each rig next as well as who is on
+   it: the relief is whoever the sheet puts on that rig in the block
+   after the handover. `relievedBy` is how that reaches the rig, and
+   until now nothing in this file read it - setting it to null on every
+   turn passed all of these tests, and only the screen tests noticed.
+
+   Anchored on the transcription rather than on the engine's own turns.
+   Comparing the payload to itself would agree just as happily with an
+   engine that was consistently wrong. */
+test("the sheet says who takes the rig next, and the payload carries it", () => {
+  const payload = RE.rigPayload(plan, "Rig 1");
+  let handovers = 0;
+
+  for (let b = 0; b + 1 < plan.nBlocks; b++) {
+    const here = "Op " + SHEET_RIGS[b][0];
+    const next = "Op " + SHEET_RIGS[b + 1][0];
+    if (next === here) continue;          // mid-turn; nobody is relieved yet
+
+    const on = RE.whoIsOn(payload, RE.blockStart(plan, b));
+    assert.ok(on, "somebody is on Rig 1 at block " + b);
+    assert.equal(on.turn.operator.name, here, "block " + b + " on Rig 1");
+    assert.equal(on.turn.relievedBy, next,
+      RE.hhmm(RE.blockStart(plan, b + 1)) + ": the sheet hands Rig 1 to " + next);
+    handovers++;
+  }
+
+  assert.ok(handovers > 0, "the sheet has handovers on Rig 1 - this test read none");
+
+  /* The last turn has nobody to hand to. The whole crew changes at the
+     shift boundary, which is the desk's business and not this rig's. */
+  const last = payload.turns[payload.turns.length - 1];
+  assert.equal(last.relievedBy, null, "the last turn of the shift names no relief");
+});
