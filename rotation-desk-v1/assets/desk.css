@@ -1069,6 +1069,18 @@ pre.json .n { color: var(--accent); }
   padding: 8px 10px; margin: 0 0 14px;
 }
 
+
+/* A button that reads as a link. The "forgotten your password" control
+   is a button because it changes what this page shows rather than going
+   anywhere, and an <a href="#"> that does that is a link that lies to a
+   screen reader and to a middle-click. */
+.linkish {
+  font: inherit; font-size: 0.72rem;
+  color: var(--accent); background: none; border: 0; padding: 0;
+  text-decoration: underline; cursor: pointer;
+}
+.linkish:hover { opacity: 0.8; }
+
 @media print {
-  .who, #view-signin, #view-denied, .modal { display: none !important; }
+  .who, #view-signin, #view-denied, #view-forgot, #view-reset, .modal { display: none !important; }
 }

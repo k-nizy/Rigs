@@ -1183,9 +1183,17 @@ function probeSession() { return S.probe(); }
 function applyGate() {
   const open = mayUseTheDesk();
   const denied = !open && S.wrongRole("manager");   // signed in, wrong role
+  /* A door of its own, and it outranks the other two: somebody who has
+     opened a reset link has no password to sign in with, so showing
+     them the sign-in card would be showing them the one thing they
+     already know does not work. */
+  const resetting = !open && !!doorState.resetToken;
+  const forgetting = !open && !denied && !resetting && doorState.forgot;
 
-  $("view-signin").hidden = open || !!denied;
+  $("view-signin").hidden = open || !!denied || resetting || forgetting;
   $("view-denied").hidden = !denied;
+  $("view-forgot").hidden = !forgetting;
+  $("view-reset").hidden = !resetting;
   $("modes").hidden = !open;
 
   /* The chip is hidden entirely where nobody signs in, so a floor that
@@ -1249,6 +1257,93 @@ async function signOut() {
   floor.pushedAt = null;
   floor.source = "plan";
   applyGate();
+}
+
+/* ===================================================================
+ * A password nobody remembers
+ *
+ * Two doors that are not the sign-in card: asking for a link, and
+ * opening one. Which is showing is `doorState`, read by applyGate above.
+ * =================================================================== */
+
+const doorState = { forgot: false, resetToken: null };
+
+/* Take the token out of the address bar, keeping the token itself.
+ *
+ * A token left in the URL is a token in the browser history, in the
+ * referrer of anything this page loads afterwards, and on the screen of
+ * whoever is standing behind the person using it. It is a credential
+ * for as long as it is live, so it is read once and then removed. */
+function claimResetToken() {
+  const token = S.resetTokenInUrl();
+  if (!token) return;
+  doorState.resetToken = token;
+  if (window.history && window.history.replaceState) {
+    /* The path alone. The token is in the hash now, so keeping the hash
+       would be keeping the token - which is the thing being removed. */
+    window.history.replaceState(null, "", window.location.pathname);
+  }
+}
+
+function showForgot(on) {
+  doorState.forgot = on;
+  $("forgot-error").hidden = true;
+  $("forgot-ok").hidden = true;
+  $("forgot-email").value = $("in-email").value || "";
+  applyGate();
+}
+
+async function sendResetLink(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn = $("btn-forgot-send");
+  const err = $("forgot-error"), ok = $("forgot-ok");
+  err.hidden = true;
+  ok.hidden = true;
+  btn.disabled = true;
+  try {
+    const out = await S.requestReset($("forgot-email").value);
+    if (!out.ok) {
+      err.textContent = out.message;
+      err.hidden = false;
+      return;
+    }
+    /* The service's own wording, which is careful not to say whether
+       that address exists. Rewriting it here would undo that. */
+    ok.textContent = out.message;
+    ok.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function saveResetPassword(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  const btn = $("btn-reset-save"), err = $("reset-error");
+  err.hidden = true;
+
+  if ($("reset-new").value !== $("reset-again").value) {
+    err.textContent = "The two new passwords are not the same.";
+    err.hidden = false;
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    const out = await S.finishReset(doorState.resetToken, $("reset-new").value);
+    if (!out.ok) {
+      err.textContent = out.message;
+      err.hidden = false;
+      return;
+    }
+    /* Spent, and the service has already signed them in. Clearing it
+       stops a reload of this page trying to use it a second time and
+       being told, correctly but confusingly, that it has been used. */
+    doorState.resetToken = null;
+    ["reset-new", "reset-again"].forEach(id => { $(id).value = ""; });
+    openTheDesk();
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /* ===================================================================
@@ -1353,6 +1448,10 @@ $("btn-refresh").addEventListener("click", () => loadFloor(true));
 $("signin-form").addEventListener("submit", signIn);
 $("btn-signout").addEventListener("click", signOut);
 $("btn-denied-out").addEventListener("click", signOut);
+$("btn-forgot").addEventListener("click", () => showForgot(true));
+$("btn-forgot-back").addEventListener("click", () => showForgot(false));
+$("forgot-form").addEventListener("submit", sendResetLink);
+$("reset-form").addEventListener("submit", saveResetPassword);
 $("btn-passwd").addEventListener("click", openPasswd);
 $("btn-passwd-cancel").addEventListener("click", closePasswd);
 $("passwd-form").addEventListener("submit", savePasswd);
@@ -1370,6 +1469,11 @@ document.addEventListener("keydown", e => {
    masthead waits on that answer - a screen that renders the floor and
    then hides it has already put it on the wire. */
 (async function boot() {
+  /* Before the probe, because claiming the token takes it out of the
+     address bar and the probe is the first thing that could be slow. A
+     reset link left in the URL while a fetch is in flight is a
+     credential sitting on screen for as long as that takes. */
+  claimResetToken();
   await probeSession();
   openTheDesk();
 })();

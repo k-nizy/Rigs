@@ -92,7 +92,59 @@
              autocomplete="current-password" required>
 
       <button type="submit" class="btn" id="btn-signin">Sign in</button>
+      <p class="card-foot">
+        <button type="button" class="linkish" id="btn-forgot">Forgotten your password?</button>
+      </p>
       <p class="card-foot">Rigs do not sign in. A rig authenticates as a machine.</p>
+    </form>
+  </main>
+
+  <!-- =============================================================
+       FORGOTTEN - ask for a link.
+
+       The reply is the same whether or not that address has an
+       account, because the service makes it so. This screen must not
+       undo that by saying "no such account" - it would be a faster way
+       to enumerate the floor's staff than the login box next to it.
+       ============================================================= -->
+  <main id="view-forgot" hidden>
+    <form class="card" id="forgot-form" autocomplete="on">
+      <h2 class="card-title">Set a new password</h2>
+      <p class="card-sub">We will send a link to the address on your account.</p>
+
+      <p class="card-error" id="forgot-error" hidden></p>
+      <p class="card-ok" id="forgot-ok" hidden></p>
+
+      <label class="field-label" for="forgot-email">Email</label>
+      <input type="email" id="forgot-email" name="email" autocomplete="username" required>
+
+      <div class="modal-buttons">
+        <button type="submit" class="btn" id="btn-forgot-send">Send the link</button>
+        <button type="button" class="btn ghost" id="btn-forgot-back">Back</button>
+      </div>
+    </form>
+  </main>
+
+  <!-- =============================================================
+       THE LINK WAS OPENED - set a new password with the token from
+       the URL. No sign-in needed: holding the link is the proof.
+       ============================================================= -->
+  <main id="view-reset" hidden>
+    <form class="card" id="reset-form" autocomplete="off">
+      <h2 class="card-title">Choose a new password</h2>
+      <p class="card-sub">This link works once. Everything else stays signed out.</p>
+
+      <p class="card-error" id="reset-error" hidden></p>
+
+      <label class="field-label" for="reset-new">New password</label>
+      <input type="password" id="reset-new" autocomplete="new-password" required autofocus>
+
+      <label class="field-label" for="reset-again">New password again</label>
+      <input type="password" id="reset-again" autocomplete="new-password" required>
+
+      <button type="submit" class="btn" id="btn-reset-save">Set it and sign in</button>
+      <p class="card-foot">Twelve characters at the very least. A phrase beats
+        a short scramble.</p>
     </form>
   </main>
 

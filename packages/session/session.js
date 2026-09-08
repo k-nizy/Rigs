@@ -145,6 +145,96 @@
     return mins + " minute" + (mins === 1 ? "" : "s");
   }
 
+  /* Ask for a link to set a new password.
+   *
+   * The reply is the same whether or not that address has an account -
+   * deliberately, on the service - so this returns the same thing too.
+   * A page that said "no such account" would put the enumeration leak
+   * back in the one place the service went to the trouble of closing it.
+   *
+   * 404 means this floor has no mail relay, which is a real answer and
+   * has to be shown rather than swallowed: the person needs to know to
+   * ask a manager instead of waiting for mail that is not coming. */
+  async function requestReset(email) {
+    try {
+      const r = await api("/api/auth/reset/request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: email }),
+      });
+      const body = await r.json().catch(() => ({}));
+
+      if (!r.ok) {
+        return {
+          ok: false,
+          message: r.status === 429
+            ? "Too many requests. Try again in " + waitFor(r) + "."
+            : (body.detail || "Could not send a link."),
+        };
+      }
+      return { ok: true, message: body.detail || "" };
+    } catch (ignored) {
+      return { ok: false, message: "Could not reach the server." };
+    }
+  }
+
+  /* Spend a reset token and set the password.
+   *
+   * The service signs them in on the way out, so the reply carries a
+   * session and a CSRF token like a login does - and this has to record
+   * both, or the page is signed in without knowing it. */
+  async function finishReset(token, newPassword) {
+    try {
+      const r = await api("/api/auth/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ token: token, newPassword: newPassword }),
+      });
+      const body = await r.json().catch(() => ({}));
+
+      if (!r.ok) {
+        return { ok: false, message: body.detail || "That did not work." };
+      }
+
+      state.personAuth = "on";
+      state.broken = false;
+      state.reachable = true;
+      state.account = {
+        name: body.name, role: body.role, operatorId: body.operatorId,
+      };
+      state.csrf = body.csrfToken || null;
+      return { ok: true };
+    } catch (ignored) {
+      return { ok: false, message: "Could not reach the server." };
+    }
+  }
+
+  /* The reset token in this page's own URL, or null.
+   *
+   * **The fragment, not the query string**, and the two halves of that
+   * have to move together: the service emits `#reset=TOKEN` and this
+   * reads `location.hash`. A browser never sends the fragment to the
+   * server, which is the point - as a query parameter the token went up
+   * in the request line and straight into nginx's access log, still
+   * valid for half an hour.
+   *
+   * Read once at boot and then taken out of the address bar by the
+   * caller. That is a separate problem and still worth doing: a token
+   * left in the URL is in the history, in the referrer of anything the
+   * page loads next, and on the screen of whoever is standing behind
+   * the person using it.
+   *
+   * `?reset=` is deliberately not accepted as a fallback. Nothing has
+   * ever issued one - the feature has not shipped - and a reader that
+   * takes both would let the service go back to emitting the logged
+   * form without anything noticing. */
+  function resetTokenInUrl(hash) {
+    const h = hash === undefined
+      ? (root.location ? root.location.hash : "") : hash;
+    const m = /[#&]reset=([^&]+)/.exec(h || "");
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+
   /* Change the password of whoever is signed in here.
    *
    * Unlike signIn, this says which half was wrong. There is no account
@@ -220,6 +310,9 @@
     signIn: signIn,
     signOut: signOut,
     changePassword: changePassword,
+    requestReset: requestReset,
+    finishReset: finishReset,
+    resetTokenInUrl: resetTokenInUrl,
     mayUse: mayUse,
     wrongRole: wrongRole,
   };

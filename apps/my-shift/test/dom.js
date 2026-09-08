@@ -131,6 +131,25 @@ async function mountMyShift(opts) {
     },
   };
   global.window = global;
+  global.location = {
+    search: opts.search || "",
+    /* A reset link is a fragment now, so a test that opens one sets
+       this. The server never sees it, which is why the token is here. */
+    hash: opts.hash || "",
+    pathname: "/apps/my-shift/",
+  };
+  /* A real one, because the page uses `replaceState` to take a reset
+     token out of the address bar - and "did the credential leave the
+     URL" is a question only answerable if the stub actually moves. */
+  global.history = {
+    replaceState(_state, _title, url) {
+      const [rest, frag] = String(url).split("#");
+      const [path, query] = rest.split("?");
+      global.location.pathname = path;
+      global.location.search = query ? "?" + query : "";
+      global.location.hash = frag ? "#" + frag : "";
+    },
+  };
   /* The page listens for scroll to keep the perch in step. Nothing
      scrolls headlessly, so this only has to exist. */
   const listeners = {};
@@ -165,6 +184,12 @@ async function mountMyShift(opts) {
     /* A key press at the document, the way a real one arrives. */
     key(name) {
       (docListeners["keydown"] || []).forEach(fn => fn({ key: name }));
+    },
+
+    /* What is in the address bar now. */
+    url() {
+      return global.location.pathname + global.location.search
+               + global.location.hash;
     },
 
     /* Which of the three screens is up, as one word. */
