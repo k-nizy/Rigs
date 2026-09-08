@@ -121,6 +121,7 @@ async def ingest(
                 turn_from=ev.turn_from,
                 operator_id=ev.operator_id,
                 operator_name=ev.operator_name,
+                person_id=ev.person_id,
                 bucket=ev.bucket,
                 event=ev.event,
                 envelope=ev.model_dump(by_alias=True, mode="json"),

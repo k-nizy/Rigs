@@ -39,6 +39,11 @@ class Episode(TimestampedBase):
     # different days. Nullable: events filed before the field existed
     # carry no name, and they are not to be refused.
     operator_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Who recorded this, as an id that is theirs. On the row itself and
+    # not only in a report built from it, because the QC platform asks
+    # of the row it is looking at. Nullable for the same reason as the
+    # name: events filed before the field existed carry none.
+    person_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     duration_secs: Mapped[float] = mapped_column(Float, nullable=False)
@@ -71,4 +76,7 @@ class Episode(TimestampedBase):
     __table_args__ = (
         Index("ix_episodes_rig_shift", "rig_id", "shift_date", "shift_label"),
         Index("ix_episodes_operator", "operator_id"),
+        # "Everything this person recorded" - the question the table
+        # exists to answer, and the one a seat cannot.
+        Index("ix_episodes_person", "person_id"),
     )
