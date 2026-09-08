@@ -36,7 +36,7 @@ function payload(label, opts) {
     rigId: o.rig || "RIG-03", group: "A", task: "Box transfer",
     shift: { label: label, date: o.date || "2026-08-25",
              start: w[0], end: w[1], tz: o.tz || "UTC" },
-    blockMinutes: 15, rotation: "hold", autoSignIn: true, turns: [],
+    blockMinutes: 15, rotation: "hold", turns: [],
   };
 }
 

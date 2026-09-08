@@ -41,7 +41,7 @@ def payload(label, tz="UTC", rig=RIG, day=DAY, turns=True):
         "rigId": rig, "group": "A", "task": "Box transfer",
         "shift": {"label": label, "date": day.isoformat(),
                   "start": start, "end": end, "tz": tz},
-        "blockMinutes": 15, "rotation": "hold", "autoSignIn": True,
+        "blockMinutes": 15, "rotation": "hold",
         "turns": [{"from": start, "to": end, "minutes": 480,
                    "operator": {"id": "op-a1", "name": "Someone"},
                    "relievedBy": None, "theyGoTo": "Break"}] if turns else [],
