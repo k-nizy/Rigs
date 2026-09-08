@@ -60,6 +60,21 @@ class EventEnvelope(BaseModel):
     # forgets it from the journal. Demanding this field would destroy that
     # work rather than delay it.
     operator_name: str | None = Field(default=None, alias="operatorName", max_length=128)
+    # The person, as distinct from the seat and from the name. `people.id`,
+    # minted once when a manager adds somebody and carried into every
+    # seat they ever work - so "who recorded this" has one answer across
+    # months, which neither the seat nor a name can give.
+    #
+    # Optional, and it must stay optional, for exactly the reason above:
+    # no rig sends this until the release after the server accepts it.
+    #
+    # Not checked against `people` at ingest, and there is no foreign key.
+    # An event is a fact about what the rig was told; refusing it because
+    # a table elsewhere disagrees would destroy work, not correct it. And
+    # a restore re-POSTs the ledger through this route - people are
+    # outside the ledger, like schedules, so a key would make a restore
+    # order-dependent and a missing row into lost events.
+    person_id: UUID | None = Field(default=None, alias="personId")
 
     bucket: Literal[
         "episodes", "rig_shift_checks", "rig_downtime_events",

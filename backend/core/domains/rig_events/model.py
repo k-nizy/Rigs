@@ -47,6 +47,9 @@ class RigEvent(TimestampedBase):
     # replay - but events written before the field existed have none, and
     # a rig discards a refused batch rather than retrying it.
     operator_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # The person, so it survives a replay. Opaque - no key to `people`,
+    # see the envelope for why.
+    person_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     bucket: Mapped[str] = mapped_column(String(32), nullable=False)
     event: Mapped[str] = mapped_column(String(32), nullable=False)
