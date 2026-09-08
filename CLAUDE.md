@@ -458,9 +458,15 @@ its own, so each can be reverted on its own.
   given, and `disabled_at` in place of deletion. `people` and `accounts`
   do not import each other, and `.importlinter` enforces it. Nothing
   reads the table.
-- **The episode row** - next. The person id lands on the episode itself,
-  beside the seat id, because the QC platform asks "who recorded this"
-  of the row it is looking at.
+- **The episode row** - built, backend first. `personId` is accepted on
+  the envelope and stored on the ledger and all five fact rows, beside
+  the seat id, because the QC platform asks "who recorded this" of the
+  row it is looking at. No rig sends it yet: per DEPLOY.md the server
+  learns a shape in one release and the rig starts sending it in the
+  next, because a rig drops a refused batch rather than retrying it.
+  There is deliberately no foreign key to `people` - a restore re-POSTs
+  the ledger, people are outside it like schedules, and a key would turn
+  a missing row into lost events.
 - **The desk picks.** A search over people who already exist, in place
   of a free-text name; two people with one name come back as two rows.
 - **The roster reads server-side**, and the read-back-and-prove path

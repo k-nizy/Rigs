@@ -28,7 +28,7 @@ _NO_NAME = object()
 
 
 def env(seq, event, bucket, data, turn="09:00", op="op-a4", secs=None,
-        name="Nadia Haddad", date="2026-08-24"):
+        name="Nadia Haddad", date="2026-08-24", person=None):
     """One envelope. `secs` overrides the default 30-seconds-per-seq
     spacing, for the events whose real place in the turn matters - a
     stint's length is now read from its own timestamps rather than taken
@@ -50,13 +50,17 @@ def env(seq, event, bucket, data, turn="09:00", op="op-a4", secs=None,
     # event already in a rig's journal looks like.
     if name is not _NO_NAME:
         ev["operatorName"] = name
+    # person=None leaves the key out, which is what every rig sends until
+    # the release after this one - the server learns the shape first.
+    if person is not None:
+        ev["personId"] = person
     return ev
 
 
-def a_stint() -> list[dict]:
+def a_stint(person=None) -> list[dict]:
     """One operator's turn, as the rig would actually file it."""
     ep1, ep2, ep3 = (str(uuid.uuid4()) for _ in range(3))
-    return [
+    events = [
         env(0, "shift_check", "rig_shift_checks", {"outcome": "passed"}),
         env(1, "episode_saved", "episodes", {"episodeId": ep1, "durationSecs": 92, "score": 4}),
         env(2, "episode_discarded", "episodes", {"episodeId": ep2, "durationSecs": 11}),
@@ -73,6 +77,10 @@ def a_stint() -> list[dict]:
             {"episodes": 2, "recordedSecs": 197, "assignedSecs": 2700,
              "faultSecs": 0, "downSecs": 180}, secs=2700),
     ]
+    if person is not None:
+        for ev in events:
+            ev["personId"] = person
+    return events
 
 
 async def ingest(client, events):
@@ -176,6 +184,66 @@ async def test_the_name_reaches_every_fact_table_the_key_feeds(client, session):
         got = rows.scalars().all()
         assert got, f"{model.__tablename__} projected nothing"
         assert all(r.operator_name == "Nadia Haddad" for r in got),             f"{model.__tablename__} lost the name"
+
+
+async def test_an_event_with_no_person_id_at_all_is_accepted_and_projects(client, session):
+    """The shape of every event every rig sends the day this ships, and of
+    every event already in a journal. `personId` is accepted, never
+    demanded, for exactly the reason `operatorName` is: a refused batch
+    is dropped and forgotten, not retried."""
+    ev = env(0, "episode_saved", "episodes",
+             {"episodeId": str(uuid.uuid4()), "durationSecs": 92, "score": 4})
+    assert "personId" not in ev, "this test is pointless if the key is present"
+
+    await ingest(client, [ev])
+    await project_batch(session)
+
+    ep = (await session.execute(select(Episode))).scalars().one()
+    assert ep.person_id is None, "an absent person must read as no person, not fail"
+    assert ep.operator_id == "op-a4", "the rest of the event still lands"
+
+
+async def test_one_seat_two_people_and_each_take_keeps_its_person(client, session):
+    """What the QC platform reads. It asks "who recorded this" of the
+    episode row it is looking at, across months, and a seat cannot answer
+    - `op-a4` is the same string for Nadia on the 24th and Priya covering
+    on the 25th. The person id can, and it is on the row itself rather
+    than in a projection that could be rebuilt differently later."""
+    nadia, priya = str(uuid.uuid4()), str(uuid.uuid4())
+    ep_nadia, ep_priya = str(uuid.uuid4()), str(uuid.uuid4())
+    await ingest(client, [
+        env(0, "episode_saved", "episodes",
+            {"episodeId": ep_nadia, "durationSecs": 92, "score": 4},
+            op="op-a4", name="Nadia Haddad", date="2026-08-24", person=nadia),
+        env(1, "episode_saved", "episodes",
+            {"episodeId": ep_priya, "durationSecs": 88, "score": 5},
+            op="op-a4", name="Priya Anand", date="2026-08-25", person=priya),
+    ])
+    await project_batch(session)
+
+    by_id = {str(e.episode_id): e for e in (await session.execute(select(Episode))).scalars()}
+    assert str(by_id[ep_nadia].person_id) == nadia
+    assert str(by_id[ep_priya].person_id) == priya
+    assert by_id[ep_nadia].person_id != by_id[ep_priya].person_id
+    # The seat really is shared, and the name alone is only a string.
+    assert by_id[ep_nadia].operator_id == by_id[ep_priya].operator_id == "op-a4"
+
+
+async def test_the_person_reaches_every_fact_table_the_key_feeds(client, session):
+    """The decision named the episode. The precedent says every fact row,
+    and there is no reason the episode should be the only one that knows:
+    "Ben's efficiency" grouped by seat merges people exactly as "Ben's
+    takes" did. person_id rides in _key(), so a replay rebuilds all five
+    with the person still on them."""
+    who = str(uuid.uuid4())
+    await ingest(client, a_stint(person=who))
+    await project_batch(session)
+
+    for model in (Episode, RigShiftCheck, RigDowntimeEvent,
+                  RigProductivityBlock, Session):
+        got = (await session.execute(select(model))).scalars().all()
+        assert got, f"{model.__tablename__} projected nothing"
+        assert all(str(r.person_id) == who for r in got),             f"{model.__tablename__} lost the person"
 
 
 async def test_a_discarded_take_is_a_row_not_an_absence(client, session):

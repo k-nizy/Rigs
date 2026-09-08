@@ -1,8 +1,10 @@
 """Checklist passes and the fault reports raised against them."""
 
+import uuid
 from datetime import date, datetime
 
 from sqlalchemy import UniqueConstraint, BigInteger, Date, DateTime, Float, Index, String
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.base.model import TimestampedBase
@@ -23,6 +25,8 @@ class RigShiftCheck(TimestampedBase):
     # different days. Nullable: events filed before the field existed
     # carry no name, and they are not to be refused.
     operator_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # The person in that seat, as an id that is theirs. See episodes.
+    person_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
