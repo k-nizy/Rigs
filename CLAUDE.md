@@ -634,25 +634,74 @@ midnight was announced at 02:19 as starting in 13h 44m. `liveState()` now
 asks `shiftWindow()` the same question the badge asks, and says the shift
 has ended when it has.
 
+## The changeover is cold, and the rig waits to be told
+
+Decided. There is no handover window across a shift boundary. The rig
+comes to rest at the end of the shift it was pushed and does not start
+the next one on its own: it stands by, keeps asking, and goes to work the
+moment a manager pushes the day.
+
+This adds no code - it is the behaviour already built, and
+`apps/rig/no-schedule.test.js` already pins it: "it keeps asking, and
+goes to work the moment one is pushed". What was missing was the reason.
+A handover window would have to say who is charged for the overlap
+minutes when the *whole* crew swaps at once, and there is no honest
+answer to that. One crew is on the clock or the other is; inventing a
+window where both are puts minutes into `assignedSecs` that nobody
+worked, and every efficiency score in the overlap is wrong by
+construction.
+
+The cost is the one this repository keeps choosing. A floor whose manager
+forgets to push has twelve rigs in Standby, which is loud, cheap and
+recoverable - a rig with nothing to run asks again every few seconds, so
+it starts working seconds after somebody pushes. The alternative is a rig
+carrying on under yesterday's sheet, filing every take against the wrong
+operator, on the wrong shift, on the wrong day, which is silent and
+permanent. Same trade as refusing an expired sheet, and as rejecting a
+bad push in full.
+
+A rig still treats every boot as the start of a shift, and that stays
+correct: what makes a boot safe is the window check against the sheet it
+loads, not any knowledge of what happened before it.
+
+## Who checks the marking, and who does not
+
+Decided, and the answer is mostly that it is not this system's job.
+
+An operator scores their own take. The decision is that a manager may
+**see** those scores and may not change them. Neither half is built yet,
+and the asymmetry is the point: surfacing an outlier is worth having and
+costs a projection and no new event type, whereas letting one person
+overwrite another's mark needs a screen, an event, and a settled answer
+to who may re-mark whose work.
+
+The real review happens elsewhere. There is a **QC platform** - people
+whose job is to watch the video and check it was scored honestly - and it
+is a separate system, not another screen here. That boundary is the
+point. This service stores measurements and not conclusions, which is why
+no percentage is written down and efficiency is computed at read time
+from one definition. An adjudicated score is a conclusion, and the moment
+one is stored, correcting the rule behind it stops correcting the past.
+
+Which makes the operator id matter more here than the score does. QC asks
+"who recorded this, and is their marking sound" - a question about one
+person across months. `op-a4` is a chair, so it cannot answer it, and a
+report grouped by it merges two people in silence. See "Who a person is,
+and who is on the floor".
+
 ## What the reference sheet does not ask for
 
 The sheet defines the scope. It does not speak to:
 
-- **Crew changeover at shift boundaries.** The engine hard-codes three
-  8-hour shifts, and the rig now comes to rest at the end of the one it
-  was pushed rather than running past it. What is still undecided is the
-  *changeover itself*: no handover-window vs. cold-takeover decision has
-  been made, and a rig treats every boot as the start of a shift.
-- **Whether anyone reviews the scores an operator gives their own
-  takes.** Who may read which screen is now settled and built - see "Who
-  signs in, and who does not" above - but nobody checks the marking.
 - **Where calibrating the arms belongs.** The station has two teleop
   arms, they drift, and nothing in the loop makes room for aligning them.
   Written out below, because the answer decides a column and a formula
   rather than a screen.
 
-These are open questions to answer when the product is ready, not
-implicit requirements to fill in.
+That is the one still open. Crew changeover and who reviews an operator's
+own scores were both on this list and are answered in the two sections
+immediately above. This is an open question to answer when the product is
+ready, not an implicit requirement to fill in.
 
 ### Calibration, and why the answer decides more than a screen
 
