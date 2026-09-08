@@ -42,10 +42,12 @@ def _key(ev: RigEvent) -> dict[str, Any]:
     """The fields every fact row carries, all of them from the schedule
     the desk pushed.
 
-    operator_id is the seat; operator_name is the person who sat in it.
-    Both, because the seat is what the sheet is written in and the person
-    is what a take has to be traced to. None on a row projected from an
-    event filed before the name travelled.
+    operator_id is the seat; operator_name is the person who sat in it;
+    person_id is that person as an id that is theirs, the same in every
+    seat they ever work. All three, because the seat is what the sheet is
+    written in, the name is what people read, and the id is what "who
+    recorded this" needs to have one answer across months. None on a row
+    projected from an event filed before each of them travelled.
     """
     return dict(
         rig_id=ev.rig_id,
@@ -54,6 +56,7 @@ def _key(ev: RigEvent) -> dict[str, Any]:
         turn_from=ev.turn_from,
         operator_id=ev.operator_id,
         operator_name=ev.operator_name,
+        person_id=ev.person_id,
     )
 
 

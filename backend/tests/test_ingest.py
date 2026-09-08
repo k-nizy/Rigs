@@ -137,6 +137,27 @@ async def test_events_survive_verbatim(client, session):
     assert rows[0].envelope["eventId"] == sent["eventId"]
 
 
+async def test_a_person_id_is_accepted_before_any_rig_sends_one(client, session):
+    """Backend first, always. DEPLOY.md: a change to the envelope ships
+    in its own release and the rig starts sending it only in the next,
+    because a rig drops a refused batch rather than retrying it. So the
+    server has to accept `personId` while no rig on the floor sends it -
+    which is this test - and store it verbatim, so a projection written
+    later can read it out of events filed before the projection existed.
+    """
+    from core.domains.rig_events.repository import RigEventRepository
+
+    who = str(uuid.uuid4())
+    sent = envelope(0, personId=who)
+    r = await client.post(f"/api/rigs/{RIG}/events", json={"events": [sent]})
+    assert r.status_code == 200, r.text
+
+    rows = await RigEventRepository(session).since(RIG, -1)
+    assert len(rows) == 1
+    assert rows[0].envelope["personId"] == who, "the envelope is kept exactly as sent"
+    assert str(rows[0].person_id) == who, "and the ledger column carries it, so it survives a replay"
+
+
 # ------------------------------------------------------------ rejection
 
 async def test_a_batch_posted_to_the_wrong_rig_is_rejected_whole(client, session):
@@ -163,6 +184,7 @@ async def test_a_batch_posted_to_the_wrong_rig_is_rejected_whole(client, session
         ({"bucket": "sessions"}, "episode_saved does not live in sessions"),
         ({"event": "episode_uploaded"}, "unknown event"),
         ({"shiftDate": "24-08-2026"}, "shiftDate must be YYYY-MM-DD"),
+        ({"personId": "not-a-uuid"}, "personId is a uuid when it is given at all"),
     ],
 )
 async def test_malformed_envelopes_are_refused(client, bad, why):
