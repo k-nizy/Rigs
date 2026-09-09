@@ -62,6 +62,14 @@ DESK_READS = [
     "/api/floor/alerts",
     "/api/floor/video",
     "/api/floor/efficiency?shift_date=2026-08-26&shift_label=Morning",
+    # Who is on the floor is the desk's to read, for the same reason the
+    # board is: it names every operator, and an operator seeing the list
+    # of everybody is the question the efficiency route refuses to settle
+    # by accident.
+    "/api/people?q=",
+    # /api/people/{id} is gated the same way but cannot sit in this list:
+    # the let-through sweeps expect 200, and an id nobody has is a
+    # correct 404. Its gate is asserted in TestPeopleAreTheDesksToManage.
 ]
 
 
@@ -497,3 +505,75 @@ class TestTheRigIsStillUntouched:
             await signed_in(c, MANAGER)
             r = await c.get(f"/api/rigs/{self.RIG}/cursor")
         assert r.status_code == 401
+
+
+class TestPeopleAreTheDesksToManage:
+    """Creating, renaming and disabling a person are manager's acts, and
+    they follow the same three rules as the push: open on a deployment
+    with no accounts, 401 once anybody has one, 403 for an operator."""
+
+    BODY = {"name": "Ben Carter"}
+
+    async def test_open_until_somebody_has_an_account(self, engine, session):
+        async with serving() as c:
+            r = await c.post("/api/people", json=self.BODY)
+        assert r.status_code == 201, r.text
+
+    async def test_needs_somebody_once_accounts_exist(self, engine, session):
+        await accounts(session)
+        async with serving() as c:
+            r = await c.post("/api/people", json=self.BODY)
+        assert r.status_code == 401
+
+    async def test_an_operator_may_not_add_a_person(self, engine, session):
+        await accounts(session)
+        async with serving() as c:
+            csrf = await signed_in(c, OPERATOR)
+            r = await c.post("/api/people", json=self.BODY,
+                             headers={CSRF_HEADER: csrf})
+        assert r.status_code == 403
+        assert "manager" in r.json()["detail"]
+
+    async def test_a_manager_may(self, engine, session):
+        await accounts(session)
+        async with serving() as c:
+            csrf = await signed_in(c, MANAGER)
+            r = await c.post("/api/people", json=self.BODY,
+                             headers={CSRF_HEADER: csrf})
+        assert r.status_code == 201, r.text
+
+    async def test_a_manager_without_the_csrf_token_is_refused(self, engine, session):
+        """A browser session is exactly what CSRF is about. The desk
+        echoes the token; a form on another origin cannot."""
+        await accounts(session)
+        async with serving() as c:
+            await signed_in(c, MANAGER)
+            r = await c.post("/api/people", json=self.BODY)
+        assert r.status_code == 403
+
+    NOBODY = "/api/people/00000000-0000-4000-8000-000000000000"
+
+    async def test_reading_one_person_needs_somebody_once_accounts_exist(
+            self, engine, session):
+        await accounts(session)
+        async with serving() as c:
+            r = await c.get(self.NOBODY)
+        assert r.status_code == 401
+
+    async def test_an_operator_may_not_read_one_person(self, engine, session):
+        await accounts(session)
+        async with serving() as c:
+            await signed_in(c, OPERATOR)
+            r = await c.get(self.NOBODY)
+        assert r.status_code == 403
+
+    async def test_a_manager_reading_nobody_gets_a_404_not_a_refusal(
+            self, engine, session):
+        """The gate lets a manager through, and then the answer is that
+        nobody has that id - which is a different thing from being
+        refused, and the sweep above cannot tell them apart."""
+        await accounts(session)
+        async with serving() as c:
+            await signed_in(c, MANAGER)
+            r = await c.get(self.NOBODY)
+        assert r.status_code == 404
