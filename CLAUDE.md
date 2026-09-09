@@ -467,8 +467,13 @@ its own, so each can be reverted on its own.
   There is deliberately no foreign key to `people` - a restore re-POSTs
   the ledger, people are outside it like schedules, and a key would turn
   a missing row into lost events.
-- **The desk picks.** A search over people who already exist, in place
-  of a free-text name; two people with one name come back as two rows.
+- **The desk picks** - the service half is built. `POST /api/people`,
+  `GET /api/people?q=`, `GET /api/people/{id}`, `PATCH /api/people/{id}`
+  and `POST /api/people/{id}/disable`, all manager-only with the same
+  open-until-configured fallback as the push, all in `test_roles.py`'s
+  per-role sweep. Two people with one name come back as two rows. What
+  is still to come is the picker itself, in place of the desk's free-text
+  name, and the payload carrying `personId` beside the seat.
 - **The roster reads server-side**, and the read-back-and-prove path
   retires with it.
 - **Invites**, through the password reset flow, for anybody given an

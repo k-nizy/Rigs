@@ -10,9 +10,9 @@ import uuid
 from datetime import date, datetime, timezone
 
 from fastapi import (
-    APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response,
+    APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +29,9 @@ from core.infrastructure.database import get_session
 from core.workflows.floor import floor_state, operator_efficiency
 from core.workflows.schedules import in_force as schedules_in_force
 from core.workflows.schedules import turns_for_operator
+from sqlalchemy.exc import IntegrityError
+
+from core.domains.people.repository import PersonRepository
 from core.domains.accounts.repository import (
     AccountRepository, AccountSessionRepository,
 )
@@ -1122,3 +1125,165 @@ async def pushes(
             for r in rows
         ]
     }
+
+
+# ------------------------------------------------- who is on the floor
+#
+# CLAUDE.md, "Who a person is": created deliberately, assigned by
+# picking, never by typing a name into a schedule. These are the
+# deliberate half. The picker on the desk reads them; until it exists
+# nothing else does, and the routes are still worth having on their own
+# because the alternative is a terminal command that makes accounts,
+# which are not people.
+#
+# The desk's to manage, so `require_manager` throughout - open on a
+# deployment with no accounts, like the push, and a real gate the moment
+# one exists. Writes take `require_csrf` too, because a browser session
+# is what CSRF is about.
+
+
+class PersonIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(max_length=120)
+    email: str | None = Field(default=None, max_length=255)
+
+    @field_validator("name")
+    @classmethod
+    def not_blank(cls, v: str) -> str:
+        """A person with no name is a row nobody can pick."""
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be blank")
+        return v
+
+
+class RenameIn(BaseModel):
+    """Only the name. There is no route that changes an id, and a body
+    that tries is refused rather than ignored - ignored is how a client
+    comes to believe it worked."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be blank")
+        return v
+
+
+class PersonOut(BaseModel):
+    id: str
+    name: str
+    email: str | None
+    disabledAt: str | None
+
+
+def _person_out(p) -> PersonOut:
+    return PersonOut(
+        id=str(p.id), name=p.name, email=p.email,
+        disabledAt=p.disabled_at.isoformat() if p.disabled_at else None,
+    )
+
+
+class PeopleOut(BaseModel):
+    people: list[PersonOut]
+
+
+class DisabledOut(BaseModel):
+    ok: bool
+    changed: int
+
+
+@router.post("/people", response_model=PersonOut, status_code=201, tags=["people"],
+             dependencies=[Depends(require_manager), Depends(require_csrf)],
+             summary="Add a person to the floor")
+async def add_person(
+    body: PersonIn, session: AsyncSession = Depends(get_session),
+) -> PersonOut:
+    """Mint a person. The one place an id comes from.
+
+    An address that already belongs to somebody is a 409, and the reply
+    says so plainly: this route is a manager's, on the desk, and a
+    manager is entitled to know the floor's roster. The public reset
+    route is the one that must not say who exists; this is not it.
+    """
+    repo = PersonRepository(session)
+    try:
+        p = await repo.create(body.name, email=body.email)
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="that address already belongs to somebody on the floor",
+        )
+    return _person_out(p)
+
+
+@router.get("/people", response_model=PeopleOut, tags=["people"],
+            dependencies=[Depends(require_manager)],
+            summary="Find people by name, or list the floor")
+async def find_people(
+    q: str = Query(default=""),
+    includeDisabled: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+) -> PeopleOut:
+    """What the picker reads. Everybody who matches, in a fixed order, so
+    two people with one name come back as two rows and the manager
+    disambiguates rather than the code guessing. No query is the whole
+    floor - the picker's opening state."""
+    rows = await PersonRepository(session).search(q, include_disabled=includeDisabled)
+    return PeopleOut(people=[_person_out(p) for p in rows])
+
+
+@router.get("/people/{person_id}", response_model=PersonOut, tags=["people"],
+            dependencies=[Depends(require_manager)],
+            summary="One person, disabled or not")
+async def one_person(
+    person_id: uuid.UUID, session: AsyncSession = Depends(get_session),
+) -> PersonOut:
+    """Resolves a disabled person too. Somebody leaving is not the same as
+    them never having been here, and an id on a take filed last year
+    still has to name them."""
+    p = await PersonRepository(session).get(person_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="nobody has that id")
+    return _person_out(p)
+
+
+@router.patch("/people/{person_id}", response_model=PersonOut, tags=["people"],
+              dependencies=[Depends(require_manager), Depends(require_csrf)],
+              summary="Correct a name")
+async def rename_person(
+    person_id: uuid.UUID, body: RenameIn,
+    session: AsyncSession = Depends(get_session),
+) -> PersonOut:
+    """A name changes; the id does not, so correcting a spelling never
+    orphans a take."""
+    p = await PersonRepository(session).rename(person_id, body.name)
+    if p is None:
+        raise HTTPException(status_code=404, detail="nobody has that id")
+    await session.commit()
+    return _person_out(p)
+
+
+@router.post("/people/{person_id}/disable", response_model=DisabledOut, tags=["people"],
+             dependencies=[Depends(require_manager), Depends(require_csrf)],
+             summary="Somebody leaves")
+async def disable_person(
+    person_id: uuid.UUID, session: AsyncSession = Depends(get_session),
+) -> DisabledOut:
+    """Disabled, never deleted. `changed` is 0 the second time, and the
+    date of the first time stands: the day somebody left is a fact, not
+    the last time the button was pressed."""
+    repo = PersonRepository(session)
+    if await repo.get(person_id) is None:
+        raise HTTPException(status_code=404, detail="nobody has that id")
+    changed = await repo.disable(person_id)
+    await session.commit()
+    return DisabledOut(ok=True, changed=changed)
