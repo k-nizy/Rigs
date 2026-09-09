@@ -141,12 +141,18 @@ The desk emits one payload per rig. Its shape is:
   "blockMinutes": 15, "rotation": "hold",
   "turns": [
     { "from": "08:15", "to": "09:00", "minutes": 45,
-      "operator": { "id": "op-a4", "name": "Nadia Haddad" },
+      "operator": { "id": "op-a4", "name": "Nadia Haddad", "personId": "..." },
       "relievedBy": "Aleksandr Petrov",
       "theyGoTo": "Think" }
   ]
 }
 ```
+
+`personId` is the seat's occupant as an id that is theirs, and it is
+optional: absent from a laptop demo and from any floor without a people
+table, present only when the desk assigned by picking. The engine adds
+the key only when a roster entry carries one, so a roster of plain names
+pushes byte for byte what it always pushed.
 
 `theyGoTo` has to travel *in* the payload — where an outgoing operator
 goes is a fact about *their day*, not derivable from *this* rig. That is
@@ -471,9 +477,12 @@ its own, so each can be reverted on its own.
   `GET /api/people?q=`, `GET /api/people/{id}`, `PATCH /api/people/{id}`
   and `POST /api/people/{id}/disable`, all manager-only with the same
   open-until-configured fallback as the push, all in `test_roles.py`'s
-  per-role sweep. Two people with one name come back as two rows. What
-  is still to come is the picker itself, in place of the desk's free-text
-  name, and the payload carrying `personId` beside the seat.
+  per-role sweep. Two people with one name come back as two rows. The
+  payload half is built too: a roster entry may be `{ name, personId }`
+  and the engine puts `operator.personId` on every turn beside the seat,
+  only when the entry carries one, so the sheet is drawn identically
+  either way. What is still to come is the picker itself, in place of
+  the desk's free-text name.
 - **The roster reads server-side**, and the read-back-and-prove path
   retires with it.
 - **Invites**, through the password reset flow, for anybody given an

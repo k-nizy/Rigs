@@ -59,6 +59,12 @@
     else {
       reqString(t.operator, "id",   e, at + "operator.");
       reqString(t.operator, "name", e, at + "operator.");
+      // The person in that seat, as the id that is theirs. Optional, and
+      // it must stay optional: a laptop demo and a floor with no people
+      // table push none, and neither is to be refused.
+      if (t.operator.personId != null && typeof t.operator.personId !== "string") {
+        e.push(at + "operator.personId must be a string or null");
+      }
     }
     // relievedBy may be null on the last turn of the shift.
     if (t.relievedBy != null && typeof t.relievedBy !== "string") {

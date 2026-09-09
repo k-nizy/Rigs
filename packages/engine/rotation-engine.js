@@ -365,6 +365,13 @@
    * when, who arrives next, and where the outgoing operator goes - which
    * is exactly the top rail on the rig screen, and why the login and the
    * task picker can be deleted. */
+  /* A roster entry is a name, or { name, personId } once the desk assigns
+   * by picking. The name is what the sheet draws and what a rig shows;
+   * the person id is who a take is filed under, and it must change
+   * nothing about who stands where. */
+  function opName(o)   { return typeof o === "string" ? o : (o && o.name) || null; }
+  function opPerson(o) { return o && typeof o === "object" && o.personId ? String(o.personId) : null; }
+
   function rigPayload(plan, rigId) {
     var gi = -1, ri = -1;
     plan.groups.forEach(function (g, i) {
@@ -391,12 +398,18 @@
       else if (after === THINK) goesTo = "Think";
       else if (typeof after === "number") goesTo = g.rigs[after];
 
+      var operator = { id: "op-" + g.key.toLowerCase() + (who + 1), name: opName(g.ops[who]) };
+      // Only when the entry carries one. A laptop demo and a floor with
+      // no people table push exactly what they always did, key for key.
+      var person = opPerson(g.ops[who]);
+      if (person !== null) operator.personId = person;
+
       turns.push({
         from: hhmm(blockStart(plan, b)),
         to: hhmm(blockEnd(plan, e)),
         minutes: (e - b + 1) * plan.blockMin,
-        operator: { id: "op-" + g.key.toLowerCase() + (who + 1), name: g.ops[who] || null },
-        relievedBy: e + 1 < plan.nBlocks ? (g.ops[holders[e + 1]] || null) : null,
+        operator: operator,
+        relievedBy: e + 1 < plan.nBlocks ? opName(g.ops[holders[e + 1]]) : null,
         theyGoTo: goesTo,
       });
       b = e + 1;

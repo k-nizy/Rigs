@@ -125,3 +125,78 @@ test("every operator's day comes out to the budget, in all three shifts", () => 
     assert.deepEqual(audit.think, [60],  shift.label + " think minutes");
   }
 });
+
+/* ---- a person in the payload, beside the seat ----------------------
+   A roster entry has always been a name. It may now be { name, personId }
+   - the id from the people table, minted once and carried into every
+   seat somebody works - and the payload says so on the turn, next to the
+   seat id the sheet is drawn in. Only when the entry carries one: a
+   laptop demo and a floor with no people table push exactly what they
+   pushed before, key for key. That last property is what keeps the
+   reference sheet and the committed dists byte-identical. */
+
+const withPeople = ROSTER.groups.map((g, gi) => ({
+  key: g.key, task: g.task, rigs: g.rigs.slice(),
+  ops: g.ops.map((name, oi) => ({ name: name, personId: "person-" + g.key + (oi + 1) })),
+}));
+
+test("a roster entry that carries a person id puts it on every turn, beside the seat", () => {
+  const plan = RE.buildPlan(demoCfg, withPeople);
+  const payload = RE.rigPayload(plan, "RIG-01");
+  assert.ok(payload.turns.length > 0);
+  payload.turns.forEach(t => {
+    assert.equal(typeof t.operator.personId, "string", "every turn names a person");
+    assert.match(t.operator.id, /^op-a[1-4]$/, "the seat is still the seat");
+    const slot = Number(t.operator.id.slice(-1));
+    assert.equal(t.operator.personId, "person-A" + slot, "the person is the one in that seat");
+    assert.equal(t.operator.name, ROSTER.groups[0].ops[slot - 1], "and the name is theirs");
+  });
+});
+
+test("relievedBy stays a name, whatever the roster entry is", () => {
+  const plan = RE.buildPlan(demoCfg, withPeople);
+  const payload = RE.rigPayload(plan, "RIG-01");
+  const handovers = payload.turns.filter(t => t.relievedBy != null);
+  assert.ok(handovers.length > 0);
+  handovers.forEach(t => assert.equal(typeof t.relievedBy, "string"));
+  assert.equal(payload.turns[payload.turns.length - 1].relievedBy, null);
+});
+
+test("a roster of plain names pushes exactly what it always did - no personId key at all", () => {
+  const plan = RE.buildPlan(demoCfg, ROSTER.groups);
+  const payload = RE.rigPayload(plan, "RIG-01");
+  payload.turns.forEach(t => {
+    assert.equal("personId" in t.operator, false, "absent, not null - byte for byte the old payload");
+    assert.equal(typeof t.operator.name, "string");
+  });
+});
+
+test("a roster may mix names and people while the floor moves over", () => {
+  const mixed = ROSTER.groups.map(g => ({
+    key: g.key, task: g.task, rigs: g.rigs.slice(),
+    ops: g.ops.map((name, oi) => oi % 2 ? { name: name, personId: "p-" + g.key + oi } : name),
+  }));
+  const plan = RE.buildPlan(demoCfg, mixed);
+  const payload = RE.rigPayload(plan, "RIG-01");
+  payload.turns.forEach(t => {
+    const slot = Number(t.operator.id.slice(-1)) - 1;
+    if (slot % 2) assert.equal(t.operator.personId, "p-A" + slot);
+    else assert.equal("personId" in t.operator, false);
+    assert.equal(t.operator.name, ROSTER.groups[0].ops[slot]);
+  });
+});
+
+test("the sheet is drawn the same whether or not the roster carries people", () => {
+  /* The load-bearing invariant, from the other side: a person id changes
+     who a take is filed under and must change nothing about who stands
+     where. Every turn's times, seat, name and destination agree. */
+  const a = RE.rigPayload(RE.buildPlan(demoCfg, ROSTER.groups), "RIG-02");
+  const b = RE.rigPayload(RE.buildPlan(demoCfg, withPeople), "RIG-02");
+  assert.equal(a.turns.length, b.turns.length);
+  a.turns.forEach((t, i) => {
+    const u = b.turns[i];
+    assert.deepEqual(
+      [t.from, t.to, t.minutes, t.operator.id, t.operator.name, t.relievedBy, t.theyGoTo],
+      [u.from, u.to, u.minutes, u.operator.id, u.operator.name, u.relievedBy, u.theyGoTo]);
+  });
+});
