@@ -73,3 +73,31 @@ test("validate rejects a payload with no zone", () => {
   assert.ok(v.errors.some(e => e.includes("shift.tz")),
             "a payload whose times belong to no zone has to be refused: " + v.errors.join("; "));
 });
+
+/* ---- operator.personId: optional, and it must stay optional -------- */
+
+function aTurnPayload(operator) {
+  return {
+    rigId: "RIG-01", group: "A", task: "x",
+    shift: { label: "Morning", date: "2026-08-22", start: "08:00", end: "16:00", tz: "UTC" },
+    blockMinutes: 15, rotation: "hold",
+    turns: [{ from: "08:00", to: "08:45", minutes: 45, operator: operator,
+              relievedBy: null, theyGoTo: "Break" }],
+  };
+}
+
+test("a turn may name the person beside the seat", () => {
+  const v = validate(aTurnPayload({ id: "op-a1", name: "Mei Chen", personId: "3b0e…" }));
+  assert.ok(v.ok, v.errors.join("; "));
+});
+
+test("and may not - a floor with no people table pushes none, and is not refused", () => {
+  const v = validate(aTurnPayload({ id: "op-a1", name: "Mei Chen" }));
+  assert.ok(v.ok, v.errors.join("; "));
+});
+
+test("a personId that is not a string is refused", () => {
+  const v = validate(aTurnPayload({ id: "op-a1", name: "Mei Chen", personId: 42 }));
+  assert.equal(v.ok, false);
+  assert.ok(v.errors.some(m => /personId/.test(m)), v.errors.join("; "));
+});
