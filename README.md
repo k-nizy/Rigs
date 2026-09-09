@@ -148,7 +148,7 @@ A payload looks like this:
 
 ```json
 { "from": "08:15", "to": "09:00", "minutes": 45,
-  "operator": { "id": "op-a4", "name": "Nadia Haddad" },
+  "operator": { "id": "op-a4", "name": "Nadia Haddad", "personId": "..." },
   "relievedBy": "Aleksandr Petrov",
   "theyGoTo": "Think" }
 ```
