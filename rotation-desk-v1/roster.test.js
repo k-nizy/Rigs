@@ -389,3 +389,167 @@ test("a floor of plain names still pushes plain names",
         "a roster of plain names grew a personId key it was never given");
     } finally { desk.stop(); }
   }));
+
+// ----------------------------------------------- assigned by picking
+
+/* A service with people on it. The roster card is a picker here: a
+   name resolves to a person on change, a name nobody has offers to add
+   one, and two people with one name are flagged rather than guessed. */
+function servingPeople(people, payloads) {
+  const state = { people: people.slice(), posted: [], renamed: [], sent: null, pushedAt: "2026-08-23T09:00:00.000Z" };
+  state.fetchImpl = (url, init) => {
+    const u = String(url);
+    const method = ((init && init.method) || "GET").toUpperCase();
+    if (u === "/api/state") {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({
+        pushedAt: state.pushedAt, rigs: (payloads || []).map(x => x.rigId) }) });
+    }
+    if (u.startsWith("/api/rigs/")) {
+      const id = decodeURIComponent(u.split("/")[3]);
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(
+        (payloads || []).find(x => x.rigId === id)) });
+    }
+    if (u === "/api/push") {
+      state.sent = JSON.parse(init.body).payloads;
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({
+        ok: true, count: state.sent.length, pushedAt: "2026-08-23T11:00:00.000Z" }) });
+    }
+    if (u === "/api/people" && method === "GET") {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ people: state.people }) });
+    }
+    if (u === "/api/people" && method === "POST") {
+      const body = JSON.parse(init.body);
+      const person = { id: "person-" + (state.people.length + 1), name: body.name, email: null, disabledAt: null };
+      state.people.push(person); state.posted.push(body);
+      return Promise.resolve({ ok: true, status: 201, json: () => Promise.resolve(person) });
+    }
+    const m = u.match(/^\/api\/people\/([^/]+)$/);
+    if (m && method === "PATCH") {
+      const id = decodeURIComponent(m[1]);
+      const body = JSON.parse(init.body);
+      const person = state.people.find(x => x.id === id);
+      person.name = body.name; state.renamed.push({ id, name: body.name });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(person) });
+    }
+    return Promise.reject(new Error("no such route " + method + " " + u));
+  };
+  return state;
+}
+
+const PEOPLE = [
+  { id: "person-mei",  name: "Mei Chen",   email: "m.chen@verlet.co", disabledAt: null },
+  { id: "person-ben1", name: "Ben Carter", email: "b.carter@verlet.co", disabledAt: null },
+  { id: "person-ben2", name: "Ben Carter", email: null, disabledAt: null },
+];
+
+/* The first operator input of group A, and the note beside it. */
+const firstOp = desk => {
+  const card = desk.find(desk.$("rosters"), "grp")[0];
+  const line = desk.find(card, "op-line")[0];
+  const inp = line.children[1];
+  assert.equal(inp.getAttribute("aria-label"), "Group A operator 1",
+    "the first op-line of group A did not hold operator 1");
+  return { inp, note: line.children[2] };
+};
+
+test("with people on the floor, a typed name becomes the person and the push carries their id",
+  (async () => {
+    const server = servingPeople(PEOPLE);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.mode("plan");
+      const { inp, note } = firstOp(desk);
+      desk.fire(inp, "input",  { value: "Mei Chen" });
+      desk.fire(inp, "change", { value: "Mei Chen" });
+      await settle();
+
+      assert.equal(note.hidden, false, "a resolved person with an email shows it");
+      assert.match(note.textContent, /m\.chen@verlet\.co/);
+
+      desk.click(desk.$("btn-push"));
+      await settle();
+      assert.ok(server.posted.length === 0, "resolving an existing person must not create one");
+      assert.ok(personIdsIn(server.sent).includes("person-mei"),
+        "the push did not carry the picked person's id");
+    } finally { desk.stop(); }
+  }));
+
+test("a name nobody has is offered for adding, and typing alone never mints a person",
+  (async () => {
+    const server = servingPeople(PEOPLE);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.mode("plan");
+      const { inp, note } = firstOp(desk);
+      desk.fire(inp, "input",  { value: "Zoe Bright" });
+      desk.fire(inp, "change", { value: "Zoe Bright" });
+      await settle();
+
+      assert.equal(server.posted.length, 0, "typing a name created a person by itself");
+      assert.match(note.textContent, /Nobody on the floor is called Zoe Bright/);
+
+      const add = desk.find(note, "op-act")[0];
+      assert.ok(add, "no add button was offered");
+      desk.click(add);
+      await settle();
+
+      assert.deepEqual(server.posted, [{ name: "Zoe Bright" }], "adding did not POST the typed name");
+      desk.click(desk.$("btn-push"));
+      await settle();
+      assert.ok(personIdsIn(server.sent).includes("person-4"),
+        "the newly added person's id was not pushed");
+    } finally { desk.stop(); }
+  }));
+
+test("two people with one name are flagged, never guessed, and one can be renamed apart",
+  (async () => {
+    const server = servingPeople(PEOPLE);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.mode("plan");
+      const { inp, note } = firstOp(desk);
+      desk.fire(inp, "input",  { value: "Ben Carter" });
+      desk.fire(inp, "change", { value: "Ben Carter" });
+      await settle();
+
+      assert.match(note.textContent, /2 people are called Ben Carter/);
+      desk.click(desk.$("btn-push"));
+      await settle();
+      assert.ok(!personIdsIn(server.sent).some(id => id.startsWith("person-ben")),
+        "the desk guessed which Ben Carter was meant");
+
+      /* The remedy the doc licenses: rename one, the id does not move. */
+      const renames = desk.find(note, "op-act").filter(b => b.textContent === "Rename");
+      assert.equal(renames.length, 2, "each Ben Carter should offer a rename");
+      desk.click(renames[1]);
+      await settle();
+      const box = desk.$("rosters").querySelectorAll("[aria-label=New name for Ben Carter]")[0];
+      assert.ok(box, "rename offered no box to type the new name into");
+      desk.fire(box, "input", { value: "Ben Carter (nights)" });
+      const save = desk.find(note, "op-act").find(b => b.textContent === "Save");
+      desk.click(save);
+      await settle();
+
+      assert.deepEqual(server.renamed, [{ id: "person-ben2", name: "Ben Carter (nights)" }]);
+      desk.click(desk.$("btn-push"));
+      await settle();
+      assert.ok(personIdsIn(server.sent).includes("person-ben2"),
+        "renaming apart did not assign the renamed person");
+    } finally { desk.stop(); }
+  }));
+
+test("with no service at all the names are read-only, and the rest still edits",
+  withDesk({ at: "10:37:22" }, async desk => {
+    /* A desk that cannot reach the service cannot push, and pushing is
+       its whole job - so an edited name here could never go anywhere. */
+    await settle();
+    desk.mode("plan");
+    const card = desk.find(desk.$("rosters"), "grp")[0];
+    assert.equal(desk.find(card, "op-line")[0].children[1].tagName, "span",
+      "with no service the operator slot should be text, not an input");
+    assert.equal(card.children[1].children[1].tagName, "input",
+      "the task should still be editable with no service");
+  }));
