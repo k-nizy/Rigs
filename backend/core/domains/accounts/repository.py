@@ -33,9 +33,11 @@ class AccountRepository(BaseRepository[Account]):
         )
         return rows.scalar_one_or_none()
 
-    async def by_operator_id(self, operator_id: str) -> Account | None:
+    async def by_person_id(self, person_id: uuid.UUID) -> Account | None:
+        """The account that signs in as this person, if any. One at most:
+        two accounts for one person would make "my day" ambiguous."""
         rows = await self.session.execute(
-            select(Account).where(Account.operator_id == operator_id)
+            select(Account).where(Account.person_id == person_id)
         )
         return rows.scalar_one_or_none()
 

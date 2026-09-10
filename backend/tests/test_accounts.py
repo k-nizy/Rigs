@@ -13,6 +13,7 @@ regression that matters most in this whole piece of work.
 from __future__ import annotations
 
 import base64
+import uuid
 import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -36,10 +37,10 @@ def manager(email="r.osei@verlet.co", name="Ruth Osei", password="a-real-passwor
                    password_hash=hash_password(password))
 
 
-def operator(email="m.chen@verlet.co", name="Mei Chen", operator_id="op-a2",
+def operator(email="m.chen@verlet.co", name="Mei Chen", person_id=uuid.UUID('bbbbbbbb-0000-4000-8000-000000000001'),
              password="a-real-password"):
     return Account(email=normalise_email(email), name=name, role="operator",
-                   operator_id=operator_id, password_hash=hash_password(password))
+                   person_id=person_id, password_hash=hash_password(password))
 
 
 # ------------------------------------------------------------ the hash
@@ -118,7 +119,7 @@ class TestTheDatabaseHoldsTheLine:
         with pytest.raises(IntegrityError):
             await session.commit()
 
-    async def test_two_accounts_cannot_be_the_same_operator(self, session):
+    async def test_two_accounts_cannot_be_the_same_person(self, session):
         """The tie `rig_at()` refuses to break, in another place: two rows
         claiming op-a2 makes "my shift" resolve to whichever came back
         first."""
@@ -128,22 +129,22 @@ class TestTheDatabaseHoldsTheLine:
         with pytest.raises(IntegrityError):
             await session.commit()
 
-    async def test_many_managers_may_share_having_no_operator_id(self, session):
+    async def test_many_managers_may_share_having_no_person(self, session):
         """The unique index is partial for exactly this reason - NULL is
         not a value two managers are fighting over."""
         session.add_all([manager(), manager(email="b@verlet.co", name="B")])
         await session.commit()
         assert await AccountRepository(session).count() == 2
 
-    async def test_an_operator_without_an_operator_id_is_refused(self, session):
+    async def test_an_operator_without_a_person_is_refused(self, session):
         session.add(Account(email="x@verlet.co", name="X", role="operator",
                             password_hash=hash_password("pw")))
         with pytest.raises((IntegrityError, DBAPIError)):
             await session.commit()
 
-    async def test_a_manager_with_an_operator_id_is_refused(self, session):
+    async def test_a_manager_with_a_person_is_refused(self, session):
         session.add(Account(email="x@verlet.co", name="X", role="manager",
-                            operator_id="op-a2", password_hash=hash_password("pw")))
+                            person_id=uuid.UUID('bbbbbbbb-0000-4000-8000-000000000001'), password_hash=hash_password("pw")))
         with pytest.raises((IntegrityError, DBAPIError)):
             await session.commit()
 
@@ -167,10 +168,10 @@ class TestFindingAnAccount:
     async def test_an_unknown_email_is_none_rather_than_an_error(self, session):
         assert await AccountRepository(session).by_email("nobody@verlet.co") is None
 
-    async def test_an_account_is_found_by_the_operator_it_is(self, session):
+    async def test_an_account_is_found_by_the_person_it_is(self, session):
         session.add(operator())
         await session.commit()
-        found = await AccountRepository(session).by_operator_id("op-a2")
+        found = await AccountRepository(session).by_person_id(uuid.UUID('bbbbbbbb-0000-4000-8000-000000000001'))
         assert found is not None and found.email == "m.chen@verlet.co"
 
     async def test_no_accounts_means_person_auth_is_off(self, session):

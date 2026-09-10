@@ -25,6 +25,7 @@ unfixed code, which is the only thing a regression test must not do.
 
 from __future__ import annotations
 
+import uuid
 import pytest
 from sqlalchemy import Column, Integer, MetaData, Table, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -148,7 +149,7 @@ class TestTheRunStaysInItsOwnSchema:
         from core.domains.accounts.passwords import hash_password
 
         row = Account(email="y@verlet.co", name="Y", role="operator",
-                      operator_id="op-a9",
+                      person_id=uuid.UUID("bbbbbbbb-0000-4000-8000-000000000009"),
                       password_hash=hash_password("a-real-password-12"))
         session.add(row)
         await session.commit()

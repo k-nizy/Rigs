@@ -7,7 +7,7 @@ schedules to twelve rigs is a door where a wall belongs.
 
     python -m tools.mint_account list
     python -m tools.mint_account manager  --email r.osei@verlet.co --name "Ruth Osei"
-    python -m tools.mint_account operator --email m.chen@verlet.co --name "Mei Chen" --operator-id op-a2
+    python -m tools.mint_account operator --email m.chen@verlet.co --name "Mei Chen" --person <people.id>
     python -m tools.mint_account passwd   --email r.osei@verlet.co
     python -m tools.mint_account disable  --email r.osei@verlet.co
 
@@ -31,6 +31,7 @@ import argparse
 import asyncio
 import secrets
 import sys
+import uuid
 from datetime import datetime, timezone
 from getpass import getpass
 from pathlib import Path
@@ -44,6 +45,7 @@ from core.domains.accounts.model import Account, MANAGER, OPERATOR  # noqa: E402
 from core.domains.accounts.passwords import (                    # noqa: E402
     hash_password, password_complaint,
 )
+from core.domains.people.repository import PersonRepository
 from core.domains.accounts.repository import (                   # noqa: E402
     AccountRepository, AccountSessionRepository, normalise_email,
 )
@@ -101,7 +103,7 @@ async def _act(args, session) -> int:
         for a in rows:
             state = "disabled" if a.disabled_at else "active"
             print(f"{a.role:<9} {a.email:<32} {a.name:<22} "
-                  f"{a.operator_id or '-':<8} {state}")
+                  f"{str(a.person_id)[:8] if a.person_id else '-':<8} {state}")
         return 0
 
     existing = await accounts.by_email(args.email)
@@ -133,26 +135,32 @@ async def _act(args, session) -> int:
     if existing:
         raise SystemExit(f"{args.email} already exists - use passwd or disable")
     role = MANAGER if args.cmd == "manager" else OPERATOR
-    operator_id = args.operator_id if role == OPERATOR else None
+    person_id = None
+    person = None
 
     if role == OPERATOR:
-        if not operator_id:
+        # The account says who. Where they sit is the roster the manager
+        # pushes that morning, so nothing about a seat is taken here.
+        try:
+            person_id = uuid.UUID(str(args.person))
+        except (ValueError, TypeError):
+            raise SystemExit(f"--person must be a people id, got {args.person!r}")
+        person = await PersonRepository(session).get(person_id)
+        if person is None:
             raise SystemExit(
-                "an operator account needs --operator-id (the id on the sheet, "
-                "e.g. op-a2) or it has no day to show"
-            )
-        clash = await accounts.by_operator_id(operator_id)
+                f"nobody has the id {person_id} - create the person on the desk first")
+        clash = await accounts.by_person_id(person_id)
         if clash:
-            raise SystemExit(f"{operator_id} is already {clash.email}")
+            raise SystemExit(f"{person.name} already signs in as {clash.email}")
 
     password, show = _password(args.password, prompt=not args.generate)
     await accounts.add(Account(
         email=normalise_email(args.email), name=args.name, role=role,
-        operator_id=operator_id, password_hash=hash_password(password),
+        person_id=person_id, password_hash=hash_password(password),
     ))
     await session.commit()
     print(f"created {role} {normalise_email(args.email)}"
-          + (f" as {operator_id}" if operator_id else ""))
+          + (f" for {person.name}" if person else ""))
     if show:
         print(f"password: {password}")
         print("Hand it over and clear the scrollback. It is not stored anywhere "
@@ -161,6 +169,13 @@ async def _act(args, session) -> int:
 
 
 def main() -> int:
+    return asyncio.run(run(sys.argv[1:]))
+
+
+async def run(argv: list[str]) -> int:
+    """The tool, given its arguments. `main` hands it `sys.argv`; a test
+    hands it a list, so what is tested is the real parser and not a
+    copy of it."""
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -178,22 +193,23 @@ def main() -> int:
         sp = sub.add_parser(cmd, help=f"create a {cmd} account")
         sp.add_argument("--name", required=True, help='display name, e.g. "Ruth Osei"')
         if cmd == "operator":
-            sp.add_argument("--operator-id", required=True,
-                            help="the id on the sheet, e.g. op-a2")
+            sp.add_argument("--person", required=True,
+                            help="the person this account is: the id from `people`, "
+                                 "which a manager creates on the desk first")
         creds(sp)
 
     creds(sub.add_parser("passwd", help="set a new password and end open sessions"))
     sub.add_parser("disable", help="end access, keep the name").add_argument(
         "--email", required=True)
 
-    args = p.parse_args()
+    args = p.parse_args(argv)
     if args.cmd in ("manager", "operator", "passwd") and not args.password \
             and not args.generate and not sys.stdin.isatty():
         # Prompting into a pipe reads EOF and sets an empty password.
         raise SystemExit("no terminal to prompt on - pass --password or --generate")
-    if not hasattr(args, "operator_id"):
-        args.operator_id = None
-    return asyncio.run(_run(args))
+    if not hasattr(args, "person"):
+        args.person = None
+    return await _run(args)
 
 
 if __name__ == "__main__":
