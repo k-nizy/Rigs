@@ -412,3 +412,101 @@ test("a rig with nothing to run asks for a schedule more often than one that is 
   assert.ok(idle <= 60000,
     "a corrected roster should reach the floor inside a minute, not " + (idle / 1000) + "s");
 });
+
+// ------------------------------------------- it never files for another rig
+
+/* A server that records every batch, and can be taken away. `offline`
+   is what makes the bug reachable: two identities only ever meet in one
+   outbox if the first rig's events are still owed when the switch
+   happens. */
+function collecting(payload) {
+  const state = { posted: [], offline: false, payload: payload };
+  global.fetch = async (url, init) => {
+    if (state.offline) throw new Error("no network");
+    const u = String(url);
+    if (u.includes("/cursor")) return { ok: true, json: async () => ({ seq: 0 }) };
+    if (u.includes("/schedule")) {
+      return { ok: true, status: 200, json: async () => state.payload };
+    }
+    if (u.includes("/events")) {
+      const to = (u.match(/\/rigs\/([^/]+)\/events/) || [])[1];
+      const evs = JSON.parse(init.body).events;
+      state.posted.push({ to: to, events: evs });
+      /* What the real service does with a batch naming another rig:
+         refuse the whole thing. Asserted in the backend's own suite as
+         "a batch posted to the wrong rig is rejected whole". */
+      if (evs.some((e) => e.rigId !== to)) {
+        return { ok: false, status: 422, json: async () => ({}) };
+      }
+      return { ok: true, status: 200,
+               json: async () => ({ accepted: evs.length, duplicates: 0, cursor: 1 }) };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  return state;
+}
+
+test("it never files another rig's events under this one's name",
+  withRig({ search: "?demo" }, async (rig) => {
+    /* The sibling of "it never takes another rig's schedule" above, on
+       the way out instead of the way in.
+
+       `switchRig` is a demo affordance - a real rig is only ever itself -
+       but the outbox is a module-level array that `boot()` does not
+       clear. Events still owed when the rig switches stay queued, and
+       `flush()` posts to whichever rig the page is now. One batch then
+       carries two identities, the service refuses it whole, and the
+       events that did belong to this rig are set aside for nothing they
+       did wrong. */
+    const server = collecting(payloadFor("RIG-03"));
+    await rig.settle();
+
+    server.offline = true;                // nothing can leave
+    rig.press(2); rig.frames(1);          // filed as RIG-03, still owed
+    await rig.settle();
+    await rig.upload();                   // tries, fails, keeps them
+
+    await window.switchRig("RIG-07");
+    rig.press(2); rig.frames(1);          // filed as RIG-07
+    await rig.settle();
+
+    server.offline = false;               // the network comes back
+    await rig.upload();
+
+    assert.ok(server.posted.length, "nothing was uploaded at all");
+    for (const batch of server.posted) {
+      const wrong = batch.events.filter((e) => e.rigId !== batch.to);
+      assert.deepEqual(wrong.map((e) => e.rigId), [],
+        "a batch addressed to " + batch.to + " carried events for "
+        + [...new Set(wrong.map((e) => e.rigId))].join(", ")
+        + " - the service refuses that whole batch, so the events that "
+        + "did belong to " + batch.to + " went down with the foreign ones");
+    }
+  }));
+
+test("and this rig's own events still reach the server after a switch",
+  withRig({ search: "?demo" }, async (rig) => {
+    /* The half that matters to the floor: a foreign event in the queue
+       must not stop the rig's own work being filed. */
+    const server = collecting(payloadFor("RIG-03"));
+    await rig.settle();
+
+    server.offline = true;
+    rig.press(2); rig.frames(1);
+    await rig.settle();
+    await rig.upload();
+
+    await window.switchRig("RIG-07");
+    rig.press(2); rig.frames(1);
+    await rig.settle();
+
+    server.offline = false;
+    await rig.upload();
+
+    const accepted = server.posted
+      .filter((b) => b.events.every((e) => e.rigId === b.to))
+      .flatMap((b) => b.events);
+    assert.ok(accepted.some((e) => e.rigId === "RIG-07"),
+      "the rig switched to RIG-07, filed a check, and none of it was accepted");
+    assert.deepEqual(rig.errors, [], "switching rigs raised an error");
+  }));
