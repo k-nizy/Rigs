@@ -121,6 +121,13 @@ class SchedulePush(Base):
     # percentage is stored anywhere in this service.
     covered: Mapped[dict] = mapped_column(JSONB, nullable=False)
 
+    # The roster the desk had on screen when it pushed: the assignment
+    # the payloads above were built from, kept beside them so the two
+    # cannot disagree. Opaque, like the payload - a courier has no
+    # opinions about slots. Nullable: desks that predate the field, and
+    # the laptop demo, push without one.
+    roster: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
     __table_args__ = (
         Index("ix_schedule_pushes_at", "pushed_at"),
     )

@@ -253,3 +253,44 @@ test("what is served matches the folders nginx names", async () => {
   assert.ok(conf.includes("location / { return 404; }"),
     "nginx.conf stopped refusing everything else");
 });
+
+// ------------------------------------------------- the roster, server-side
+
+/* The assignment rides on the push. The demo floor keeps it in the log
+   line and serves it back, so a desk against this server reads who is
+   on the floor the same way it does against the real one. */
+const aFloor = () => {
+  const plan = RE.buildPlan(Object.assign({ date: "2026-08-22" }, ROSTER.defaults), ROSTER.groups);
+  return ROSTER.allRigs.map(r => RE.rigPayload(plan, r));
+};
+const postPush = body => fetch(BASE + "/api/push", {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+});
+
+test("a push may carry the roster, and the server serves the latest one back", async () => {
+  const roster = [{ key: "A", task: "Box transfer", rigs: ["RIG-01", "RIG-02", "RIG-03"],
+                    ops: ["Mei Chen", "Ben Carter", "Tomas Rivera", "Nadia Haddad"] }];
+  const r = await postPush({ payloads: aFloor(), roster });
+  assert.equal(r.status, 200, await r.text());
+  const got = await fetch(BASE + "/api/roster");
+  assert.equal(got.status, 200);
+  const body = await got.json();
+  assert.deepEqual(body.roster, roster);
+  assert.ok(body.pushedAt);
+});
+
+test("a push without a roster still serves no roster, not an error", async () => {
+  const r = await postPush({ payloads: aFloor() });
+  assert.equal(r.status, 200, await r.text());
+  const body = await (await fetch(BASE + "/api/roster")).json();
+  assert.equal(body.roster, null);
+  assert.ok(body.pushedAt, "a floor that has been pushed still says when");
+});
+
+test("a roster that is not a list of groups is refused whole", async () => {
+  const before = await (await fetch(BASE + "/api/state")).json();
+  const r = await postPush({ payloads: aFloor(), roster: { not: "a list" } });
+  assert.equal(r.status, 422);
+  assert.deepEqual(await (await fetch(BASE + "/api/state")).json(), before,
+    "a refused push touched the floor");
+});
