@@ -2543,6 +2543,17 @@ const FORMAT = { blockMin: 15, stintBlocks: 3, mode: "hold" };
    - see "The floor's roster" below. Not a const for that reason. */
 let GROUPS = window.DEMO_ROSTER.groups;
 
+/* A roster entry is a name, or `{ name, personId }` once the desk
+   assigns by picking. The engine reads the same two shapes; these are
+   the desk's side of it, so nothing here has to care which it holds.
+
+   `opKey` is for comparing two rosters. Two people with one name are
+   two entries, and a comparison on the name alone would call them
+   equal - which is the whole failure the person id exists to stop. */
+const opName = (o) => (typeof o === "string" ? o : (o && o.name) || "");
+const opPerson = (o) => (o && typeof o === "object" && o.personId) || null;
+const opKey = (o) => JSON.stringify([opName(o), opPerson(o)]);
+
 /* Whether anybody has edited the plan on this screen yet. The floor's
    roster is only ever adopted over an untouched screen: arriving late
    and overwriting a name a manager is halfway through typing would be
@@ -2711,9 +2722,16 @@ function rosterFromFloor(payloads) {
        rotated together - which is the thing the check below proves. */
     rigs.sort((a, b) => String(a.rigId).localeCompare(String(b.rigId)));
 
-    const everyone = new Set();
+    /* Keyed by person, not by name. A desk that rebuilt the roster from
+       names alone would read the floor back and push it out again with
+       every `personId` gone - silently, off a screen nobody touched, and
+       the id is the one thing a take is filed under that nothing
+       downstream could tell had gone missing. */
+    const entry = (o) => (o.personId ? { name: o.name, personId: o.personId } : o.name);
+    const everyone = new Map();
     rigs.forEach(p => p.turns.forEach(t => {
-      if (t.operator && t.operator.name) everyone.add(t.operator.name);
+      const o = t.operator;
+      if (o && o.name) everyone.set(opKey(entry(o)), entry(o));
     }));
 
     // The first block of the shift, read across the rigs in order.
@@ -2722,10 +2740,12 @@ function rosterFromFloor(payloads) {
     const opening = rigs.map(p => p.turns.find(t => toMin(t.from) === opensAt));
     if (opening.some(t => !t || !t.operator || !t.operator.name)) return null;
 
-    const onRig = opening.map(t => t.operator.name);
-    if (new Set(onRig).size !== onRig.length) return null;   // one name, two rigs
+    const onRig = opening.map(t => entry(t.operator));
+    const onKeys = onRig.map(opKey);
+    if (new Set(onKeys).size !== onKeys.length) return null;   // one person, two rigs
 
-    const off = [...everyone].filter(n => !onRig.includes(n));
+    const held = new Set(onKeys);
+    const off = [...everyone.values()].filter(e => !held.has(opKey(e)));
     out.push({
       key: key,
       task: rigs[0].task,
@@ -2759,6 +2779,7 @@ function rosterAgrees(groups, payloads) {
       const w = want.turns[i];
       return t.from === w.from && t.to === w.to && t.minutes === w.minutes
           && t.operator.name === (w.operator && w.operator.name)
+          && (t.operator.personId || null) === ((w.operator && w.operator.personId) || null)
           && t.relievedBy === w.relievedBy && t.theyGoTo === w.theyGoTo;
     });
   });
@@ -2767,7 +2788,8 @@ function rosterAgrees(groups, payloads) {
 const sameRoster = (a, b) =>
   a.length === b.length && a.every((g, i) =>
     g.key === b[i].key && g.task === b[i].task &&
-    g.rigs.join() === b[i].rigs.join() && g.ops.join() === b[i].ops.join());
+    g.rigs.join() === b[i].rigs.join() &&
+    g.ops.map(opKey).join() === b[i].ops.map(opKey).join());
 
 /* Take the floor's roster onto this screen, if it can be verified. */
 function adoptFloorRoster() {
@@ -3313,9 +3335,15 @@ function renderRosters() {
       const line = el("div", "op-line");
       line.appendChild(el("span", "idx", String(oi + 1)));
       const inp = el("input");
-      inp.type = "text"; inp.value = o;
+      inp.type = "text"; inp.value = opName(o);
       inp.setAttribute("aria-label", "Group " + g.key + " operator " + (oi + 1));
-      inp.addEventListener("input", () => { g.ops[oi] = inp.value; onPlanChanged(); });
+      inp.addEventListener("input", () => {
+        /* Editing the name must not drop the person. Correcting a
+           spelling is exactly the case the id exists to survive. */
+        const held = opPerson(g.ops[oi]);
+        g.ops[oi] = held ? { name: inp.value, personId: held } : inp.value;
+        onPlanChanged();
+      });
       line.appendChild(inp);
       list.appendChild(line);
     });
@@ -3402,7 +3430,7 @@ function renderGrid(p, kind) {
   p.groups.forEach((g, gi) => {
     tbody.appendChild(bandRow(p, g, gi));
 
-    const rows = kind === "ops" ? g.ops : g.rigs;
+    const rows = (kind === "ops" ? g.ops.map(opName) : g.rigs);
     rows.forEach((name, i) => {
       const tr = el("tr");
       tr.style.setProperty("--gc", "var(--g" + gi + ")");
@@ -3433,7 +3461,7 @@ function renderGrid(p, kind) {
           const oi = RE.holderAt(g, i, b);
           key = String(oi);
           td = oi === -1 ? cellNode("idle" + onHour, "-")
-                         : cellNode("work name" + onHour, shortName(g.ops[oi]));
+                         : cellNode("work name" + onHour, shortName(opName(g.ops[oi])));
         }
 
         // A change of value is a handover, and gets the bar down its left.
