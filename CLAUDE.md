@@ -492,9 +492,15 @@ its own, so each can be reverted on its own.
 - **The episode row** - built, backend first. `personId` is accepted on
   the envelope and stored on the ledger and all five fact rows, beside
   the seat id, because the QC platform asks "who recorded this" of the
-  row it is looking at. No rig sends it yet: per DEPLOY.md the server
-  learns a shape in one release and the rig starts sending it in the
-  next, because a rig drops a refused batch rather than retrying it.
+  row it is looking at. The rig sends it now, in the release after the
+  server learned it - per DEPLOY.md that order is not optional, because
+  a rig drops a refused batch rather than retrying it. It rides from the
+  turn captured when the take *began*, the same as the seat and the
+  name, so a take that runs past a turn boundary still names whoever
+  pressed start; and it is absent rather than null from a sheet with no
+  people, so a floor without a people table files byte for byte what it
+  always did. The JSON schema, the JS validator and the fixtures moved
+  together, and the Python side accepts the fixture that carries it.
   There is deliberately no foreign key to `people` - a restore re-POSTs
   the ledger, people are outside it like schedules, and a key would turn
   a missing row into lost events.

@@ -273,3 +273,78 @@ test("the next stint is not still credited to the operator who left",
     assert.notEqual(takes[1].turnFrom, stint.turnFrom,
       "the second take is still filed against the finished turn");
   }));
+
+// -------------------------------------------------- the person, not the seat
+
+/* A payload whose turns name people. This is what the floor pushes once
+   the desk assigns by picking - and the rig must carry that id onto the
+   take, because the seat id is a chair and the name is only a string. */
+function payloadWithPeople() {
+  const groups = ROSTER.groups.map((g) => ({
+    key: g.key, task: g.task, rigs: g.rigs.slice(),
+    ops: g.ops.map((name, i) => ({ name: name, personId: "person-" + g.key + (i + 1) })),
+  }));
+  const plan = RE.buildPlan(
+    Object.assign({}, ROSTER.defaults, { date: "2026-08-23", shift: "morning" }), groups);
+  return RE.rigPayload(plan, "RIG-03");
+}
+
+/* Handed to mountRig as fetchImpl, so it is in place before the rig
+   boots and reads its schedule - a stub installed afterwards is too
+   late, the rig has already fallen back to the demo sheet. */
+const servingPeople = (payload) => async (url) => {
+  const u = String(url);
+  if (u.includes("/cursor")) return { ok: true, json: async () => ({ seq: 0 }) };
+  if (u.includes("/schedule")) return { ok: true, status: 200, json: async () => payload };
+  return { ok: true, status: 200, json: async () => ({}) };
+};
+
+test("a take carries the person who recorded it, when the sheet names one",
+  withRig({ search: "?demo=30", fetchImpl: servingPeople(payloadWithPeople()) }, async (rig) => {
+    await rig.settle();
+    startATake(rig);
+    rig.frames(10);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);
+
+    const e = saved(rig)[0];
+    assert.ok(e, "no episode was filed");
+    assert.match(e.personId || "", /^person-A[1-4]$/,
+      "the take names seat " + e.operatorId + " but no person - " +
+      "QC asks 'who recorded this' of this row, and a chair cannot answer");
+    const slot = Number(e.operatorId.slice(-1));
+    assert.equal(e.personId, "person-A" + slot, "the person is the one in that seat");
+  }));
+
+test("and a take that crosses a turn boundary keeps the person who started it",
+  withRig({ search: "?demo=30", fetchImpl: servingPeople(payloadWithPeople()) }, async (rig) => {
+    /* The same rule as the seat and the name: whoever pressed start.
+       A person id filed from the clock at save time would be the next
+       person on, which is the exact bug this file was written for. */
+    await rig.settle();
+    startATake(rig);
+    const starter = rig.eventsOf("shift_check")[0];
+    runOn(rig, 40);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);
+
+    const e = saved(rig)[0];
+    assert.equal(e.personId, starter.personId,
+      "the take was filed under person " + e.personId + " but " + starter.personId +
+      " pressed start");
+  }));
+
+test("a sheet with no people files no personId key at all",
+  withRig({ search: "?demo=30" }, async (rig) => {
+    /* Every event queued before this release, and every floor without a
+       people table. Not null - absent, byte for byte what it always was,
+       so the fixtures that predate the field keep validating unchanged. */
+    offline();
+    startATake(rig);
+    rig.frames(10);
+    rig.press(3); rig.frames(1);
+    rig.press(2); rig.frames(1);
+    const e = saved(rig)[0];
+    assert.ok(e, "no episode was filed");
+    assert.equal("personId" in e, false, "a plain sheet grew a personId key it was never given");
+  }));

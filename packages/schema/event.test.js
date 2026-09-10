@@ -226,3 +226,25 @@ test("every fixture only uses fields the schema declares", () => {
     assert.deepEqual(extra, [], f + " carries fields the schema does not declare: " + extra.join(", "));
   }
 });
+
+/* ------------------------------------------------------------- the person */
+
+/* `personId` is who recorded this as an id that is theirs - the same
+   in every seat they ever work - which neither the seat id nor the name
+   can give. Optional for exactly the reason operatorName is: no rig
+   sent it until this release, and a refused batch is dropped, not
+   retried. */
+test("an event may carry the person, beside the seat and the name", () => {
+  assert.ok(validate(good({ personId: "3b0e6f7a-9c1d-4e2f-8a5b-6c7d8e9f0a1b" })).ok);
+});
+
+test("a personId that is not a string is refused", () => {
+  assert.match(why(good({ personId: 42 })), /personId must be a string or null/);
+});
+
+test("an event with no person at all is still a valid event", () => {
+  const ev = good();
+  delete ev.personId;
+  assert.ok(validate(ev).ok, why(ev));
+  assert.ok(validate(good({ personId: null })).ok, "and null is fine on standby");
+});
