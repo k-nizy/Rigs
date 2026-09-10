@@ -48,6 +48,28 @@ const opName = (o) => (typeof o === "string" ? o : (o && o.name) || "");
 const opPerson = (o) => (o && typeof o === "object" && o.personId) || null;
 const opKey = (o) => JSON.stringify([opName(o), opPerson(o)]);
 
+/* Who is on the floor, and what a roster card may therefore offer.
+
+   Three answers, and none of them is arbitrary:
+
+   "fixed"   no service at all. A desk that cannot reach the service
+             cannot push, and pushing is its whole job - so an edit here
+             could never reach anything, and offering one would be
+             offering a change that silently goes nowhere.
+   "text"    a service with no `/api/people`. Too old for people, and
+             the same deliberate exception `session.js` already makes
+             for `/api/auth/session`: an absent route is a fact about
+             the service rather than a failure, so the desk behaves
+             exactly as it did before people existed.
+   "picker"  the service has people. Assigned by picking, never by
+             typing a name into a schedule.
+
+   It starts as "text" because that is what this screen has always been,
+   and a default that changed behaviour before the floor had answered
+   would be a guess. */
+let rosterMode = "text";
+let PEOPLE = [];
+
 /* Whether anybody has edited the plan on this screen yet. The floor's
    roster is only ever adopted over an untouched screen: arriving late
    and overwriting a name a manager is halfway through typing would be
@@ -316,8 +338,14 @@ async function loadFloor(announce) {
      had not read is about to stop being true - either because it now has
      read it, or because there is no floor to read. */
   disarmPush();
+  /* "No service" is the state call not answering at all. A service that
+     answers with nothing pushed yet is a floor on its first morning,
+     and a manager has to be able to write its roster - so that case
+     falls through to the people call below like any other. */
+  let reachable = false;
   try {
     const state = await api("/api/state").then(r => r.ok ? r.json() : Promise.reject());
+    reachable = true;
     if (!state.rigs || !state.rigs.length) throw new Error("nothing pushed");
 
     floor.payloads = await Promise.all(state.rigs.map(id =>
@@ -326,14 +354,48 @@ async function loadFloor(announce) {
     floor.pushedAt = state.pushedAt;
     floor.source = "floor";
     adoptFloorRoster();
+    await loadPeople();
     if (announce) toast("Read " + floor.payloads.length + " rigs from the floor");
   } catch (e) {
     floor.payloads = localPayloads();
     floor.pushedAt = null;
     floor.source = "plan";
+    if (reachable) await loadPeople();
+    else rosterMode = "fixed";   // nothing answered: no service behind this page
     if (announce) toast("No pushed schedule - showing the plan on this screen");
   }
+  /* The cards are mounted once and left alone because their inputs are
+     live, so the one moment they may be rebuilt is before anybody has
+     typed - the same guard the floor's roster is adopted under. */
+  if (!planTouched) remountRosters();
   renderLive();
+}
+
+/* Who the floor has. A 404 is not a failure: it is a service that
+   predates people, and this screen keeps working the way it always did.
+   Anything else - a refusal, a network error - is treated the same way,
+   because the alternative is a desk that stops letting a manager write
+   a roster because a list it only needs for convenience did not load. */
+async function loadPeople() {
+  try {
+    const r = await api("/api/people");
+    if (!r.ok) { rosterMode = "text"; return; }
+    const body = await r.json();
+    PEOPLE = (body && body.people) || [];
+    rosterMode = "picker";
+  } catch (e) {
+    rosterMode = "text";
+  }
+}
+
+/* Everybody with this name, however it is capitalised or spaced. The
+   comparison is deliberately loose: "Ben Carter" and "ben carter " are
+   one person to a human, and a picker that disagreed would offer to
+   create a second one. */
+function peopleNamed(name) {
+  const want = String(name || "").trim().toLowerCase();
+  if (!want) return [];
+  return PEOPLE.filter(x => String(x.name || "").trim().toLowerCase() === want);
 }
 
 /* The twelve payloads, gathered back into the four groups they came
@@ -825,22 +887,8 @@ function renderRosters() {
     const opWrap = el("div");
     opWrap.appendChild(el("label", null, "Operators"));
     const list = el("div", "op-list");
-    g.ops.forEach((o, oi) => {
-      const line = el("div", "op-line");
-      line.appendChild(el("span", "idx", String(oi + 1)));
-      const inp = el("input");
-      inp.type = "text"; inp.value = opName(o);
-      inp.setAttribute("aria-label", "Group " + g.key + " operator " + (oi + 1));
-      inp.addEventListener("input", () => {
-        /* Editing the name must not drop the person. Correcting a
-           spelling is exactly the case the id exists to survive. */
-        const held = opPerson(g.ops[oi]);
-        g.ops[oi] = held ? { name: inp.value, personId: held } : inp.value;
-        onPlanChanged();
-      });
-      line.appendChild(inp);
-      list.appendChild(line);
-    });
+    g.ops.forEach((o, oi) => list.appendChild(opLine(g, o, oi)));
+    if (rosterMode === "picker") opWrap.appendChild(peopleList());
     opWrap.appendChild(list);
     card.appendChild(opWrap);
 
@@ -859,6 +907,183 @@ function renderRosters() {
 
     host.appendChild(card);
   });
+}
+
+/* The names the picker offers, as a datalist so the browser does the
+   searching. It is a list of who exists, not a list of what may be
+   typed: what makes an entry a person is resolving it below, not
+   picking it from here. */
+function peopleList() {
+  const dl = el("datalist");
+  dl.id = "people-list";
+  PEOPLE.forEach(x => {
+    const o = el("option");
+    o.value = x.name;
+    dl.appendChild(o);
+  });
+  return dl;
+}
+
+/* One operator slot, in whichever of the three modes the floor turned
+   out to support. */
+function opLine(g, o, oi) {
+  const line = el("div", "op-line");
+  line.appendChild(el("span", "idx", String(oi + 1)));
+  const label = "Group " + g.key + " operator " + (oi + 1);
+
+  if (rosterMode === "fixed") {
+    const fixed = el("span", "op-fixed", opName(o) || "-");
+    fixed.setAttribute("aria-label", label);
+    line.appendChild(fixed);
+    return line;
+  }
+
+  const inp = el("input");
+  inp.type = "text";
+  inp.value = opName(o);
+  inp.setAttribute("aria-label", label);
+  if (rosterMode === "picker") inp.setAttribute("list", "people-list");
+
+  const note = el("div", "op-note");
+  note.hidden = true;
+
+  /* The only way a person is ever attached to a seat. Typing cannot do
+     it; this is called from resolve() below and from nowhere else. */
+  function assign(person) {
+    g.ops[oi] = { name: person.name, personId: person.id };
+    inp.value = person.name;
+    onPlanChanged();
+  }
+
+  inp.addEventListener("input", () => {
+    /* Marks the screen as touched, so the floor's roster never lands on
+       top of a half-typed name, and keeps the name half moving as it is
+       typed. The person id is left exactly as it was: correcting a
+       spelling must not drop it, and typing must not mint one. */
+    const held = opPerson(g.ops[oi]);
+    g.ops[oi] = held ? { name: inp.value, personId: held } : inp.value;
+    onPlanChanged();
+  });
+
+  if (rosterMode === "picker") {
+    inp.addEventListener("change", () => resolveOp(inp, note, assign));
+  }
+
+  line.appendChild(inp);
+  line.appendChild(note);
+  return line;
+}
+
+/* What the desk says about the name now in the box.
+
+   It flags and does not refuse. A manager at 07:55 who cannot schedule
+   a shift until they have done data admin is a manager who works around
+   the desk, and the remedy - renaming - is one press away rather than a
+   trip to another screen. The residual is real and stated in CLAUDE.md:
+   the wrong one of two people sharing a name can be picked. */
+function resolveOp(inp, note, assign) {
+  const typed = inp.value.trim();
+  note.textContent = "";
+  note.className = "op-note";
+  note.hidden = true;
+  if (!typed) return;
+
+  const same = peopleNamed(typed);
+
+  if (same.length === 1) {
+    assign(same[0]);
+    if (same[0].email) {
+      note.appendChild(el("span", "op-hint", same[0].email));
+      note.hidden = false;
+    }
+    return;
+  }
+
+  note.hidden = false;
+  note.className = "op-note warn";
+
+  if (same.length > 1) {
+    note.appendChild(el("span", null,
+      same.length + " people are called " + typed + " - pick one, or rename to tell them apart"));
+    same.forEach(x => note.appendChild(personChoice(x, note, assign)));
+    return;
+  }
+
+  /* Created deliberately: typing a name to make a person is the act the
+     doc describes, and it is only typing one into a *schedule* that is
+     forbidden. So this offers, and does not do it silently. */
+  note.appendChild(el("span", null, "Nobody on the floor is called " + typed));
+  const add = el("button", "op-act", "Add " + typed);
+  add.type = "button";
+  add.addEventListener("click", async () => {
+    add.disabled = true;
+    try {
+      const r = await api("/api/people", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: typed }),
+      });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const person = await r.json();
+      PEOPLE = PEOPLE.concat([person]);
+      assign(person);
+      note.hidden = true;
+      toast("Added " + person.name + " to the floor");
+    } catch (e) {
+      add.disabled = false;
+      toast("Could not add " + typed);
+    }
+  });
+  note.appendChild(add);
+}
+
+/* One of several people sharing a name: take this one, or give this one
+   a name that tells them apart. Renaming is safe by construction - the
+   id does not move, so a take already filed under it is untouched. */
+function personChoice(person, note, assign) {
+  const row = el("div", "op-choice");
+  const take = el("button", "op-act", person.email ? person.name + " - " + person.email
+                                                   : person.name);
+  take.type = "button";
+  take.addEventListener("click", () => { assign(person); note.hidden = true; });
+  row.appendChild(take);
+
+  const rename = el("button", "op-act quiet", "Rename");
+  rename.type = "button";
+  rename.addEventListener("click", () => {
+    const box = el("input");
+    box.type = "text";
+    box.value = person.name;
+    box.setAttribute("aria-label", "New name for " + person.name);
+    const save = el("button", "op-act", "Save");
+    save.type = "button";
+    save.addEventListener("click", async () => {
+      const next = box.value.trim();
+      if (!next || next === person.name) return;
+      save.disabled = true;
+      try {
+        const r = await api("/api/people/" + encodeURIComponent(person.id), {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: next }),
+        });
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        const updated = await r.json();
+        PEOPLE = PEOPLE.map(x => (x.id === updated.id ? updated : x));
+        assign(updated);
+        note.hidden = true;
+        toast("Renamed to " + updated.name);
+      } catch (e) {
+        save.disabled = false;
+        toast("Could not rename " + person.name);
+      }
+    });
+    row.textContent = "";
+    row.appendChild(box);
+    row.appendChild(save);
+  });
+  row.appendChild(rename);
+  return row;
 }
 
 /* ------------------------------------------------------- the sheet
