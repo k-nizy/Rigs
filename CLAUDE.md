@@ -519,8 +519,18 @@ its own, so each can be reverted on its own.
   route exception `session.js` makes), and read-only with no service at
   all, since a desk that cannot push has nowhere for an edit to go.
   Typing never mints a person; only the add button does.
-- **The roster reads server-side**, and the read-back-and-prove path
-  retires with it.
+- **The roster reads server-side** - built, and the read-back-and-prove
+  path is gone. The assignment had no home but the pushed payloads; it
+  rides on the push now, as `schedule_pushes.roster`, in the same row
+  and transaction as the schedules it produced, so the two cannot
+  disagree and there is nothing left to prove. `GET /api/roster` answers
+  the newest push - with or without a roster, so an older roster is
+  never served over a newer push. The desk reads it on opening and sends
+  `GROUPS` with every push; the demo floor in `apps/server` keeps it in
+  the log line and serves it the same way. Optional on both servers, so
+  a desk that predates the field still pushes. Stored opaque, like the
+  payload: the service is a courier, and an opinion about slots would be
+  a third answer.
 - **Invites**, through the password reset flow, for anybody given an
   address.
 
@@ -601,9 +611,14 @@ loud and recoverable, misfiled work is silent and permanent.
 
 ## The roster travels the other way
 
-*Standing, but superseded in direction - "Who a person is, and who is on
-the floor" above explains why this whole mechanism goes away once there
-is a list of people. Read that before building on this.*
+*Retired. The mechanism below is gone from the code: the roster rides on
+the push now, and the desk reads it rather than reconstructing it - see
+"Who a person is, and who is on the floor" above. What survives from
+this section is the second half, the refusal to push over a floor that
+moved since the screen read it, which was never about reconstruction and
+still stands. The rest is kept as the record of why the read-back was
+built and what it cost, because the failure it answered is real and the
+answer moved rather than disappeared.*
 
 A push replaces the whole day on all twelve rigs. It is not a merge, and
 that made the roster the one thing in this system that could go
