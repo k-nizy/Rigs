@@ -16,10 +16,12 @@
  *   winning, even when the second one opened their screen before the
  *   first one pushed.
  *
- * The first is fixed by reading the roster back off the floor, and only
- * ever after proving the recovered roster rebuilds the schedule the
- * floor is actually running. The second is fixed by asking, on the way
- * out, whether the floor has moved since this screen read it.
+ * The first was fixed, for a while, by reading the roster back off the
+ * floor and proving the recovered roster rebuilt the schedule the floor
+ * was running. It is fixed now by the roster riding on the push, in the
+ * same row and transaction as the payloads, so a desk reads it instead
+ * of reconstructing it. The second is fixed by asking, on the way out,
+ * whether the floor has moved since this screen read it.
  * ===================================================================== */
 
 "use strict";
@@ -65,10 +67,15 @@ const FLOOR = (() => {
    `pushedAt` is a field rather than a constant so a test can move the
    floor on underneath the desk, which is the whole of the second
    failure. */
-function serving(payloads, pushedAt) {
-  const state = { pushedAt: pushedAt || "2026-08-23T09:00:00.000Z", sent: null, pushes: 0 };
+function serving(payloads, pushedAt, roster) {
+  const state = { pushedAt: pushedAt || "2026-08-23T09:00:00.000Z", sent: null, pushes: 0,
+                  roster: roster === undefined ? FLOOR_GROUPS : roster };
   state.fetchImpl = (url, init) => {
     const u = String(url);
+    if (u === "/api/roster") {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({
+        pushedAt: state.roster ? state.pushedAt : null, roster: state.roster }) });
+    }
     if (u === "/api/state") {
       return Promise.resolve({ ok: true, json: () => Promise.resolve({
         pushedAt: state.pushedAt, rigs: payloads.map(x => x.rigId) }) });
@@ -152,30 +159,14 @@ test("every shift of the day is redrawn from the recovered roster",
     } finally { desk.stop(); }
   }));
 
-test("a roster the desk cannot rebuild is refused, out loud",
-  (async () => {
-    /* One turn handed to somebody who is not in the rotation at all. The
-       recovery still produces four names per group, and the schedule it
-       rebuilds does not match - which is exactly the case where trusting
-       it would push a roster nobody can account for. */
-    const bent = JSON.parse(JSON.stringify(FLOOR));
-    bent[0].turns[4].operator = { id: "op-zz", name: "Somebody Else" };
-
-    const server = serving(bent);
-    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
-    try {
-      await settle();
-      assert.match(desk.$("toast").textContent, /cannot rebuild/,
-        "the desk adopted a roster it had not verified, or said nothing about refusing it");
-
-      desk.mode("plan");
-      desk.click(desk.$("btn-push"));
-      await settle();
-      const names = namesIn(server.sent);
-      assert.ok(names.some(n => n.includes("Petrov")),
-        "the unverifiable roster was pushed anyway");
-    } finally { desk.stop(); }
-  }));
+/* "a roster the desk cannot rebuild is refused, out loud" lived here.
+   It pinned the read-back-and-prove path - rebuild the roster from
+   twelve payloads, redraw, compare turn by turn, refuse on disagreement.
+   That path is gone: the roster rides on the push, in the same row and
+   transaction as the payloads it produced, so there is nothing left to
+   prove. "the roster the service holds is taken without reconstructing
+   it from payloads", below, is its replacement and asserts the
+   opposite: disagreeing payloads no longer matter. */
 
 test("an edit on this screen is never overwritten by the floor",
   (async () => {
@@ -342,7 +333,7 @@ test("a person id read back off the floor is pushed out again",
        manager never touched. Losing the id is worse than losing a name,
        because the id is the thing a take is filed under and nothing
        downstream can tell it went missing. */
-    const server = serving(PEOPLE_FLOOR);
+    const server = serving(PEOPLE_FLOOR, undefined, PEOPLE_GROUPS);
     const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
     try {
       await settle();
@@ -361,7 +352,7 @@ test("a person id read back off the floor is pushed out again",
 
 test("and the names still come with them",
   (async () => {
-    const server = serving(PEOPLE_FLOOR);
+    const server = serving(PEOPLE_FLOOR, undefined, PEOPLE_GROUPS);
     const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
     try {
       await settle();
@@ -378,7 +369,7 @@ test("a floor of plain names still pushes plain names",
     /* The other half, and the one that keeps a laptop demo working: a
        roster with no people in it must push byte for byte what it always
        pushed - no `personId` key at all, not one set to null. */
-    const server = serving(FLOOR);
+    const server = serving(FLOOR, undefined, FLOOR_GROUPS);
     const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
     try {
       await settle();
@@ -552,4 +543,111 @@ test("with no service at all the names are read-only, and the rest still edits",
       "with no service the operator slot should be text, not an input");
     assert.equal(card.children[1].children[1].tagName, "input",
       "the task should still be editable with no service");
+  }));
+
+// ------------------------------------------------ the roster, server-side
+
+/* The desk reads who is on the floor from the service instead of
+   reconstructing it from twelve payloads. A push carries the roster on
+   screen, and the next desk to open reads it back - so a correction made
+   here reaches every other desk, which is what the read-back was for. */
+function servingRoster(roster, payloads, people) {
+  const state = { roster, pushedAt: "2026-08-23T09:00:00.000Z", sent: null, sentRoster: null, pushes: 0 };
+  state.fetchImpl = (url, init) => {
+    const u = String(url);
+    const method = ((init && init.method) || "GET").toUpperCase();
+    if (u === "/api/state") {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({
+        pushedAt: state.pushedAt, rigs: (payloads || []).map(x => x.rigId) }) });
+    }
+    if (u === "/api/roster") {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({
+        pushedAt: state.roster ? state.pushedAt : null, roster: state.roster }) });
+    }
+    if (u.startsWith("/api/rigs/")) {
+      const id = decodeURIComponent(u.split("/")[3]);
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(
+        (payloads || []).find(x => x.rigId === id)) });
+    }
+    if (u === "/api/push") {
+      state.pushes++;
+      const body = JSON.parse(init.body);
+      state.sent = body.payloads; state.sentRoster = body.roster;
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({
+        ok: true, count: state.sent.length, pushedAt: "2026-08-23T11:00:00.000Z" }) });
+    }
+    if (u === "/api/people" && method === "GET") {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ people: people || [] }) });
+    }
+    return Promise.reject(new Error("no such route " + method + " " + u));
+  };
+  return state;
+}
+
+const SERVED_ROSTER = FLOOR_GROUPS.map(g => ({ key: g.key, task: g.task, rigs: g.rigs.slice(), ops: g.ops.slice() }));
+
+test("the desk opens on the roster the service holds",
+  (async () => {
+    const server = servingRoster(SERVED_ROSTER, FLOOR);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.mode("plan");
+      desk.click(desk.$("btn-push"));
+      await settle();
+      assert.ok(server.sent, "nothing was pushed");
+      assert.ok(namesIn(server.sent).includes("Floor One"),
+        "the desk pushed its own file rather than the roster the service holds");
+    } finally { desk.stop(); }
+  }));
+
+test("a push carries the roster on screen, so the next desk reads it",
+  (async () => {
+    const server = servingRoster(SERVED_ROSTER, FLOOR);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.mode("plan");
+      desk.click(desk.$("btn-push"));
+      await settle();
+      assert.ok(Array.isArray(server.sentRoster), "the push carried no roster");
+      assert.deepEqual(server.sentRoster.map(g => g.key), ["A", "B", "C", "D"]);
+      assert.deepEqual(server.sentRoster[0].ops, SERVED_ROSTER[0].ops);
+    } finally { desk.stop(); }
+  }));
+
+test("the roster the service holds is taken without reconstructing it from payloads",
+  (async () => {
+    /* The service is the authority now. Payloads that disagree with it
+       are a floor mid-push or a bug elsewhere; the desk no longer
+       rebuilds and proves, it reads. */
+    const disagreeing = FLOOR.map(p => Object.assign({}, p, { task: "Not what the roster says" }));
+    const server = servingRoster(SERVED_ROSTER, disagreeing);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.mode("plan");
+      desk.click(desk.$("btn-push"));
+      await settle();
+      const tasks = [...new Set(server.sent.map(p => p.task))].sort();
+      assert.deepEqual(tasks, ["Floor task A", "Floor task B", "Floor task C", "Floor task D"],
+        "the desk rebuilt the roster from payloads instead of reading the service's");
+      assert.doesNotMatch(desk.$("toast").textContent, /cannot rebuild/,
+        "the read-back-and-prove path is still running");
+    } finally { desk.stop(); }
+  }));
+
+test("a service that holds no roster leaves the file in place, without complaint",
+  (async () => {
+    const server = servingRoster(null, []);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.mode("plan");
+      desk.click(desk.$("btn-push"));
+      await settle();
+      assert.ok(namesIn(server.sent).some(n => n.includes("Petrov")),
+        "a floor on its first morning should push the file's roster");
+      assert.doesNotMatch(desk.$("toast").textContent, /roster/i);
+    } finally { desk.stop(); }
   }));

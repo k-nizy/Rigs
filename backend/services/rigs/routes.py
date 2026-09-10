@@ -475,9 +475,15 @@ async def health(
 
 
 class PushIn(BaseModel):
-    """Twelve payloads in one request, as the desk already sends them."""
+    """Twelve payloads in one request, as the desk already sends them -
+    and, optionally, the roster they were built from."""
 
     payloads: list[dict] = Field(min_length=1, max_length=64)
+    # A list of groups, each a dict. Shape-checked that far and no
+    # further: a roster that is not a list of groups would have the next
+    # desk open on garbage, and that is refused at the door. What is
+    # inside a group is the desk's contract with itself.
+    roster: list[dict] | None = Field(default=None, max_length=16)
 
 
 class PushOut(BaseModel):
@@ -594,6 +600,7 @@ async def push(
     session.add(SchedulePush(
         push_id=push_id, pushed_at=pushed_at,
         covered=_covered(body.payloads),
+        roster=body.roster,
         **_actor(account, request, settings),
     ))
     await session.commit()
@@ -620,6 +627,32 @@ async def push_alias(
     answers to the same path.
     """
     return await push(body, request, account, session, settings)
+
+
+@router.get("/roster", tags=["schedules"],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
+            summary="Who is on the floor, as the last push said")
+async def roster(session: AsyncSession = Depends(get_session)) -> dict:
+    """The roster the newest push carried, or none.
+
+    This is what a desk opens on. It used to reconstruct the roster from
+    twelve payloads and prove the rebuild turn by turn; now it reads the
+    one the last manager pushed, which is what makes a correction made
+    on one desk reach every other.
+
+    The newest push, whether or not it carried a roster: a desk that
+    predates the field pushed the floor too, and answering with an older
+    roster over a newer push would put the wrong names on screen with
+    nothing to say so.
+    """
+    latest = (await SchedulePushRepository(session).recent(limit=1))
+    if not latest:
+        return {"pushedAt": None, "roster": None}
+    row = latest[0]
+    return {
+        "pushedAt": row.pushed_at.isoformat().replace("+00:00", "Z"),
+        "roster": row.roster,
+    }
 
 
 @router.get("/state", tags=["schedules"],
