@@ -71,7 +71,7 @@ async def accounts(session, operator=False):
                     password_hash=hash_password(PASSWORD))]
     if operator:
         rows.append(Account(email=OPERATOR, name="Mei Chen", role="operator",
-                            operator_id="op-a2",
+                            person_id=uuid.UUID('bbbbbbbb-0000-4000-8000-000000000001'),
                             password_hash=hash_password(PASSWORD)))
     session.add_all(rows)
     await session.commit()
