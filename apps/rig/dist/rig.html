@@ -3073,7 +3073,25 @@ async function alignSeq() {
 }
 
 async function flush() {
-  if (uploading || !outbox.length) return;
+  if (uploading) return;
+
+  /* A rig only ever uploads its own events.
+
+     `switchRig` is a demo affordance and a real rig is only ever itself,
+     but the outbox is module-level and `boot()` does not clear it, so
+     events still owed when the rig switches stay queued under the next
+     identity. One batch then carries two, and the service refuses a
+     batch naming another rig *whole* - which is right, and which took
+     this rig's own work down with the foreign events.
+
+     Parked, not dropped. The journal is scoped by rig on load, so
+     switching back finds them again; dropping them here would lose
+     work the screen has already promised is queued. */
+  for (let i = outbox.length - 1; i >= 0; i--) {
+    if (outbox[i].rigId !== RIG_ID) outbox.splice(i, 1);
+  }
+
+  if (!outbox.length) return;
   uploading = true;
   const batch = outbox.slice(0, UPLOAD_BATCH);
   try {
