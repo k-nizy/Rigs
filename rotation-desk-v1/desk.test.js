@@ -209,8 +209,22 @@ test("the handover bar falls exactly where the name changes",
 
 /* ----------------------------------------------------- editing */
 
+/* A service that is reachable but has no `/api/people` - a deployment
+   that predates people. The roster card is a plain text box there, the
+   way it always was, which is what this test is about. With no service
+   at all the names are read-only instead: a desk that cannot reach the
+   service cannot push, so an edit could never leave the tab. */
+const withoutPeople = (url) => {
+  const u = String(url);
+  if (u === "/api/state") {
+    return Promise.resolve({ ok: true, json: () => Promise.resolve({
+      pushedAt: null, rigs: [] }) });
+  }
+  return Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) });
+};
+
 test("typing a new name reaches the grid and the board",
-  withDesk({}, async desk => {
+  withDesk({ fetchImpl: withoutPeople }, async desk => {
     desk.mode("plan");
     const card = desk.find(desk.$("rosters"), "grp")[0];
     const nameInput = desk.find(card, "op-line")[0].children[1];

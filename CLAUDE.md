@@ -425,6 +425,31 @@ different problem with a different answer: the desk says so and the
 manager disambiguates. Names stay editable afterwards and ids do not, so
 correcting a spelling never orphans a take.
 
+**How the desk says so, and how the manager disambiguates.** The picker
+shows an email beside a name where there is one - free information, and
+what My Shift signs in with anyway. Where two people still cannot be
+told apart it says so and offers to **rename** one of them, inline. That
+is the remedy the paragraph above already licenses rather than a new
+mechanism: names stay editable and ids do not, so renaming to tell two
+people apart cannot orphan a take, and it fixes the data instead of
+teaching every screen to cope with it forever.
+
+No id fragment on screen. `Ben Carter - 4f2a` asks a manager to read a
+checksum, and ids here are for machines. Two humans who cannot tell two
+rows apart are looking at a name that is doing its job badly, and the
+thing to fix is the name.
+
+**It flags; it does not refuse.** The argument for refusing is real -
+picking the wrong Ben is silent and permanent, and the ledger has no
+correction mechanism, which is the same reasoning that puts a rig into
+Standby rather than let it guess. What decided it the other way is that
+a rig in Standby costs idle minutes, while a desk that will not schedule
+a shift until somebody does data admin costs the shift itself, at 07:55,
+and is a desk people learn to work around. The rename sitting one click
+inside the picker is what keeps the mistake cheap to avoid. The residual
+is stated rather than designed away: a manager can pick the wrong person
+of two who share a name, and nothing downstream will notice.
+
 **An email is optional.** It is what My Shift signs in with and nothing
 else. An operator who never opens My Shift is still created, assigned,
 recorded and reported on. Give an address and they are sent an invite -
@@ -481,8 +506,13 @@ its own, so each can be reverted on its own.
   payload half is built too: a roster entry may be `{ name, personId }`
   and the engine puts `operator.personId` on every turn beside the seat,
   only when the entry carries one, so the sheet is drawn identically
-  either way. What is still to come is the picker itself, in place of
-  the desk's free-text name.
+  either way. The picker is built too: a roster card resolves a typed
+  name to a person on change, offers to add a name nobody has, and flags
+  two people who share one - never guessing. The card is a plain text
+  box against a service that predates `/api/people` (the same absent-
+  route exception `session.js` makes), and read-only with no service at
+  all, since a desk that cannot push has nowhere for an edit to go.
+  Typing never mints a person; only the add button does.
 - **The roster reads server-side**, and the read-back-and-prove path
   retires with it.
 - **Invites**, through the password reset flow, for anybody given an

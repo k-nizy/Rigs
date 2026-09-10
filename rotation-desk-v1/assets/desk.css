@@ -586,6 +586,28 @@ section { display: flex; flex-direction: column; }
 
 .op-list { display: flex; flex-direction: column; gap: 0.3rem; }
 .op-line { display: grid; grid-template-columns: 18px 1fr; align-items: center; gap: 0.4rem; }
+/* The picker. A resolved person shows their email under the name; a
+   name nobody has, or one two people share, gets a flagged note with
+   the remedy beside it. Read-only when there is no service to push to. */
+.op-line { grid-template-rows: auto auto; }
+.op-line .op-fixed { padding: 0.35rem 0.5rem; color: var(--ink); }
+.op-line .op-note {
+  grid-column: 2;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.5rem;
+  font-size: 0.78rem; color: var(--muted);
+}
+.op-line .op-note.warn { color: var(--warn); }
+.op-line .op-hint { font-family: var(--v-mono); font-size: 0.7rem; }
+.op-line .op-choice { display: flex; gap: 0.35rem; align-items: center; }
+.op-line .op-act {
+  font: inherit; font-size: 0.74rem; line-height: 1.2;
+  padding: 0.22rem 0.55rem; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--warn); background: var(--warn-soft); color: var(--ink);
+}
+.op-line .op-act.quiet { border-color: var(--line-2); background: transparent; color: var(--muted); }
+.op-line .op-act:disabled { opacity: 0.45; cursor: default; }
+.op-line .op-choice input { font: inherit; font-size: 0.8rem; padding: 0.2rem 0.4rem; }
+
 .op-line .idx {
   font-family: var(--v-mono);
   font-size: 0.66rem;
