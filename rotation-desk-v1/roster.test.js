@@ -313,3 +313,79 @@ test("a desk with no floor to compare against is not stopped from pushing",
       assert.equal(pushes, 1, "a desk with no readable floor refused to push at all");
     } finally { desk.stop(); }
   }));
+
+// ----------------------------------------- the person survives a read-back
+
+/* A floor whose payloads name people, not just seats. This is what the
+   floor looks like once the desk assigns by picking. */
+const PEOPLE_GROUPS = FLOOR_GROUPS.map(g => ({
+  key: g.key, task: g.task, rigs: g.rigs.slice(),
+  ops: g.ops.map((name, i) => ({ name: name, personId: "person-" + g.key + (i + 1) })),
+}));
+
+const PEOPLE_FLOOR = (() => {
+  const p = RE.buildPlan(
+    { shift: "morning", date: "2026-08-23", blockMin: 15, stintBlocks: 3, mode: "hold" },
+    PEOPLE_GROUPS);
+  return PEOPLE_GROUPS.reduce((all, g) => all.concat(g.rigs.map(r => RE.rigPayload(p, r))), []);
+})();
+
+const personIdsIn = sent => [...new Set(sent
+  .filter(p => p.shift.label === "Morning")
+  .flatMap(p => p.turns.map(t => t.operator.personId)))].filter(Boolean).sort();
+
+test("a person id read back off the floor is pushed out again",
+  (async () => {
+    /* The failure this prevents: the desk adopts the floor's roster,
+       rebuilds it from `operator.name` alone, and the next push drops
+       every `personId` on the floor - silently, and from a screen the
+       manager never touched. Losing the id is worse than losing a name,
+       because the id is the thing a take is filed under and nothing
+       downstream can tell it went missing. */
+    const server = serving(PEOPLE_FLOOR);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.click(desk.$("btn-push"));
+      await settle();
+
+      assert.ok(server.sent, "nothing was pushed");
+      assert.deepEqual(personIdsIn(server.sent),
+        ["person-A1","person-A2","person-A3","person-A4",
+         "person-B1","person-B2","person-B3","person-B4",
+         "person-C1","person-C2","person-C3","person-C4",
+         "person-D1","person-D2","person-D3","person-D4"],
+        "the desk read the floor back and pushed it out without the people");
+    } finally { desk.stop(); }
+  }));
+
+test("and the names still come with them",
+  (async () => {
+    const server = serving(PEOPLE_FLOOR);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.click(desk.$("btn-push"));
+      await settle();
+      assert.deepEqual(namesIn(server.sent).slice(0, 4),
+        ["Floor Eight", "Floor Eleven", "Floor Fifteen", "Floor Five"],
+        "the names did not survive alongside the ids");
+    } finally { desk.stop(); }
+  }));
+
+test("a floor of plain names still pushes plain names",
+  (async () => {
+    /* The other half, and the one that keeps a laptop demo working: a
+       roster with no people in it must push byte for byte what it always
+       pushed - no `personId` key at all, not one set to null. */
+    const server = serving(FLOOR);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.click(desk.$("btn-push"));
+      await settle();
+      const anyKey = server.sent.some(p => p.turns.some(t => "personId" in t.operator));
+      assert.equal(anyKey, false,
+        "a roster of plain names grew a personId key it was never given");
+    } finally { desk.stop(); }
+  }));
