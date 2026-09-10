@@ -13,6 +13,7 @@
  *        POST /api/push                       body: { payloads: [...] }
  *        GET  /api/rigs/:rigId/schedule.json  -> the payload for that rig
  *        GET  /api/state                      -> everything currently pushed
+ *        GET  /api/roster                     -> who is on the floor, as the last push said
  *
  * Each payload is validated against packages/schema/payload.js before it
  * is stored, so a malformed push is rejected at the door and never
@@ -85,7 +86,10 @@ function readPushLog() {
 }
 
 function storeFrom(entry) {
-  const next = { pushedAt: entry.pushedAt, rigs: {} };
+  // The roster the push carried, or null for a push that carried none -
+  // a desk that predates the field, or the demo. Kept in the log line
+  // beside the payloads it was built from, so a restart brings it back.
+  const next = { pushedAt: entry.pushedAt, roster: entry.roster || null, rigs: {} };
   entry.payloads.forEach(p => { (next.rigs[p.rigId] = next.rigs[p.rigId] || []).push(p); });
   return next;
 }
@@ -142,6 +146,10 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { pushedAt: store.pushedAt, rigs: Object.keys(store.rigs) });
     }
 
+    if (req.method === "GET" && url.pathname === "/api/roster") {
+      return sendJSON(res, 200, { pushedAt: store.pushedAt, roster: store.roster || null });
+    }
+
     if (req.method === "GET" || req.method === "HEAD") {
       return sendStatic(req, res, url);
     }
@@ -173,6 +181,14 @@ async function handlePush(req, res) {
     return sendJSON(res, 400, { error: "body must be { payloads: [...] } with at least one" });
   }
 
+  // The roster is optional, and shape-checked exactly as far as the real
+  // service checks it: a list of groups. Anything else would have the
+  // next desk open on garbage, and is refused with the whole push.
+  const roster = parsed.roster == null ? null : parsed.roster;
+  if (roster !== null && !(Array.isArray(roster) && roster.every(g => g && typeof g === "object" && !Array.isArray(g)))) {
+    return sendJSON(res, 422, { error: "roster must be a list of groups, or absent" });
+  }
+
   // Validate every payload first. All-or-nothing: a bad push must not
   // leave the floor with a mix of new and stale schedules.
   const problems = [];
@@ -191,7 +207,7 @@ async function handlePush(req, res) {
   // The log first, then the floor. If the append fails there is no record
   // of this push, so it must not become the schedule either - a floor the
   // log cannot account for is the thing the log exists to prevent.
-  const entry = { pushedAt: new Date().toISOString(), payloads };
+  const entry = { pushedAt: new Date().toISOString(), payloads, roster };
   try { appendPush(entry); }
   catch (e) { return sendJSON(res, 500, { error: "could not record the push: " + e.message }); }
 

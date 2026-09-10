@@ -159,13 +159,14 @@ left this browser tab. The floor got it; every other desk still had the
 file; the next person to push sent the file's version back over it, and
 the correction was gone with nothing recording that it had ever existed.
 
-So the desk reads the floor on opening and rebuilds the roster from what
-is running there, then **proves it**: it redraws the schedule from the
-recovered roster and compares it against the floor's, rig by rig and turn
-by turn. If they agree, the recovery is correct by demonstration. If they
-do not, the file stays and the desk says so — a roster it cannot rebuild
-would go to twelve rigs under your name. Anything you have already typed
-on the screen wins over the floor.
+So a push carries the roster on screen along with the schedules it
+built, and the desk reads that roster back on opening — from the
+service, not reconstructed from twelve payloads. For a while it did
+reconstruct: rebuild from the payloads, redraw, compare turn by turn,
+refuse on disagreement. That machinery is gone. The roster and the
+payloads are one act, stored in one row and one transaction, so there
+is nothing left to prove. Anything you have already typed on the screen
+still wins over the floor.
 
 **And pushing over a floor somebody else has changed asks first.** If the
 floor was pushed after you opened this screen, the first press refuses

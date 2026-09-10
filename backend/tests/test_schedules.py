@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from core.domains.schedules.model import Schedule
+from core.domains.schedules.model import Schedule, SchedulePush
 from core.workflows.schedules import _nearest, in_force
 
 RIG = "RIG-03"
@@ -391,3 +391,59 @@ def test_the_shift_about_to_start_is_also_order_independent():
         "before the Morning shift the rig should be waiting on Morning, got " +
         str(sorted(answers))
     )
+
+
+# ------------------------------------------------- the roster, server-side
+
+# The assignment - which people sit in which group, in which slot, on
+# which task - had no home except the pushed payloads, and the desk
+# rebuilt it by reading twelve of them back and proving the rebuild turn
+# by turn. It rides on the push now, in the same row and transaction as
+# the schedules it produced, so the two cannot disagree.
+
+ROSTER = [
+    {"key": "A", "task": "Box transfer", "rigs": ["RIG-01", "RIG-02", "RIG-03"],
+     "ops": [{"name": "Mei Chen", "personId": "3b0e6f7a-9c1d-4e2f-8a5b-6c7d8e9f0a1b"},
+             "Ben Carter", "Tomas Rivera", "Nadia Haddad"]},
+]
+
+
+async def test_a_push_may_carry_the_roster_it_was_built_from(client, session):
+    r = await client.post("/api/push", json={"payloads": [payload("Morning")], "roster": ROSTER})
+    assert r.status_code == 200, r.text
+    row = (await session.execute(select(SchedulePush))).scalars().one()
+    assert row.roster == ROSTER, "the roster was not stored on the push row"
+
+
+async def test_a_push_without_a_roster_is_still_a_push(client, session):
+    """Every desk that predates this field, and the laptop demo."""
+    r = await client.post("/api/push", json={"payloads": [payload("Morning")]})
+    assert r.status_code == 200, r.text
+    row = (await session.execute(select(SchedulePush))).scalars().one()
+    assert row.roster is None
+
+
+async def test_the_roster_route_answers_the_latest_push(client, session):
+    older = [dict(ROSTER[0], task="Older task")]
+    assert (await client.post("/api/push", json={"payloads": [payload("Morning")], "roster": older})).status_code == 200
+    assert (await client.post("/api/push", json={"payloads": [payload("Day")], "roster": ROSTER})).status_code == 200
+    r = await client.get("/api/roster")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["roster"] == ROSTER, "the roster served was not the newest push's"
+    assert body["pushedAt"], "the desk needs to know when this roster was pushed"
+
+
+async def test_a_floor_never_pushed_has_no_roster(client):
+    r = await client.get("/api/roster")
+    assert r.status_code == 200
+    assert r.json() == {"pushedAt": None, "roster": None}
+
+
+async def test_a_roster_that_is_not_a_list_of_groups_is_refused(client, session):
+    """Stored opaque like the payload, but a shape that is not a roster
+    at all would have the desk open on garbage - refused at the door."""
+    r = await client.post("/api/push", json={"payloads": [payload("Morning")], "roster": {"not": "a list"}})
+    assert r.status_code == 422
+    assert (await session.execute(select(SchedulePush))).scalars().all() == [], \
+        "a refused push left a row behind"
