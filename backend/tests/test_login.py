@@ -80,7 +80,7 @@ async def people(session, manager=True, operator=False, disabled=False):
     if operator:
         rows.append(Account(
             email=OPERATOR, name="Mei Chen", role="operator",
-            operator_id="op-a2", password_hash=hash_password(PASSWORD)))
+            person_id=uuid.UUID('bbbbbbbb-0000-4000-8000-000000000001'), password_hash=hash_password(PASSWORD)))
     session.add_all(rows)
     await session.commit()
     return rows
@@ -107,7 +107,7 @@ class TestSigningIn:
         body = r.json()
         assert body["name"] == "Ruth Osei"
         assert body["role"] == "manager"
-        assert body["operatorId"] is None
+        assert body["personId"] is None
         assert body["csrfToken"]
         assert r.cookies.get(SESSION_COOKIE)
 
@@ -120,7 +120,7 @@ class TestSigningIn:
                              json={"email": OPERATOR, "password": PASSWORD})
         assert r.status_code == 200
         assert r.json()["role"] == "operator"
-        assert r.json()["operatorId"] == "op-a2"
+        assert r.json()["personId"] == "bbbbbbbb-0000-4000-8000-000000000001"
 
     async def test_the_email_is_matched_regardless_of_capitals(self, engine, session):
         await people(session)
@@ -640,7 +640,7 @@ class TestTheBootProbe:
                          json={"email": OPERATOR, "password": PASSWORD})
             body = (await c.get("/api/auth/session")).json()
         assert body["account"]["role"] == "operator"
-        assert body["account"]["operatorId"] == "op-a2"
+        assert body["account"]["personId"] == "bbbbbbbb-0000-4000-8000-000000000001"
 
     async def test_it_hands_back_the_csrf_token_after_a_reload(
             self, engine, session):

@@ -120,9 +120,14 @@ def _nearest(rows: list[Schedule], now: datetime) -> Schedule:
 
 
 async def turns_for_operator(
-    session: AsyncSession, operator_id: str, now: datetime | None = None
+    session: AsyncSession, person_id: str, now: datetime | None = None
 ) -> dict:
-    """One operator's turns in the shift running now, across every rig.
+    """One person's turns in the shift running now, across every rig.
+
+    Matched on the person the push named in each turn, never on the
+    seat: the seat is whichever chair the roster put them in today, and
+    on a cover day the chair a person usually sits in holds somebody
+    else. An account names its person and nothing about where they sit.
 
     Read, not derived. Every field returned here was written into a
     payload by the desk and is handed back unchanged; this only selects -
@@ -161,7 +166,7 @@ async def turns_for_operator(
         if not rules.shift_covers(payload, row.shift_date, now, timezone.utc):
             continue
         for turn in payload.get("turns") or []:
-            if (turn.get("operator") or {}).get("id") != operator_id:
+            if (turn.get("operator") or {}).get("personId") != person_id:
                 continue
             turns.append({**turn, "rigId": payload.get("rigId")})
             if shift is None:
@@ -172,4 +177,4 @@ async def turns_for_operator(
                 }
 
     turns.sort(key=lambda t: (t.get("from") or "", t.get("rigId") or ""))
-    return {"operatorId": operator_id, "shift": shift, "turns": turns}
+    return {"personId": person_id, "shift": shift, "turns": turns}
