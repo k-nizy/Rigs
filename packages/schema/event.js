@@ -106,6 +106,14 @@
     if (ev.operatorName != null && typeof ev.operatorName !== "string") {
       e.push("operatorName must be a string or null");
     }
+    /* Who recorded this, as an id that is theirs - the same in every
+       seat they ever work, which neither the seat nor the name can
+       give. Optional for the same reason as the name: no rig sent it
+       until the release that added this line, and a refused batch is
+       dropped, not retried. */
+    if (ev.personId != null && typeof ev.personId !== "string") {
+      e.push("personId must be a string or null");
+    }
 
     // ---- what happened
     reqString(ev, "bucket", e);

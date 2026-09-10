@@ -8,6 +8,7 @@
   "turnFrom": "09:00",
   "operatorId": "op-a4",
   "operatorName": "Nadia Haddad",
+  "personId": "3b0e6f7a-9c1d-4e2f-8a5b-6c7d8e9f0a1b",
   "bucket": "episodes",
   "event": "episode_saved",
   "data": {
