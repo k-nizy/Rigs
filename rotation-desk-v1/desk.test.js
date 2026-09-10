@@ -849,3 +849,69 @@ test("the board shows who is on now, by the floor's clock",
       assert.match(desk.$("now-src").className, /floor/,
         "a running floor was badged as not running");
     }));
+
+/* ---------------------------------------------------- the scores
+
+   A manager may see the scores operators give their own takes, and may
+   not change them. Drawn on Live beside the board, from
+   /api/floor/scores, grouped by person. */
+
+const SCORES = {
+  shiftDate: "2026-08-23", shiftLabel: "Morning",
+  people: [
+    { personId: "p-nadia", seat: "op-a4", name: "Nadia Haddad",
+      recorded: 3, saved: 3, discarded: 0, scored: { "3": 0, "4": 1, "5": 2 }, average: 4.67 },
+    { personId: null, seat: "op-a1", name: "Aleksandr Petrov",
+      recorded: 2, saved: 1, discarded: 1, scored: { "3": 1, "4": 0, "5": 0 }, average: 3.0 },
+  ],
+};
+
+const servedWithScores = (payloads, pushedAt, scores) => (url) => {
+  const u = String(url);
+  if (u.startsWith("/api/floor/scores")) {
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(scores) });
+  }
+  return servedBy(payloads, pushedAt)(url);
+};
+
+test("Live shows who recorded what this shift, with their scores, and offers no way to change them",
+  withDesk({ at: "10:37:22", fetchImpl: servedWithScores(PUSHED, "2026-08-23T09:58:00.000Z", SCORES) },
+    async desk => {
+      const panel = desk.$("scores");
+      assert.ok(panel, "there is no scores panel on Live");
+      const rows = desk.find(panel, "score-row");
+      assert.equal(rows.length, 2, "one row per person, in the order the service gave");
+      assert.match(rows[0].textContent, /Nadia Haddad/);
+      assert.match(rows[0].textContent, /3 recorded/);
+      assert.match(rows[0].textContent, /4\.67/);
+      assert.match(rows[1].textContent, /1 discarded/);
+      /* Read-only is the decision. No input, no button, nothing to press. */
+      assert.equal(desk.find(panel, "btn").length + panel.querySelectorAll("[type=number]").length, 0,
+        "the scores panel offered a way to change a score");
+    }));
+
+test("a take filed before the rig sent a person is shown under its seat, and says so",
+  withDesk({ at: "10:37:22", fetchImpl: servedWithScores(PUSHED, "2026-08-23T09:58:00.000Z", SCORES) },
+    async desk => {
+      const rows = desk.find(desk.$("scores"), "score-row");
+      assert.match(rows[1].textContent, /op-a1/, "a seat-only row must name the seat it fell back to");
+      assert.doesNotMatch(rows[0].textContent, /op-a4/, "a person row must not lead with the chair");
+    }));
+
+test("with nothing recorded yet the panel says so rather than showing an empty table",
+  withDesk({ at: "10:37:22", fetchImpl: servedWithScores(PUSHED, "2026-08-23T09:58:00.000Z",
+                                                          { shiftDate: "2026-08-23", shiftLabel: "Morning", people: [] }) },
+    async desk => {
+      assert.match(desk.$("scores").textContent, /No takes recorded yet/);
+      assert.equal(desk.find(desk.$("scores"), "score-row").length, 0);
+    }));
+
+test("a service too old to serve scores leaves Live exactly as it was",
+  withDesk({ at: "10:37:22", fetchImpl: servedBy(PUSHED, "2026-08-23T09:58:00.000Z") },
+    async desk => {
+      /* servedBy answers every unknown path with the first payload - a
+         200 whose body is not a scores document. The panel must not
+         draw garbage from it, and the board beside it must be untouched. */
+      assert.equal(desk.find(desk.$("scores"), "score-row").length, 0);
+      assert.equal(desk.board()[0].rigs[0].op, "Pushed Person 4", "the board was disturbed");
+    }));

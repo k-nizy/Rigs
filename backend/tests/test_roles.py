@@ -62,6 +62,11 @@ DESK_READS = [
     "/api/floor/alerts",
     "/api/floor/video",
     "/api/floor/efficiency?shift_date=2026-08-26&shift_label=Morning",
+    # The scores every person gave their own takes. A manager may see
+    # them; an operator seeing everybody's is the question the efficiency
+    # route refuses to settle by accident, and this one refuses it the
+    # same way.
+    "/api/floor/scores?shift_date=2026-08-26&shift_label=Morning",
     # Who is on the floor is the desk's to read, for the same reason the
     # board is: it names every operator, and an operator seeing the list
     # of everybody is the question the efficiency route refuses to settle

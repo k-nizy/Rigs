@@ -22,6 +22,7 @@ from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.domains.alerts.repository import AlertRepository
+from core.domains.episodes.model import Episode
 from core.domains.rig_downtime_events.model import RigDowntimeEvent
 from core.domains.rig_events.model import RigEvent
 from core.domains.rig_productivity_blocks.model import RigProductivityBlock
@@ -363,4 +364,63 @@ async def operator_efficiency(session: AsyncSession, shift_date, shift_label: st
             "downSecs": float(dwn),
             "efficiency": round(efficiency(stint), 4),
         })
+    return out
+
+
+async def scores_for_shift(session: AsyncSession, shift_date, shift_label: str) -> list[dict]:
+    """The scores every person gave their own takes, one row per person,
+    for one shift. A manager sees these; nothing here changes one.
+
+    Grouped by person, never by seat. `operator_id` is a chair, and
+    grouping by it credits Nadia's takes and Priya's cover day to one
+    row with the wrong average for both - the exact merge the person id
+    was built to end. A take filed before the rig sent a person has no
+    id to group by; it falls back to the seat and name it carries and
+    the row says so, rather than being dropped or merged into somebody.
+
+    Counts and a mean, computed here and stored nowhere. A discarded
+    take is counted as recorded - a floor where nothing is ever
+    discarded is worth asking about - and never enters the average,
+    because it was never scored.
+    """
+    rows = await session.execute(
+        select(
+            Episode.person_id, Episode.operator_id, Episode.operator_name,
+            Episode.outcome, Episode.score, func.count(),
+        )
+        .where(Episode.shift_date == shift_date, Episode.shift_label == shift_label)
+        .group_by(Episode.person_id, Episode.operator_id, Episode.operator_name,
+                  Episode.outcome, Episode.score)
+    )
+
+    people: dict[tuple, dict] = {}
+    for person_id, seat, name, outcome, score, n in rows.all():
+        # A person is their id. Without one, the seat and the name
+        # together are the best this row can do - both, so two seat-only
+        # people who happened to share a chair on different days are not
+        # folded into one.
+        key = ("person", str(person_id)) if person_id else ("seat", seat, name)
+        row = people.setdefault(key, {
+            "personId": str(person_id) if person_id else None,
+            "seat": seat, "name": name,
+            "recorded": 0, "saved": 0, "discarded": 0,
+            "scored": {"3": 0, "4": 0, "5": 0},
+            "_sum": 0,
+        })
+        row["recorded"] += n
+        if outcome == "saved":
+            row["saved"] += n
+            if score is not None:
+                row["scored"][str(score)] = row["scored"].get(str(score), 0) + n
+                row["_sum"] += score * n
+        else:
+            row["discarded"] += n
+
+    out = []
+    for row in people.values():
+        scored = sum(row["scored"].values())
+        row["average"] = round(row["_sum"] / scored, 2) if scored else None
+        del row["_sum"]
+        out.append(row)
+    out.sort(key=lambda r: (r["name"] or "", r["seat"] or ""))
     return out
