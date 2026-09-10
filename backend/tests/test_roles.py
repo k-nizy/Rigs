@@ -108,11 +108,11 @@ async def accounts(session, manager=True, operator=True, other=False):
                             password_hash=hash_password(PASSWORD)))
     if operator:
         rows.append(Account(email=OPERATOR, name="Mei Chen", role="operator",
-                            operator_id="op-a2",
+                            person_id=uuid.UUID('bbbbbbbb-0000-4000-8000-000000000001'),
                             password_hash=hash_password(PASSWORD)))
     if other:
         rows.append(Account(email=OTHER_OPERATOR, name="Tomas Rivera",
-                            role="operator", operator_id="op-a3",
+                            role="operator", person_id=uuid.UUID('bbbbbbbb-0000-4000-8000-000000000003'),
                             password_hash=hash_password(PASSWORD)))
     session.add_all(rows)
     await session.commit()
@@ -137,27 +137,32 @@ def a_payload(rig="RIG-01", turns=None, day=None):
     }
 
 
-def a_turn(frm, to, op_id, name, goes="Break"):
+def a_turn(frm, to, op_id, name, goes="Break", person=None):
+    op = {"id": op_id, "name": name}
+    if person is not None:
+        op["personId"] = str(person)
     return {"from": frm, "to": to, "minutes": 45,
-            "operator": {"id": op_id, "name": name},
-            "relievedBy": "Somebody", "theyGoTo": goes}
+            "operator": op, "relievedBy": "Somebody", "theyGoTo": goes}
 
 
 async def push_a_day(session):
-    """Two rigs, two operators, so 'only mine' has something to exclude."""
+    """Two rigs, two operators, so 'only mine' has something to exclude.
+    The turns name people, the way the desk pushes once it assigns by
+    picking - an account is a person now, and a push that named only
+    seats would give it no day to show (stated in CLAUDE.md)."""
     day = today()
     pushed = datetime.now(UTC)
     rows = [
         Schedule(push_id=uuid.uuid4(), pushed_at=pushed,
                  rig_id="RIG-01", shift_date=day, shift_label="Morning",
                  payload=a_payload("RIG-01", [
-                     a_turn("08:00", "08:45", "op-a2", "Mei Chen"),
-                     a_turn("08:45", "09:30", "op-a3", "Tomas Rivera"),
+                     a_turn("08:00", "08:45", "op-a2", "Mei Chen", person=uuid.UUID("bbbbbbbb-0000-4000-8000-000000000001")),
+                     a_turn("08:45", "09:30", "op-a3", "Tomas Rivera", person=uuid.UUID("bbbbbbbb-0000-4000-8000-000000000003")),
                  ], day)),
         Schedule(push_id=uuid.uuid4(), pushed_at=pushed,
                  rig_id="RIG-02", shift_date=day, shift_label="Morning",
                  payload=a_payload("RIG-02", [
-                     a_turn("09:45", "10:30", "op-a2", "Mei Chen", "Think"),
+                     a_turn("09:45", "10:30", "op-a2", "Mei Chen", "Think", person=uuid.UUID("bbbbbbbb-0000-4000-8000-000000000001")),
                  ], day)),
     ]
     session.add_all(rows)
@@ -383,7 +388,7 @@ class TestMyShift:
 
         assert r.status_code == 200
         body = r.json()
-        assert body["operatorId"] == "op-a2"
+        assert body["personId"] == "bbbbbbbb-0000-4000-8000-000000000001"
         assert [t["rigId"] for t in body["turns"]] == ["RIG-01", "RIG-02"]
         assert [t["from"] for t in body["turns"]] == ["08:00", "09:45"]
 
@@ -446,13 +451,13 @@ class TestMyEfficiency:
 
     async def test_nobody_signed_in_is_refused(self, engine, session):
         async with serving() as c:
-            assert (await c.get("/api/me/efficiency" + self.QUERY)).status_code == 401
+            assert (await c.get("/api/me/scores" + self.QUERY)).status_code == 401
 
     async def test_a_manager_is_refused(self, engine, session):
         await accounts(session)
         async with serving() as c:
             await signed_in(c, MANAGER)
-            r = await c.get("/api/me/efficiency" + self.QUERY)
+            r = await c.get("/api/me/scores" + self.QUERY)
         assert r.status_code == 403
 
     async def test_an_operator_gets_a_list_of_only_themselves(
@@ -460,11 +465,11 @@ class TestMyEfficiency:
         await accounts(session)
         async with serving() as c:
             await signed_in(c, OPERATOR)
-            r = await c.get("/api/me/efficiency" + self.QUERY)
+            r = await c.get("/api/me/scores" + self.QUERY)
         assert r.status_code == 200
         body = r.json()
         assert body["shiftLabel"] == "Morning"
-        assert all(row["operatorId"] == "op-a2" for row in body["operators"])
+        assert all(row["personId"] == "bbbbbbbb-0000-4000-8000-000000000001" for row in body["people"])
 
     async def test_a_shift_they_did_not_work_is_empty_not_zero(
             self, engine, session):
@@ -473,8 +478,8 @@ class TestMyEfficiency:
         await accounts(session)
         async with serving() as c:
             await signed_in(c, OPERATOR)
-            body = (await c.get("/api/me/efficiency" + self.QUERY)).json()
-        assert body["operators"] == []
+            body = (await c.get("/api/me/scores" + self.QUERY)).json()
+        assert body["people"] == []
 
 
 # ------------------------------------------- the rig, still not involved
@@ -582,3 +587,108 @@ class TestPeopleAreTheDesksToManage:
             await signed_in(c, MANAGER)
             r = await c.get(self.NOBODY)
         assert r.status_code == 404
+
+
+# ------------------------------------------ an account names its person
+
+# CLAUDE.md, "An account names its person, and the seat is never on the
+# account". /me/shift and /me/efficiency used to answer "how did I do" by
+# asking what the account's *chair* did. On a cover day that showed one
+# person another's numbers as their own, on their own screen.
+
+MEI = uuid.UUID("bbbbbbbb-0000-4000-8000-000000000001")
+PRIYA = uuid.UUID("bbbbbbbb-0000-4000-8000-000000000002")
+
+
+def a_person_turn(frm, to, op_id, name, person, goes="Break"):
+    t = a_turn(frm, to, op_id, name, goes)
+    t["operator"]["personId"] = str(person)
+    return t
+
+
+async def cover_day(session):
+    """Priya covers Mei's usual seat, op-a2, this morning. Mei is on op-a4
+    instead. Grouped by chair, each sees the other's day."""
+    day = today()
+    pushed = datetime.now(UTC)
+    session.add_all([
+        Schedule(push_id=uuid.uuid4(), pushed_at=pushed,
+                 rig_id="RIG-01", shift_date=day, shift_label="Morning",
+                 payload=a_payload("RIG-01", [
+                     a_person_turn("08:00", "08:45", "op-a2", "Priya Anand", PRIYA),
+                     a_person_turn("08:45", "09:30", "op-a4", "Mei Chen", MEI),
+                 ], day)),
+    ])
+    await session.commit()
+
+
+async def mei_with_a_person(session):
+    """Mei's account names Mei the person - and no seat."""
+    session.add(Account(email=OPERATOR, name="Mei Chen", role="operator",
+                        person_id=MEI, password_hash=hash_password(PASSWORD)))
+    await session.commit()
+
+
+class TestAnAccountNamesItsPerson:
+    async def test_my_shift_is_the_persons_day_not_the_chairs(self, engine, session):
+        await mei_with_a_person(session)
+        await cover_day(session)
+        async with serving() as c:
+            await signed_in(c, OPERATOR)
+            body = (await c.get("/api/me/shift")).json()
+        assert [t["operator"]["name"] for t in body["turns"]] == ["Mei Chen"], \
+            "Mei's screen showed the chair's day - which is Priya's today"
+        assert body["turns"][0]["operator"]["id"] == "op-a4", \
+            "the seat comes from the push, not the account"
+        assert body["personId"] == str(MEI)
+
+    async def test_my_scores_are_mine_and_not_the_chairs(self, engine, session):
+        from core.domains.episodes.model import Episode
+        await mei_with_a_person(session)
+        day = today()
+        n = 0
+        for person, name, seat, score in ((PRIYA, "Priya Anand", "op-a2", 3),
+                                          (MEI, "Mei Chen", "op-a4", 5)):
+            n += 1
+            session.add(Episode(
+                episode_id=uuid.uuid4(), rig_id="RIG-01", shift_date=day, shift_label="Morning",
+                turn_from="08:00", operator_id=seat, operator_name=name, person_id=person,
+                at=datetime.now(UTC), duration_secs=90.0, outcome="saved", score=score,
+                source_event=5000 + n))
+        await session.commit()
+        async with serving() as c:
+            await signed_in(c, OPERATOR)
+            r = await c.get("/api/me/scores", params={"shift_date": day.isoformat(), "shift_label": "Morning"})
+        assert r.status_code == 200, r.text
+        people = r.json()["people"]
+        assert [p["name"] for p in people] == ["Mei Chen"], "an operator saw somebody else's scores"
+        assert people[0]["average"] == 5.0
+
+    async def test_an_operator_account_needs_a_person_not_a_seat(self, engine, session):
+        """The old rule - an operator must name a seat - is retired. The new
+        one is the same shape pointed at the right thing."""
+        from sqlalchemy.exc import IntegrityError
+        session.add(Account(email="nobody@verlet.co", name="No One", role="operator",
+                            password_hash=hash_password(PASSWORD)))
+        with pytest.raises(IntegrityError):
+            await session.commit()
+        await session.rollback()
+        session.add(Account(email="m2@verlet.co", name="Mei Chen", role="operator",
+                            person_id=MEI, password_hash=hash_password(PASSWORD)))
+        await session.commit()
+
+    async def test_two_accounts_cannot_be_the_same_person(self, engine, session):
+        from sqlalchemy.exc import IntegrityError
+        await mei_with_a_person(session)
+        session.add(Account(email="again@verlet.co", name="Mei Chen", role="operator",
+                            person_id=MEI, password_hash=hash_password(PASSWORD)))
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+    async def test_the_session_tells_the_screen_the_person_and_no_seat(self, engine, session):
+        await mei_with_a_person(session)
+        async with serving() as c:
+            body = (await c.post("/api/auth/login",
+                                 json={"email": OPERATOR, "password": PASSWORD})).json()
+        assert body["personId"] == str(MEI)
+        assert "operatorId" not in body, "the seat must not be on the account, so not in the session either"

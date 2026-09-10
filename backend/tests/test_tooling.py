@@ -503,3 +503,72 @@ def test_preflight_finds_a_domain_added_to_the_tree():
     on_disk = {p.parent.name for p in (root / "core" / "domains").glob("*/model.py")}
     assert set(preflight.load_every_domain()) == on_disk
     assert "accounts" in on_disk
+
+
+# ------------------------------------------ mint_account names a person
+#
+# The tool opens its own engine on the plain database; the suite lives in
+# a private run schema (see conftest). So these drive `_act` - the whole
+# of the tool past the parser - with a session from the run schema, the
+# same confinement the app under test gets. `run(argv)` is what `main`
+# calls and is exercised by the parser test above; the logic is here.
+
+import argparse as _argparse
+
+
+def _mint_args(**kw):
+    """What the parser hands `_act` for `operator --person ...`."""
+    base = dict(cmd="operator", email=None, name=None, person=None,
+                password="a-long-enough-pw-12", generate=False)
+    base.update(kw)
+    return _argparse.Namespace(**base)
+
+
+async def test_an_operator_is_minted_as_a_person_not_a_seat(engine, session, capsys):
+    """`--person` names the row in `people`; `--operator-id` is gone. An
+    account created by the tool points at who, never at where."""
+    from core.domains.people.repository import PersonRepository
+    from core.domains.accounts.repository import AccountRepository
+    from tools import mint_account
+
+    mei = await PersonRepository(session).create("Mei Chen")
+    await session.commit()
+
+    rc = await mint_account._act(
+        _mint_args(email="m.chen@verlet.co", name="Mei Chen", person=str(mei.id)), session)
+    assert rc == 0, capsys.readouterr().out
+    acct = await AccountRepository(session).by_email("m.chen@verlet.co")
+    assert acct is not None and acct.person_id == mei.id
+    assert acct.operator_id is None, "a seat was taken onto the account"
+
+
+async def test_minting_an_operator_for_nobody_is_refused(engine, session):
+    from tools import mint_account
+    import uuid
+    with pytest.raises(SystemExit) as e:
+        await mint_account._act(
+            _mint_args(email="x@verlet.co", name="X", person=str(uuid.uuid4())), session)
+    assert "nobody" in str(e.value).lower()
+
+
+async def test_two_accounts_cannot_be_minted_for_one_person(engine, session):
+    from core.domains.people.repository import PersonRepository
+    from tools import mint_account
+    mei = await PersonRepository(session).create("Mei Chen")
+    await session.commit()
+    assert await mint_account._act(
+        _mint_args(email="one@verlet.co", name="Mei Chen", person=str(mei.id)), session) == 0
+    with pytest.raises(SystemExit) as e:
+        await mint_account._act(
+            _mint_args(email="two@verlet.co", name="Mei Chen", person=str(mei.id)), session)
+    assert "already signs in" in str(e.value)
+
+
+def test_the_parser_asks_for_a_person_and_not_a_seat():
+    """The CLI surface itself: --person is required for an operator and
+    --operator-id no longer exists."""
+    from tools import mint_account
+    import asyncio
+    with pytest.raises(SystemExit):
+        asyncio.run(mint_account.run(["operator", "--email", "a@b.c", "--name", "A",
+                                      "--operator-id", "op-a2", "--password", "x"]))

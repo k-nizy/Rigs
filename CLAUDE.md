@@ -456,6 +456,59 @@ recorded and reported on. Give an address and they are sent an invite -
 which is the password reset flow doing the same job for somebody who has
 no password yet, not a second mechanism.
 
+**An account names its person, and the seat is never on the account.**
+Decided, after the first place the gap cost something. An operator
+account used to hold `op-a2` - a chair - set once when the account was
+minted, and `/me/shift` and `/me/efficiency` answered "how did I do" by
+asking what that *chair* did. On a cover day that showed one person
+another's numbers as their own, on their own screen: a leak, not a
+reporting error, and the same seat-is-not-a-person failure this whole
+section is about, arriving through the door marked authentication.
+
+So an account carries `person_id` and nothing about where that person
+sits. Where they sit is the roster the manager pushed that morning - the
+one fact - and the rig, the desk and My Shift all read it. "How did I
+do" asks what *this person* recorded, so a cover day just works: the
+push names Priya in seat 2, the rig files Priya's takes under Priya,
+and Mei's screen shows only Mei's. There is no arithmetic to get wrong
+because nothing is derived; there is a person, and there is a push.
+
+Built: `accounts.person_id`, migration `6492d4e8117c`, `mint_account
+operator --person <id>`, and `/me/shift`, `/me/scores` and the session
+all answering by person. `operator_id` stays on old rows, unread, so
+nothing is destroyed and the downgrade is clean.
+
+**What that costs on the day it lands, stated rather than hidden.**
+"My day" is matched on the person the push named in each turn, and
+never on a name - a name is only a string, and inferring identity from
+one is the failure this section exists to prevent. So a push that names
+no people gives a person-linked operator an empty day: My Shift says
+"no shift for you right now", which is true of the sheet and misleading
+about the person. The push that produces one is a roster of plain names
+- a floor that has not yet created its people, or a desk that read a
+plain-name roster back from the floor and pushed it untouched, since
+the picker resolves a name to a person only when that name is changed.
+It ends with the first push that names people. The honest version of
+that screen would say *why* it is empty - "the floor's schedule names no
+people yet" - which is a small flag on `/me/shift` and a line on the
+screen, and is the next thing to close.
+
+The old rule that an operator account *must* name a seat is retired
+with it. It was written when a seat was the best stand-in for a person
+available, and a seat stored on the account beside a person is two
+answers to one question that can disagree - which is the failure, not a
+safeguard. The credential itself is unchanged: email and password. What
+changed is what the account points at once you are in.
+
+**An operator sees their own numbers and nobody else's.** Decided, and
+restored here after being dropped from the open list by mistake - the
+route's own comment had said it was open, and it was. A shared board
+motivates some floors and turns others into a leaderboard people
+resent; that is a call about how this floor is run, and the private
+default is the one that can be widened later, whereas a floor that has
+already seen each other's scores cannot be un-shown them. The floor-wide
+view stays the manager's.
+
 **The roster moves server-side, and that retires machinery.** Today the
 roster has no permanent home: it lives in the pushed payloads, and the
 desk rebuilds it by reading twelve of them back and proving the
@@ -815,7 +868,9 @@ The sheet defines the scope. It does not speak to:
 
 That is the one still open. Crew changeover and who reviews an operator's
 own scores were both on this list and are answered in the two sections
-immediately above. This is an open question to answer when the product is
+immediately above; whether an operator sees anyone else's numbers was
+on it too, was dropped from here by mistake while it was still open,
+and is answered under "Who a person is". This is an open question to answer when the product is
 ready, not an implicit requirement to fill in.
 
 ### Calibration, and why the answer decides more than a screen

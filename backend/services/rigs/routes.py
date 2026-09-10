@@ -771,13 +771,16 @@ class WhoOut(BaseModel):
 
     name: str
     role: str
-    operatorId: str | None = None
+    # Who, never where. The seat is on the push and a screen reads it
+    # from there; an id here would be a second answer that can disagree.
+    personId: str | None = None
     csrfToken: str | None = None
 
 
 def _who(account, csrf: str | None = None) -> "WhoOut":
     return WhoOut(name=account.name, role=account.role,
-                  operatorId=account.operator_id, csrfToken=csrf)
+                  personId=str(account.person_id) if account.person_id else None,
+                  csrfToken=csrf)
 
 
 @router.post("/auth/login", response_model=WhoOut, tags=["people"],
@@ -1070,11 +1073,11 @@ async def my_shift(
     person's day walks across all three rigs in their group. That is the
     same fact that put `theyGoTo` in the payload.
     """
-    return await turns_for_operator(session, account.operator_id)
+    return await turns_for_operator(session, str(account.person_id))
 
 
-@router.get("/me/efficiency", tags=["people"],
-            summary="My own efficiency for one shift")
+@router.get("/me/scores", tags=["people"],
+            summary="My own takes and scores for one shift, and nobody else's")
 async def my_efficiency(
     shift_date: date, shift_label: str,
     account=Depends(require_operator),
@@ -1089,8 +1092,12 @@ async def my_efficiency(
     answering it by accident, in an API that returns everyone, is the one
     way it must not be settled.
     """
-    everyone = await operator_efficiency(session, shift_date, shift_label)
-    mine = [row for row in everyone if row["operatorId"] == account.operator_id]
+    # operator_efficiency groups by seat, and this account has no seat:
+    # it is a person. What it recorded is on the episodes, keyed by that
+    # person, which is what scores_for_shift groups by.
+    everyone = await scores_for_shift(session, shift_date, shift_label)
+    me = str(account.person_id)
+    mine = [row for row in everyone if row["personId"] == me]
     return {
         "shiftDate": shift_date.isoformat(),
         "shiftLabel": shift_label,
@@ -1098,7 +1105,7 @@ async def my_efficiency(
         # not worked that shift has no row, and inventing a zeroed one
         # would read as "you recorded nothing" rather than "you were not
         # here".
-        "operators": mine,
+        "people": mine,
     }
 
 
@@ -1134,7 +1141,7 @@ async def auth_session(
         "personAuth": "on" if on else "off",
         "account": (
             {"name": account.name, "role": account.role,
-             "operatorId": account.operator_id}
+             "personId": str(account.person_id) if account.person_id else None}
             if account else None
         ),
         "csrfToken": request.cookies.get(CSRF_COOKIE) if account else None,

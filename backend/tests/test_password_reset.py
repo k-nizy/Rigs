@@ -33,6 +33,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
+import uuid
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
@@ -133,9 +134,9 @@ async def accounts(session):
         Account(email=MANAGER, name="Ruth Osei", role="manager",
                 password_hash=hash_password(PASSWORD)),
         Account(email=OPERATOR, name="Mei Chen", role="operator",
-                operator_id="op-a2", password_hash=hash_password(PASSWORD)),
+                person_id=uuid.UUID("bbbbbbbb-0000-4000-8000-000000000001"), password_hash=hash_password(PASSWORD)),
         Account(email=GONE, name="Someone Left", role="operator",
-                operator_id="op-a7", password_hash=hash_password(PASSWORD),
+                person_id=uuid.UUID("bbbbbbbb-0000-4000-8000-000000000007"), password_hash=hash_password(PASSWORD),
                 disabled_at=datetime.now(timezone.utc)),
     ]
     session.add_all(rows)

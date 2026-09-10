@@ -55,8 +55,18 @@ class Account(TimestampedBase):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     role: Mapped[str] = mapped_column(String(16), nullable=False)
 
-    # Which operator on the sheet this account is, for operator accounts.
-    # `op-a2`, the id the engine mints and the payload carries.
+    # Who this account is, for operator accounts: the row in `people`.
+    # The seat is deliberately not here. Where a person sits is the
+    # roster the manager pushed that morning, read by every screen; an
+    # account that also held a seat would be two answers to one question
+    # that can disagree. No foreign key across domains - see the
+    # migration - but unique, because "my day" depends on one account
+    # being one person.
+    person_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+    # The chair this account was minted with, under the rule this
+    # replaced. Kept so old rows are not destroyed and the downgrade is
+    # clean; nothing reads it. New accounts never set it.
     operator_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -74,11 +84,13 @@ class Account(TimestampedBase):
     __table_args__ = (
         Index("uq_accounts_email", "email", unique=True),
 
-        # Two accounts claiming to be op-a2 would make "my shift"
-        # ambiguous, and the resolution must not be whichever row comes
-        # back first - that is the same tie `rig_at()` refuses to break.
-        # Partial, so the many managers with no operator_id do not
-        # collide with each other on NULL.
+        # Two accounts claiming to be the same person would make "my
+        # shift" ambiguous, and the resolution must not be whichever row
+        # comes back first - the same tie `rig_at()` refuses to break.
+        # Partial, so the many managers with no person do not collide
+        # with each other on NULL.
+        Index("uq_accounts_person", "person_id", unique=True,
+              postgresql_where=text("person_id IS NOT NULL")),
         Index("uq_accounts_operator", "operator_id", unique=True,
               postgresql_where=text("operator_id IS NOT NULL")),
 
@@ -86,11 +98,11 @@ class Account(TimestampedBase):
                         name="ck_accounts_role"),
 
         # The invariant that keeps /api/me/shift honest: an operator has
-        # somebody on the sheet to be, a manager does not.
+        # somebody to be, a manager does not.
         CheckConstraint(
-            "(role = 'manager' AND operator_id IS NULL) OR "
-            "(role = 'operator' AND operator_id IS NOT NULL)",
-            name="ck_accounts_operator_id_matches_role",
+            "(role = 'manager' AND person_id IS NULL) OR "
+            "(role = 'operator' AND person_id IS NOT NULL)",
+            name="ck_accounts_person_id_matches_role",
         ),
     )
 

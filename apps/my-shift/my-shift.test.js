@@ -767,3 +767,28 @@ test("every element this page hides by attribute is covered by that rule", () =>
   assert.ok(rule, "the rule is no longer global; " + toggled.size
     + " elements rely on it: " + [...toggled].sort().join(", "));
 });
+
+/* ---------------------------------------------- it shows the person's day
+
+   An account names its person now, and the seat is on the push. This
+   screen never held a seat - it greets by name and draws the turns it is
+   handed - so the property worth pinning is the other direction: it
+   draws whatever seat the push gave the person, and asks nothing else. */
+const A_COVERING_DAY = {
+  personId: "person-mei",
+  shift: { label: "Morning", date: "2026-08-23", start: "08:00", end: "16:00", tz: "UTC",
+           group: "A", task: "Box transfer" },
+  turns: [{ from: "08:45", to: "09:30", minutes: 45, rigId: "RIG-01",
+            operator: { id: "op-a4", name: "Mei Chen", personId: "person-mei" },
+            relievedBy: null, theyGoTo: "Break" }],
+};
+
+test("the day drawn is the person's, in whatever seat the push put them",
+  mounted(AN_OPERATOR, { shift: A_COVERING_DAY }, "08:50", async app => {
+    assert.equal(app.showing(), "day");
+    /* 08:50 is inside her one turn, 08:45-09:30 on RIG-01 - the seat the
+       push gave her today, not the one her account was ever minted with. */
+    const now = app.now();
+    assert.equal(now.kind, "work");
+    assert.match(now.text, /RIG-01/, "the turn the push gave her was not drawn");
+  }));
