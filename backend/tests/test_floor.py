@@ -863,3 +863,114 @@ class TestTheDayIsPushedAtOnce:
             assert idle, f"nobody arrived for the {turn} turn and nothing said so"
             assert turn in idle[0].key, (
                 f"at {now:%H:%M} the alert named {idle[0].key}, not the {turn} turn")
+
+
+# ---------------------------------------------------------- the scores
+#
+# CLAUDE.md, "Who checks the marking": a manager may see the scores an
+# operator gives their own takes and may not change them. A projection
+# and no new event type - the episodes table already carries every take,
+# its outcome, its score, and since #26 the person who recorded it.
+
+from core.domains.episodes.model import Episode
+from core.workflows.floor import scores_for_shift
+
+NADIA = uuid.UUID("aaaaaaaa-0000-4000-8000-000000000001")
+PRIYA = uuid.UUID("aaaaaaaa-0000-4000-8000-000000000002")
+
+
+def a_take(person, name, score, seat="op-a4", outcome="saved", day=DAY, label="Morning", n=[0]):
+    """One episode row, the way projection writes it."""
+    n[0] += 1
+    return Episode(
+        episode_id=uuid.uuid4(), rig_id=RIG, shift_date=day, shift_label=label,
+        turn_from="09:00", operator_id=seat, operator_name=name, person_id=person,
+        at=at(9, n[0]), duration_secs=90.0, outcome=outcome,
+        score=score if outcome == "saved" else None, source_event=1000 + n[0],
+    )
+
+
+async def test_scores_are_grouped_by_person_not_by_seat(session):
+    """The merge the person id exists to end. Nadia and Priya both sat in
+    op-a4 this shift; grouped by seat they are one row with the wrong
+    average for both. Grouped by person they are two."""
+    session.add_all([
+        a_take(NADIA, "Nadia Haddad", 5), a_take(NADIA, "Nadia Haddad", 5),
+        a_take(PRIYA, "Priya Anand", 3),
+    ])
+    await session.commit()
+
+    rows = await scores_for_shift(session, DAY, "Morning")
+    assert [r["name"] for r in rows] == ["Nadia Haddad", "Priya Anand"]
+    nadia, priya = rows
+    assert nadia["personId"] == str(NADIA) and nadia["scored"] == {"3": 0, "4": 0, "5": 2}
+    assert priya["personId"] == str(PRIYA) and priya["scored"] == {"3": 1, "4": 0, "5": 0}
+    assert nadia["average"] == 5.0 and priya["average"] == 3.0
+
+
+async def test_a_take_with_no_person_falls_back_to_the_seat_and_says_so(session):
+    """Every take filed before the rig sent a person. Not dropped, not
+    merged into somebody: it groups under the seat and name it carries,
+    and the row says it is a seat rather than a person."""
+    session.add_all([
+        a_take(None, "Aleksandr Petrov", 4, seat="op-a1"),
+        a_take(NADIA, "Nadia Haddad", 5),
+    ])
+    await session.commit()
+
+    rows = await scores_for_shift(session, DAY, "Morning")
+    by = {r["name"]: r for r in rows}
+    assert by["Aleksandr Petrov"]["personId"] is None
+    assert by["Aleksandr Petrov"]["seat"] == "op-a1"
+    assert by["Nadia Haddad"]["personId"] == str(NADIA)
+
+
+async def test_discarded_takes_are_counted_but_never_scored(session):
+    """A discarded take is a row, not an absence - CLAUDE.md is explicit
+    that a floor where nothing is ever discarded is worth asking about.
+    It counts as recorded and never enters the average."""
+    session.add_all([
+        a_take(NADIA, "Nadia Haddad", 5),
+        a_take(NADIA, "Nadia Haddad", None, outcome="discarded"),
+        a_take(NADIA, "Nadia Haddad", None, outcome="discarded"),
+    ])
+    await session.commit()
+
+    [row] = await scores_for_shift(session, DAY, "Morning")
+    assert row["recorded"] == 3
+    assert row["saved"] == 1 and row["discarded"] == 2
+    assert row["average"] == 5.0, "a discarded take must not drag the average"
+
+
+async def test_a_person_with_only_discards_has_no_average(session):
+    session.add(a_take(NADIA, "Nadia Haddad", None, outcome="discarded"))
+    await session.commit()
+    [row] = await scores_for_shift(session, DAY, "Morning")
+    assert row["saved"] == 0 and row["average"] is None
+
+
+async def test_scores_are_for_one_shift_only(session):
+    session.add_all([
+        a_take(NADIA, "Nadia Haddad", 5),
+        a_take(NADIA, "Nadia Haddad", 3, label="Day"),
+        a_take(NADIA, "Nadia Haddad", 3, day=DAY - timedelta(days=1)),
+    ])
+    await session.commit()
+    [row] = await scores_for_shift(session, DAY, "Morning")
+    assert row["recorded"] == 1 and row["average"] == 5.0
+
+
+async def test_the_scores_route_serves_and_is_read_only(client, session):
+    """See, never change: there is a GET and there is nothing else."""
+    session.add(a_take(NADIA, "Nadia Haddad", 4))
+    await session.commit()
+    r = await client.get("/api/floor/scores", params={"shift_date": DAY.isoformat(), "shift_label": "Morning"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["shiftLabel"] == "Morning"
+    assert body["people"][0]["name"] == "Nadia Haddad"
+    # No json= on delete; httpx refuses a body there, and a body is not
+    # the point - the point is that no write verb has a route at all.
+    for method in ("post", "put", "patch", "delete"):
+        r = await client.request(method.upper(), "/api/floor/scores")
+        assert r.status_code in (404, 405), f"{method.upper()} should not exist on a read-only view"

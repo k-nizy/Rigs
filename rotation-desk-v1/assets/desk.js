@@ -65,6 +65,11 @@ const opPerson = (o) => (o && typeof o === "object" && o.personId) || null;
 let rosterMode = "text";
 let PEOPLE = [];
 
+/* The scores for the shift Live is showing, or null when the service
+   has none to give - too old for the route, nothing recorded, or no
+   service at all. Read beside the floor and drawn beside the board. */
+let SCORES = null;
+
 /* Whether anybody has edited the plan on this screen yet. The floor's
    roster is only ever adopted over an untouched screen: arriving late
    and overwriting a name a manager is halfway through typing would be
@@ -269,6 +274,7 @@ async function loadFloor(announce) {
     floor.source = "floor";
     await adoptFloorRoster();
     await loadPeople();
+    await loadScores();
     if (announce) toast("Read " + floor.payloads.length + " rigs from the floor");
   } catch (e) {
     floor.payloads = localPayloads();
@@ -283,6 +289,31 @@ async function loadFloor(announce) {
      typed - the same guard the floor's roster is adopted under. */
   if (!planTouched) remountRosters();
   renderLive();
+}
+
+/* The scores for the shift the floor is running now. A manager sees
+   these and cannot change them - there is a GET and nothing else, by
+   decision, and the panel that draws them has nothing to press.
+
+   Not a failure when it is missing. A service too old for the route, a
+   body that is not a scores document, a network error: all of them
+   leave the panel empty and the board beside it untouched. The board is
+   what a manager needs; this is what they may also see. */
+async function loadScores() {
+  SCORES = null;
+  const running = floor.payloads.find(p => RE.coversAt(p, Date.now()));
+  if (!running) return;
+  try {
+    const q = "?shift_date=" + encodeURIComponent(running.shift.date)
+            + "&shift_label=" + encodeURIComponent(running.shift.label);
+    const r = await api("/api/floor/scores" + q);
+    if (!r.ok) return;
+    const body = await r.json();
+    if (!body || !Array.isArray(body.people)) return;
+    SCORES = body;
+  } catch (e) {
+    /* nothing to show is not an error on this screen */
+  }
 }
 
 /* Who the floor has. A 404 is not a failure: it is a service that
@@ -616,6 +647,7 @@ let boardSig  = null;
 function renderLive() {
   const s = liveState();
   const board = $("board");
+  renderScores();
 
   if (!s) {
     board.textContent = "";
@@ -998,6 +1030,53 @@ function personChoice(person, note, assign) {
   });
   row.appendChild(rename);
   return row;
+}
+
+/* Who recorded what this shift, with the scores they gave their own
+   takes. One row per person; a take filed before the rig sent a person
+   sits under the seat and name it carries, and the row says which seat,
+   so a chair is never mistaken for a person. Read-only: no control is
+   ever drawn here. */
+let scoresSig = null;
+function renderScores() {
+  const host = $("scores");
+  if (!host) return;
+  const sig = SCORES ? JSON.stringify(SCORES) : "";
+  if (sig === scoresSig) return;
+  scoresSig = sig;
+  host.textContent = "";
+
+  if (!SCORES) { host.hidden = true; return; }
+  host.hidden = false;
+  host.appendChild(el("h2", null, "Takes this shift"));
+
+  if (!SCORES.people.length) {
+    host.appendChild(el("p", "empty", "No takes recorded yet."));
+    return;
+  }
+
+  SCORES.people.forEach(p => {
+    const row = el("div", "score-row");
+
+    const who = el("div", "who");
+    who.appendChild(el("b", null, p.name || "-"));
+    /* The seat is named only when it is all there is to name. */
+    if (!p.personId) who.appendChild(el("small", null, "seat " + (p.seat || "-")));
+    row.appendChild(who);
+
+    row.appendChild(el("span", "counts",
+      p.recorded + " recorded · " + p.saved + " saved · " + p.discarded + " discarded"));
+
+    const d = p.scored || {};
+    row.appendChild(el("span", "dist",
+      "3×" + (d["3"] || 0) + "  4×" + (d["4"] || 0) + "  5×" + (d["5"] || 0)));
+
+    const avg = el("span", "avg" + (p.average == null ? " none" : ""),
+      p.average == null ? "-" : p.average.toFixed(2));
+    row.appendChild(avg);
+
+    host.appendChild(row);
+  });
 }
 
 /* ------------------------------------------------------- the sheet

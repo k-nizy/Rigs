@@ -26,7 +26,7 @@ from core.domains.schedules.repository import (
 )
 from core.infrastructure.config import Settings, get_settings
 from core.infrastructure.database import get_session
-from core.workflows.floor import floor_state, operator_efficiency
+from core.workflows.floor import floor_state, operator_efficiency, scores_for_shift
 from core.workflows.schedules import in_force as schedules_in_force
 from core.workflows.schedules import turns_for_operator
 from sqlalchemy.exc import IntegrityError
@@ -724,6 +724,28 @@ async def efficiency_for_shift(
         "shiftDate": shift_date.isoformat(),
         "shiftLabel": shift_label,
         "operators": await operator_efficiency(session, shift_date, shift_label),
+    }
+
+
+@router.get("/floor/scores", tags=["floor"],
+            dependencies=[Depends(desk_read_auth), Depends(require_manager)],
+            summary="The scores each person gave their own takes, for one shift")
+async def scores_for_shift_route(
+    shift_date: date, shift_label: str, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """See, never change. There is a GET and there is nothing else.
+
+    CLAUDE.md, "Who checks the marking": a manager may see these and may
+    not change them. Surfacing an outlier is worth having and costs a
+    projection and no new event type; letting one person overwrite
+    another's mark would need a screen, an event and a settled answer to
+    who may re-mark whose work - and the real review happens on the QC
+    platform, which is a separate system.
+    """
+    return {
+        "shiftDate": shift_date.isoformat(),
+        "shiftLabel": shift_label,
+        "people": await scores_for_shift(session, shift_date, shift_label),
     }
 
 
