@@ -2622,6 +2622,13 @@ function envelope(event, bucket, data, who) {
     // this field since the release before this one - see DEPLOY.md on why
     // that order is not optional.
     operatorName: c ? c.turn.operator.name : null,
+    /* The person, when the sheet names one. Absent otherwise - not
+       null - so a floor with no people table files byte for byte what
+       it always did. Read from `c`, the operator captured when the
+       thing began, for the same reason the seat and the name are: a
+       take that runs past a turn boundary belongs to whoever pressed
+       start, not to whoever the clock says is on now. */
+    ...(c && c.turn.operator.personId ? { personId: c.turn.operator.personId } : {}),
     bucket: bucket,
     event: event,
     data: data || {},
