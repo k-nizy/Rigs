@@ -1106,3 +1106,23 @@ pre.json .n { color: var(--accent); }
 @media print {
   .who, #view-signin, #view-denied, #view-forgot, #view-reset, .modal { display: none !important; }
 }
+
+/* ---- the scores: read-only by decision, so nothing in here is a control */
+.scores { margin-top: 1.4rem; }
+.scores h2 {
+  font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--muted); margin: 0 0 0.5rem;
+}
+.scores .empty { color: var(--muted); font-size: 0.9rem; margin: 0; }
+.score-row {
+  display: grid; grid-template-columns: minmax(10rem, 1.4fr) 1fr 1fr auto;
+  gap: 0.6rem; align-items: baseline;
+  padding: 0.45rem 0; border-top: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+.score-row .who b { display: block; }
+.score-row .who small { font-family: var(--v-mono); font-size: 0.68rem; color: var(--muted); }
+.score-row .counts, .score-row .dist { color: var(--muted); font-size: 0.82rem; }
+.score-row .dist { font-family: var(--v-mono); }
+.score-row .avg { font-family: var(--v-mono); font-size: 1.05rem; text-align: right; }
+.score-row .avg.none { color: var(--muted); }

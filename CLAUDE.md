@@ -774,8 +774,18 @@ loads, not any knowledge of what happened before it.
 Decided, and the answer is mostly that it is not this system's job.
 
 An operator scores their own take. The decision is that a manager may
-**see** those scores and may not change them. Neither half is built yet,
-and the asymmetry is the point: surfacing an outlier is worth having and
+**see** those scores and may not change them. The seeing half is built:
+`GET /api/floor/scores` gives one row per person for a shift - takes
+recorded, saved and discarded, how many scored 3, 4 and 5, and the mean
+- and Live draws it beside the board. There is a GET and nothing else,
+and the panel has nothing to press; the route's test asserts every
+write verb is absent. Grouped by *person*, never by seat: grouping by
+`operator_id` credits Nadia's takes and Priya's cover day to one row
+with the wrong average for both, which is the merge the person id was
+built to end. A take filed before the rig sent a person falls back to
+the seat and name it carries, and the row says which seat, so a chair
+is never mistaken for a person. The not-changing half is not built and
+is not going to be. The asymmetry is the point: surfacing an outlier is worth having and
 costs a projection and no new event type, whereas letting one person
 overwrite another's mark needs a screen, an event, and a settled answer
 to who may re-mark whose work.
