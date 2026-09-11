@@ -1186,6 +1186,20 @@ pre.json .n { color: var(--accent); }
 }
 .who-out:hover { color: var(--ink); }
 
+/* A phone. The desk has to work off site, and a manager checking the
+   floor from a phone gets the same page stacked, not a page that
+   scrolls sideways. The only thing that pushed it wider than a phone
+   was the identity chip: it wraps now, with the mode switch beside it
+   on its own line under the title. The sheet keeps scrolling inside
+   its own box - thirty-two columns are thirty-two columns. */
+@media (max-width: 640px) {
+  .masthead { align-items: flex-start; gap: 0.7rem; }
+  .head-right { width: 100%; flex-wrap: wrap; gap: 0.5rem 0.7rem; }
+  .who { flex-wrap: wrap; max-width: 100%; row-gap: 3px; padding-right: 8px; }
+  .who-out { white-space: nowrap; }
+  .modes button { padding: 0.45rem 0.9rem; }
+}
+
 /* --- the card ----------------------------------------------------- */
 
 .card {
