@@ -62,12 +62,23 @@ change something that affects the schedule and *don't* touch the engine,
 you have introduced drift.
 
 **My Shift is not a third answer, and must not become one.** It loads the
-engine too, but for one call — `minutesOnFloor()`, a clock helper — and
+engine too, but for two clock helpers — `minutesOnFloor()` and
+`shiftWindow()`, both of which read the window the desk wrote — and
 takes its turns from `/api/me/shift`, which hands back what the desk
 pushed and derives nothing. It draws the gaps between turns rather than
 being sent them, because each turn already carries `theyGoTo`. A screen
 that recomputed the rotation in order to show it would be exactly the
 third answer this invariant exists to prevent.
+
+It shows the whole of a person's scheduled shift, before it starts and
+after it ends, not only while it runs. The route picks the shift the way
+`in_force` picks a rig's - the one naming this person that covers now,
+else the one about to start, else the one that ended last, bounded a
+day either side - and the page counts down to the first turn or says
+the day is done. Which side of the shift *now* is on cannot be read from
+a minute-of-day (23:00 the night before a Night shift is the same minute
+as 23:00 the night after it), so the page measures from the dated
+window, through the engine, and not from the wall clock.
 
 ## The sheet is the format
 

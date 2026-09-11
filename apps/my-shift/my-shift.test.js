@@ -776,19 +776,83 @@ test("every element this page hides by attribute is covered by that rule", () =>
    draws whatever seat the push gave the person, and asks nothing else. */
 const A_COVERING_DAY = {
   personId: "person-mei",
-  shift: { label: "Morning", date: "2026-08-23", start: "08:00", end: "16:00", tz: "UTC",
+  shift: { label: "Morning", date: "2026-08-27", start: "08:00", end: "16:00", tz: HERE,
            group: "A", task: "Box transfer" },
-  turns: [{ from: "08:45", to: "09:30", minutes: 45, rigId: "RIG-01",
+  /* RIG-03 at 08:50, where her usual day (DAY above) has her on RIG-01
+     - so a stub that served the usual day instead of this one fails. */
+  turns: [{ from: "08:30", to: "09:15", minutes: 45, rigId: "RIG-03",
             operator: { id: "op-a4", name: "Mei Chen", personId: "person-mei" },
             relievedBy: null, theyGoTo: "Break" }],
 };
 
 test("the day drawn is the person's, in whatever seat the push put them",
-  mounted(AN_OPERATOR, { shift: A_COVERING_DAY }, "08:50", async app => {
+  mounted(AN_OPERATOR, { body: A_COVERING_DAY }, "08:50", async app => {
     assert.equal(app.showing(), "day");
-    /* 08:50 is inside her one turn, 08:45-09:30 on RIG-01 - the seat the
+    /* 08:50 is inside her one turn, 08:30-09:15 on RIG-03 - the seat the
        push gave her today, not the one her account was ever minted with. */
     const now = app.now();
     assert.equal(now.kind, "work");
-    assert.match(now.text, /RIG-01/, "the turn the push gave her was not drawn");
+    assert.match(now.text, /RIG-03/, "the turn the push gave her was not drawn");
+  }));
+
+/* ------------------------------------------- before it, and after it */
+
+/* The route serves a person's shift before it starts and after it ends,
+   not only while it runs, and the page has to say which side of it now
+   is. Minutes-of-day cannot: 23:00 the night before a Night shift and
+   23:00 the night after it are the same minute. Only the date tells
+   them apart, which is why the page measures from the window the desk
+   wrote - through the engine, the way it already reads the floor's
+   clock - rather than from the wall. The fixture's clock is fixed on
+   the 27th; these two shifts sit either side of it. */
+const A_NIGHT_TOMORROW = {
+  personId: "person-mei",
+  shift: { label: "Night", date: "2026-08-28", start: "00:00", end: "08:00", tz: HERE,
+           group: "A", task: "Box transfer" },
+  turns: [
+    { from: "00:00", to: "00:45", minutes: 45, rigId: "RIG-01",
+      operator: { id: "op-a1", name: "Mei Chen", personId: "person-mei" },
+      relievedBy: "Somebody", theyGoTo: "Break" },
+    { from: "01:30", to: "02:15", minutes: 45, rigId: "RIG-02",
+      operator: { id: "op-a1", name: "Mei Chen", personId: "person-mei" },
+      relievedBy: "Somebody", theyGoTo: "Think" },
+  ],
+};
+const A_DAY_YESTERDAY = {
+  personId: "person-mei",
+  shift: { label: "Day", date: "2026-08-26", start: "16:00", end: "00:00", tz: HERE,
+           group: "A", task: "Box transfer" },
+  turns: [
+    { from: "16:00", to: "16:45", minutes: 45, rigId: "RIG-01",
+      operator: { id: "op-a1", name: "Mei Chen", personId: "person-mei" },
+      relievedBy: "Somebody", theyGoTo: "Break" },
+    { from: "23:15", to: "00:00", minutes: 45, rigId: "RIG-02",
+      operator: { id: "op-a1", name: "Mei Chen", personId: "person-mei" },
+      relievedBy: "Somebody", theyGoTo: "Break" },
+  ],
+};
+
+test("the night before a Night shift it counts down to it, and nothing reads as gone",
+  mounted(AN_OPERATOR, { body: A_NIGHT_TOMORROW }, "23:00", async app => {
+    const now = app.now();
+    assert.equal(now.kind, "off");
+    assert.match(now.where, /starts at 00:00/,
+      "at 23:00 her Night is an hour away, and it was drawn as finished");
+    assert.equal(now.left, "1h 00m");
+    assert.match(now.hand, /RIG-01/);
+    assert.equal(app.rows().filter(r => r.isPast).length, 0,
+      "none of it has happened yet");
+    assert.equal(app.progress().hidden, true);
+  }));
+
+test("just after midnight a Day shift reads as finished, not as fifteen hours away",
+  mounted(AN_OPERATOR, { body: A_DAY_YESTERDAY }, "00:30", async app => {
+    const now = app.now();
+    assert.equal(now.kind, "off");
+    assert.match(now.text, /finished|done/i,
+      "at 00:30 the Day shift that ended at midnight was drawn as not started");
+    assert.equal(now.left, "", "nothing left to count down to");
+    const rows = app.rows();
+    assert.equal(rows.filter(r => r.isPast).length, rows.length,
+      "every row of it is behind her");
   }));
