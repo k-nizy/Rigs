@@ -836,6 +836,60 @@ test("the day drawn is the person's, in whatever seat the push put them",
     assert.match(now.text, /RIG-03/, "the turn the push gave her was not drawn");
   }));
 
+/* ------------------------------------------------------ the task */
+
+/* What you are doing rides with where you are. Each turn carries the
+   task of its rig, the now card says it, and it changes when you move.
+   A group keeps one task for the whole shift today, so it reads the
+   same on all three rigs; the day a push gives two rigs two tasks, the
+   screen is already right. A service too old to put it on the turn
+   gets the shift's. */
+
+test("the now card says what you are doing on the rig you are on",
+  mounted(AN_OPERATOR, {}, "11:12", async app => {
+    const now = app.now();
+    assert.equal(now.kind, "work");
+    /* The usual day carries no task per turn - it falls back to the
+       shift's, which is the same thing today. */
+    assert.equal(now.task, DAY.shift.task,
+      "the task should be on the card, not only in the line at the top");
+    assert.ok(app.rows().filter(r => r.kind === "work").every(r => r.task === DAY.shift.task),
+      "and on every turn in the table, so the next ones can be read");
+  }));
+
+const A_DAY_OF_TWO_TASKS = {
+  personId: "person-mei",
+  shift: { label: "Morning", date: "2026-08-27", start: "08:00", end: "16:00", tz: HERE,
+           group: "A", task: "Box transfer" },
+  turns: [
+    { from: "08:00", to: "08:45", minutes: 45, rigId: "RIG-01", task: "Box transfer",
+      operator: { id: "op-a1", name: "Mei Chen", personId: "person-mei" },
+      relievedBy: "Somebody", theyGoTo: "Break" },
+    { from: "09:00", to: "09:45", minutes: 45, rigId: "RIG-02", task: "Cable routing",
+      operator: { id: "op-a1", name: "Mei Chen", personId: "person-mei" },
+      relievedBy: "Somebody", theyGoTo: "Think" },
+  ],
+};
+
+test("when the task differs by rig it is the rig's that is shown, and it changes as you move",
+  mounted(AN_OPERATOR, { body: A_DAY_OF_TWO_TASKS }, "09:20", async app => {
+    assert.equal(app.now().task, "Cable routing",
+      "at 09:20 she is on RIG-02, and that rig's task is not the group's");
+    const rows = app.rows();
+    assert.equal(rows.find(r => r.rig === "RIG-02").task, "Cable routing",
+      "a row whose task is not the shift's says so");
+    assert.equal(rows.find(r => r.rig === "RIG-01").task, "Box transfer",
+      "every turn names its task, so the next ones read down the day");
+  }));
+
+test("and the next card says what the next rig is for",
+  mounted(AN_OPERATOR, { body: A_DAY_OF_TWO_TASKS }, "08:50", async app => {
+    assert.equal(app.now().kind, "Break");
+    const next = app.next();
+    assert.match(next.what, /RIG-02/);
+    assert.equal(next.task, "Cable routing");
+  }));
+
 /* ------------------------------------------- before it, and after it */
 
 /* The route serves a person's shift before it starts and after it ends,
