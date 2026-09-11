@@ -60,15 +60,38 @@ const SOON_MINS = 5;
 /* ===================================================================
  * Clock arithmetic
  *
- * Times in a payload are floor wall-clock, "HH:MM". Minutes-of-day is
- * all this screen needs - with one wrinkle: a shift may cross midnight
- * (Day runs 16:00-00:00), and "00:00" as an *end* means the end of the
- * day, not the start of it.
+ * Times in a payload are floor wall-clock, "HH:MM". Everything on this
+ * page is measured on one axis: minutes since the shift started -
+ * negative before it, past its length after it. `at`, wherever it
+ * appears below, is that number.
+ *
+ * Minutes-of-day was the first axis, and it cannot answer the question
+ * this page exists to answer. The route serves a person's shift before
+ * it starts and after it ends, not only while it runs; a shift may
+ * cross midnight (Day runs 16:00-00:00); and 23:00 the night before a
+ * Night shift is the same minute-of-day as 23:00 the night after it.
+ * Only the date tells them apart, so `at` is measured from the window
+ * the desk wrote into the payload, through the engine, the same way
+ * the floor's clock is read.
  * =================================================================== */
 
 const toMin = hhmm => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
-const endMin = hhmm => (toMin(hhmm) === 0 ? 1440 : toMin(hhmm));
 const pad2 = n => (n < 10 ? "0" : "") + n;
+
+/* Where a floor "HH:MM" sits on the axis. `offset` for the start of a
+ * turn, `offsetEnd` for the end of one, because "00:00" as an *end*
+ * means the end of the day, not the start of it - the Day shift's last
+ * turn ends at 00:00, and that is 480 minutes in, not zero. */
+function shiftStart() {
+  return day.shift && day.shift.start ? toMin(day.shift.start) : 0;
+}
+function offset(hhmm) {
+  return (toMin(hhmm) - shiftStart() + 1440) % 1440;
+}
+function offsetEnd(hhmm) {
+  const o = toMin(hhmm) - shiftStart();
+  return o <= 0 ? o + 1440 : o;
+}
 
 /* The minute it is *on the floor*, not on this device.
  *
@@ -88,16 +111,23 @@ function nowMin() {
   return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60;
 }
 
-/* Whether `at` falls inside [from, to), wrapping past midnight. */
-function covers(from, to, at) {
-  const f = toMin(from), t = endMin(to);
-  return t > f ? (at >= f && at < t) : (at >= f || at < t);
+/* Minutes since the shift started, from the window the desk wrote.
+ *
+ * The engine's shiftWindow() turns the payload's date, start and zone
+ * into an instant - the same reading the rig makes before it trusts a
+ * sheet. Without a dated window (no shift loaded, or a payload too old
+ * to carry a date) it falls back to the floor's minute-of-day past the
+ * shift's start, wrapping: the old axis with the old ambiguity, reached
+ * only by data no desk has pushed. */
+function nowOnShift() {
+  const w = RE && RE.shiftWindow && day.shift ? RE.shiftWindow({ shift: day.shift }) : null;
+  if (w) return (Date.now() - w.start) / 60000;
+  return (nowMin() - shiftStart() + 1440) % 1440;
 }
 
-/* Minutes from `at` until `to`, across midnight if need be. */
-function minsUntil(to, at) {
-  const t = endMin(to);
-  return (t > at ? t : t + 1440) - at;
+/* Whether `at` falls inside a row. */
+function covers(row, at) {
+  return at >= row.start && at < row.end;
 }
 
 /* "1h 05m" / "45m", for a span of whole minutes. */
@@ -124,6 +154,7 @@ function buildRows(turns) {
   const rows = [];
   turns.forEach((t, i) => {
     rows.push({ kind: "work", from: t.from, to: t.to, rigId: t.rigId,
+                start: offset(t.from), end: offsetEnd(t.to),
                 minutes: t.minutes, relievedBy: t.relievedBy,
                 goesTo: t.theyGoTo });
 
@@ -132,12 +163,13 @@ function buildRows(turns) {
     /* Only when there is a gap. Back-to-back turns on two rigs are a
        walk across the floor, not a break, and inventing a zero-minute
        Break row would put a rest in the day that nobody was given. */
-    const gapMins = toMin(next.from) - endMin(t.to);
+    const gapMins = offset(next.from) - offsetEnd(t.to);
     if (gapMins <= 0) return;
 
     const kind = (t.theyGoTo === "Break" || t.theyGoTo === "Think")
       ? t.theyGoTo : "Break";
     rows.push({ kind: kind, from: t.to, to: next.from, minutes: gapMins,
+                start: offsetEnd(t.to), end: offset(next.from),
                 backTo: next.rigId });
   });
   return rows;
@@ -156,12 +188,12 @@ function rowHeight(mins) {
 /* Where we are in the day: the row happening now, the one after it,
  * and how much work is behind us. */
 function whereWeAre(at) {
-  const i = day.rows.findIndex(r => covers(r.from, r.to, at));
+  const i = day.rows.findIndex(r => covers(r, at));
   const worked = day.rows
     .filter(r => r.kind === "work")
     .reduce((sum, r) => {
-      if (endMin(r.to) <= at) return sum + r.minutes;
-      if (covers(r.from, r.to, at)) return sum + (r.minutes - minsUntil(r.to, at));
+      if (r.end <= at) return sum + r.minutes;
+      if (covers(r, at)) return sum + (at - r.start);
       return sum;
     }, 0);
   const turns = day.rows.filter(r => r.kind === "work");
@@ -224,7 +256,7 @@ function renderNow(at) {
   if (!here.row) return renderOffShift(box, at);
 
   const row = here.row;
-  const left = minsUntil(row.to, at);
+  const left = row.end - at;
   const soon = row.kind === "work" && left <= SOON_MINS;
 
   box.setAttribute("data-kind", soon ? "soon" : row.kind);
@@ -285,7 +317,7 @@ function renderOffShift(box, at) {
     return;
   }
 
-  if (at < toMin(first.from)) {
+  if (at < first.start) {
     box.appendChild(el("p", "now-k", "Not started"));
     const w = el("p", "now-where");
     w.appendChild(txt("Your shift starts at "));
@@ -293,7 +325,7 @@ function renderOffShift(box, at) {
     box.appendChild(w);
 
     const count = el("div", "now-count");
-    count.appendChild(el("b", "now-left", hm(toMin(first.from) - at)));
+    count.appendChild(el("b", "now-left", hm(first.start - at)));
     count.appendChild(el("div", "now-unit", "from now"));
     box.appendChild(count);
 
@@ -343,7 +375,7 @@ function renderNext(at) {
   body.appendChild(sub);
   box.appendChild(body);
 
-  box.appendChild(el("span", "next-in", "in " + hm(minsUntil(here.row.to, at))));
+  box.appendChild(el("span", "next-in", "in " + hm(here.row.end - at)));
 }
 
 function renderProgress(at) {
@@ -382,8 +414,8 @@ function renderTimeline(at) {
   let pastCount = 0;
 
   day.rows.forEach(row => {
-    const isNow = covers(row.from, row.to, at);
-    const isPast = !isNow && endMin(row.to) <= at;
+    const isNow = covers(row, at);
+    const isPast = !isNow && row.end <= at;
     if (isPast) pastCount += 1;
 
     const li = el("li", "tl");
@@ -479,7 +511,7 @@ function renderPerch(at) {
   }
   perch.hidden = false;
   const row = here.row;
-  const left = minsUntil(row.to, at);
+  const left = row.end - at;
   perch.setAttribute("data-kind",
     row.kind === "work" && left <= SOON_MINS ? "soon" : row.kind);
   perch.style.setProperty("--state",
@@ -508,7 +540,7 @@ function renderFreshness() {
 let drawn = "";
 
 function renderDay() {
-  const at = nowMin();
+  const at = nowOnShift();
 
   /* Every second: the clock and the things that count down. All of them
      are above the timeline and none changes the page's height. */
@@ -899,7 +931,7 @@ on("past-toggle", "click", () => {
 /* The perch follows the scroll, not the one-second tick - a sticky bar
    that appears a second after you scroll past the thing it replaces
    reads as a glitch. */
-window.addEventListener("scroll", () => renderPerch(nowMin()), { passive: true });
+window.addEventListener("scroll", () => renderPerch(nowOnShift()), { passive: true });
 
 /* Everything the render layer assumes is on the page.
  *
