@@ -613,12 +613,25 @@ async function loadShift() {
     } else {
       $("empty").hidden = day.rows.length > 0;
       if (!day.rows.length) {
-        /* Nothing pushed that covers now. The rig says Standby for the
-           same reason and it is the same honest answer: this is a floor
-           waiting on a schedule, not an operator with no work. */
-        $("empty").textContent =
-          "Nothing is scheduled for you right now. If a shift should be "
-          + "running, the floor has not been pushed a schedule for it yet.";
+        /* Nothing that names this person, and the line says why: the
+           route reports whether anything was pushed and whether any of
+           it names people, and the case that applies is read back. No
+           push is the rig's Standby, the same honest answer - a floor
+           waiting on a schedule, not an operator with no work. A push
+           that names nobody is a roster of plain names (CLAUDE.md), and
+           one that names people and not this person is a manager's
+           decision or an oversight; either way a manager is who fixes
+           it. A service too old to say has no `floor` and gets the
+           first line. */
+        const floor = body.floor || {};
+        $("empty").textContent = "Nothing is scheduled for you right now. "
+          + (!floor.pushed
+              ? "If a shift should be running, the floor has not been pushed "
+                + "a schedule for it yet."
+              : !floor.namesPeople
+                ? "The floor's schedule names no people yet, so it cannot say "
+                  + "which day is yours - ask a manager."
+                : "Today's schedule does not name you - ask a manager if it should.");
       }
     }
   } catch (ignored) {

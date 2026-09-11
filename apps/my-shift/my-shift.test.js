@@ -351,6 +351,33 @@ test("a shift the service cannot give says so plainly",
     assert.match(app.$("empty").textContent, /could not reach/i);
   }));
 
+/* An empty day says why. The route reports two facts about the floor -
+   whether anything was pushed, and whether any of it names people - and
+   the line reads back the one that applies. The test above, with no
+   `floor` at all, is a service that predates the field and gets the
+   original line. */
+
+test("when the push names no people it says so, and who to ask",
+  mounted(AN_OPERATOR, { body: { personId: "person-mei", shift: null, turns: [],
+                                 floor: { pushed: true, namesPeople: false } } },
+    "11:12", async app => {
+      const text = app.$("empty").textContent;
+      assert.match(text, /names no people/i,
+        "a push of plain names was reported as no push at all");
+      assert.match(text, /manager/i, "it should say who can fix it");
+      assert.doesNotMatch(text, /not been pushed/i);
+    }));
+
+test("when the push names people but not her it says that, not that nothing was pushed",
+  mounted(AN_OPERATOR, { body: { personId: "person-mei", shift: null, turns: [],
+                                 floor: { pushed: true, namesPeople: true } } },
+    "11:12", async app => {
+      const text = app.$("empty").textContent;
+      assert.match(text, /does not name you/i,
+        "a schedule that left her off was reported as no push at all");
+      assert.doesNotMatch(text, /not been pushed|names no people/i);
+    }));
+
 /* ------------------------------------------------- signing in and out */
 
 test("signing in opens the day without a reload",

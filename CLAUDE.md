@@ -532,10 +532,15 @@ about the person. The push that produces one is a roster of plain names
 - a floor that has not yet created its people, or a desk that read a
 plain-name roster back from the floor and pushed it untouched, since
 the picker resolves a name to a person only when that name is changed.
-It ends with the first push that names people. The honest version of
-that screen would say *why* it is empty - "the floor's schedule names no
-people yet" - which is a small flag on `/me/shift` and a line on the
-screen, and is the next thing to close.
+It ends with the first push that names people. And the screen says
+*why* it is empty, because three floors produce an empty day and they
+are not the same to the person looking at it. `/me/shift` reports two
+facts beside the day - whether anything was pushed, and whether any of
+it names people - and My Shift reads back the one that applies: nothing
+pushed (the rig says Standby for the same reason), a schedule that names
+no people yet, or one that names people and not this person. All three
+end with a manager, and the line says so. A service too old to report
+them gets the first line, which is the one it always had.
 
 The old rule that an operator account *must* name a seat is retired
 with it. It was written when a seat was the best stand-in for a person

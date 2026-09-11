@@ -160,6 +160,15 @@ async def turns_for_operator(
     operator's day is not one rig's business - which is exactly why a
     rig cannot answer this and why `theyGoTo` had to travel in the
     payload in the first place.
+
+    And when the day is empty it says why, because three floors produce
+    one and a person needs to know which they are looking at. `floor`
+    carries two facts - whether anything was pushed, and whether any of
+    it names people - and the screen reads back the one that applies:
+    nothing pushed (the rig says Standby for the same reason), a push
+    that names nobody (a roster of plain names - stated in CLAUDE.md), or
+    a push that names people and not this person. The same two facts
+    ride on a day that is found, so the shape does not change by case.
     """
     now = now or datetime.now(timezone.utc)
     today = now.astimezone(timezone.utc).date()
@@ -179,6 +188,15 @@ async def turns_for_operator(
     for row in rows.scalars().all():
         latest.setdefault((row.rig_id, row.shift_date, row.shift_label), row)
 
+    floor = {
+        "pushed": bool(latest),
+        "namesPeople": any(
+            (turn.get("operator") or {}).get("personId")
+            for row in latest.values()
+            for turn in (row.payload or {}).get("turns") or []
+        ),
+    }
+
     # Only the sheets that name this person are candidates at all.
     named: list[tuple[Schedule, list[dict]]] = []
     for row in latest.values():
@@ -187,7 +205,7 @@ async def turns_for_operator(
         if theirs:
             named.append((row, theirs))
     if not named:
-        return {"personId": person_id, "shift": None, "turns": []}
+        return {"personId": person_id, "shift": None, "turns": [], "floor": floor}
 
     covering = [row for row, _ in named
                 if rules.shift_covers(row.payload or {}, row.shift_date, now, timezone.utc)]
@@ -210,4 +228,4 @@ async def turns_for_operator(
             }
 
     turns.sort(key=lambda t: (t.get("from") or "", t.get("rigId") or ""))
-    return {"personId": person_id, "shift": shift, "turns": turns}
+    return {"personId": person_id, "shift": shift, "turns": turns, "floor": floor}
