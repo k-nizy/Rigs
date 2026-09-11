@@ -219,7 +219,12 @@ async def turns_for_operator(
         if (row.shift_date, row.shift_label) != key:
             continue
         payload = row.payload or {}
-        turns.extend({**turn, "rigId": payload.get("rigId")} for turn in theirs)
+        # The rig, and what the rig is for. Both are facts about this
+        # payload and both ride on every turn taken from it, so a screen
+        # says the task of the rig you are on and changes it when you
+        # move - the day a push gives two rigs two tasks, it is right.
+        turns.extend({**turn, "rigId": payload.get("rigId"),
+                      "task": payload.get("task")} for turn in theirs)
         if shift is None:
             shift = {
                 **(payload.get("shift") or {}),
