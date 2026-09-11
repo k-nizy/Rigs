@@ -35,13 +35,14 @@ SHIFTS = {
 }
 
 
-def payload(label, tz="UTC", rig=RIG, day=DAY, turns=True, person=None):
+def payload(label, tz="UTC", rig=RIG, day=DAY, turns=True, person=None,
+            task="Box transfer"):
     start, end = SHIFTS[label]
     op = {"id": "op-a1", "name": "Someone"}
     if person is not None:
         op["personId"] = person
     return {
-        "rigId": rig, "group": "A", "task": "Box transfer",
+        "rigId": rig, "group": "A", "task": task,
         "shift": {"label": label, "date": day.isoformat(),
                   "start": start, "end": end, "tz": tz},
         "blockMinutes": 15, "rotation": "hold",
@@ -51,12 +52,13 @@ def payload(label, tz="UTC", rig=RIG, day=DAY, turns=True, person=None):
     }
 
 
-async def push(session, label, tz="UTC", rig=RIG, day=DAY, at=None, person=None):
+async def push(session, label, tz="UTC", rig=RIG, day=DAY, at=None, person=None,
+               task="Box transfer"):
     s = Schedule(
         push_id=uuid.uuid4(),
         pushed_at=at or datetime(2026, 8, 25, 7, 0, tzinfo=UTC),
         rig_id=rig, shift_date=day, shift_label=label,
-        payload=payload(label, tz=tz, rig=rig, day=day, person=person),
+        payload=payload(label, tz=tz, rig=rig, day=day, person=person, task=task),
     )
     session.add(s)
     await session.commit()
@@ -509,6 +511,20 @@ async def test_an_empty_day_says_the_push_does_not_name_her(client, session):
     assert got["floor"] == {"pushed": True, "namesPeople": True}, (
         "the push names people and not her - not the same as naming nobody"
     )
+
+
+async def test_every_turn_carries_the_task_of_its_rig(client, session):
+    """What you are doing rides with where you are. The task is a fact
+    about the rig's payload, so it is read from there, turn by turn - a
+    group keeps one task for the whole shift today, and the day a push
+    gives two rigs two tasks the screen is already right."""
+    await push(session, "Morning", person=MEI, rig="RIG-01", task="Box transfer")
+    await push(session, "Morning", person=MEI, rig="RIG-02", task="Cable routing")
+
+    got = await turns_for_operator(session, MEI, datetime(2026, 8, 25, 10, 0, tzinfo=UTC))
+    assert {t["rigId"]: t.get("task") for t in got["turns"]} == {
+        "RIG-01": "Box transfer", "RIG-02": "Cable routing",
+    }, "each turn should carry the task of the rig it is on"
 
 
 async def test_a_day_that_is_found_carries_the_same_two_facts(client, session):

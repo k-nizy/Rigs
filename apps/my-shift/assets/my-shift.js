@@ -148,13 +148,17 @@ function mmss(minsLeft) {
  * work out whose break is whose.
  * =================================================================== */
 
-function buildRows(turns) {
+function buildRows(turns, shift) {
   const rows = [];
   turns.forEach((t, i) => {
+    /* The task of the rig, from the turn; a service too old to put it
+       there gets the shift's, which is the same thing on a floor where
+       a group keeps one task all shift. */
     rows.push({ kind: "work", from: t.from, to: t.to, rigId: t.rigId,
                 start: offset(t.from), end: offsetEnd(t.to),
                 minutes: t.minutes, relievedBy: t.relievedBy,
-                goesTo: t.theyGoTo });
+                goesTo: t.theyGoTo,
+                task: t.task || (shift && shift.task) || null });
 
     const next = turns[i + 1];
     if (!next) return;
@@ -273,6 +277,7 @@ function renderNow(at) {
     where.appendChild(txt(row.kind === "Break" ? "On your break" : "Thinking time"));
   }
   box.appendChild(where);
+  if (row.kind === "work" && row.task) box.appendChild(el("p", "now-task", row.task));
   box.appendChild(el("p", "now-when",
     row.from + " – " + row.to + " · " + hm(row.minutes)));
 
@@ -369,6 +374,8 @@ function renderNext(at) {
     what.appendChild(txt(next.kind));
   }
   body.appendChild(what);
+
+  if (next.kind === "work" && next.task) body.appendChild(el("p", "next-task", next.task));
 
   const sub = el("p", "next-sub");
   sub.appendChild(txt(next.from + " – " + next.to + " · " + hm(next.minutes)));
@@ -491,6 +498,11 @@ function renderTimeline(at) {
       what.appendChild(txt(row.kind));
     }
     what.appendChild(el("span", "tl-mins", hm(row.minutes)));
+    /* The task, on every turn: reading down the table is how an
+       operator sees what the next turns are for, not only this one. */
+    if (row.kind === "work" && row.task) {
+      what.appendChild(el("span", "tl-task", row.task));
+    }
     tr.appendChild(what);
 
     const sub = el("td", "tl-sub");
@@ -633,7 +645,7 @@ async function loadShift() {
     const before = day.signature;
     day.shift = body.shift || null;
     day.turns = body.turns || [];
-    day.rows = buildRows(day.turns);
+    day.rows = buildRows(day.turns, day.shift);
     day.signature = JSON.stringify(day.turns.map(t => [t.from, t.to, t.rigId]));
     day.checkedAt = clockString();
     day.stale = false;
