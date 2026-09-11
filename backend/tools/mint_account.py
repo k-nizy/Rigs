@@ -8,6 +8,7 @@ schedules to twelve rigs is a door where a wall belongs.
     python -m tools.mint_account list
     python -m tools.mint_account manager  --email r.osei@verlet.co --name "Ruth Osei"
     python -m tools.mint_account operator --email m.chen@verlet.co --name "Mei Chen" --person <people.id>
+    python -m tools.mint_account link     --email m.chen@verlet.co --person <people.id>   # an account that predates people
     python -m tools.mint_account passwd   --email r.osei@verlet.co
     python -m tools.mint_account disable  --email r.osei@verlet.co
 
@@ -131,6 +132,32 @@ async def _act(args, session) -> int:
             print(f"password: {password}")
         return 0
 
+    if args.cmd == "link":
+        # The upgrade path for a floor that had operator accounts before an
+        # account could name a person. The account keeps its email and its
+        # password and gains its person. Never re-minted - that is a new
+        # password - and never invented from the account's name: a person
+        # is created deliberately, on the desk, and a picker-made "Mei
+        # Chen" would otherwise become a duplicate.
+        if not existing:
+            raise SystemExit(f"no account for {args.email}")
+        if existing.role != OPERATOR:
+            raise SystemExit(f"{args.email} is a manager, and a manager has no person to be")
+        try:
+            person_id = uuid.UUID(str(args.person))
+        except (ValueError, TypeError):
+            raise SystemExit(f"--person must be a people id, got {args.person!r}")
+        person = await PersonRepository(session).get(person_id)
+        if person is None:
+            raise SystemExit(f"nobody has the id {person_id} - create the person on the desk first")
+        taken = await accounts.by_person_id(person_id)
+        if taken and taken.id != existing.id:
+            raise SystemExit(f"{person.name} already signs in as {taken.email}")
+        existing.person_id = person_id
+        await session.commit()
+        print(f"linked {existing.email} to {person.name}")
+        return 0
+
     # manager | operator
     if existing:
         raise SystemExit(f"{args.email} already exists - use passwd or disable")
@@ -201,6 +228,10 @@ async def run(argv: list[str]) -> int:
     creds(sub.add_parser("passwd", help="set a new password and end open sessions"))
     sub.add_parser("disable", help="end access, keep the name").add_argument(
         "--email", required=True)
+    link = sub.add_parser("link", help="give an existing operator account its person - "
+                                       "the upgrade path, and it keeps the password")
+    link.add_argument("--email", required=True)
+    link.add_argument("--person", required=True, help="the id from `people`")
 
     args = p.parse_args(argv)
     if args.cmd in ("manager", "operator", "passwd") and not args.password \
