@@ -378,8 +378,9 @@ is sitting in it. Assign Ben to Sara's seat for a day and the id is still
 `op-a4`. It is a desk number: file work under it and two people's takes
 land in one folder, and the natural report - group by `operator_id` -
 credits the wrong person. That is why every event now carries the
-operator's *name* beside the seat, which is what makes a cover day
-readable, and it is why the id has to change next.
+operator's *name* beside the seat, which is what keeps a day readable
+when the people in a seat change - and they change any day - and it is
+why the id has to change next.
 
 **And nobody sits in one seat for long.** The manager assigns whoever
 the schedule needs, group by group, as often as they like. The freedom is
@@ -456,22 +457,39 @@ recorded and reported on. Give an address and they are sent an invite -
 which is the password reset flow doing the same job for somebody who has
 no password yet, not a second mechanism.
 
-**An account names its person, and the seat is never on the account.**
-Decided, after the first place the gap cost something. An operator
-account used to hold `op-a2` - a chair - set once when the account was
-minted, and `/me/shift` and `/me/efficiency` answered "how did I do" by
-asking what that *chair* did. On a cover day that showed one person
-another's numbers as their own, on their own screen: a leak, not a
-reporting error, and the same seat-is-not-a-person failure this whole
-section is about, arriving through the door marked authentication.
+**The manager's push decides who is where. Nothing else does.** This is
+the rule the rest of this section hangs from, and it is simpler than
+the first drafts made it sound. People are assigned freely, every day
+and every shift - Mei on Monday morning, Mei on Tuesday night, a
+different seat each time - and the people working a shift can change
+at any time. None of that is a special case. There is one fact, the
+push; a person's screen follows *that person* wherever the push puts
+them; and every take is filed to the person who did it.
 
-So an account carries `person_id` and nothing about where that person
-sits. Where they sit is the roster the manager pushed that morning - the
-one fact - and the rig, the desk and My Shift all read it. "How did I
-do" asks what *this person* recorded, so a cover day just works: the
-push names Priya in seat 2, the rig files Priya's takes under Priya,
-and Mei's screen shows only Mei's. There is no arithmetic to get wrong
-because nothing is derived; there is a person, and there is a push.
+**So an account names its person, and the seat is never on the
+account.** An operator account used to hold `op-a2` - a chair - set
+once when the account was minted, and `/me/shift` answered "how did I
+do" by asking what that *chair* did. The chair a person works changes
+by the manager's decision every day, so that stored chair was stale by
+the next morning, and the morning somebody else was put in it, the
+first person's own screen showed the second person's work as theirs. A
+leak, not a reporting error, and the seat-is-not-a-person failure this
+whole section is about, arriving through the door marked
+authentication.
+
+Now the account carries `person_id` and nothing about where that
+person sits. Where they sit is today's push - the one fact - and the
+rig, the desk and My Shift all read it. "How did I do" asks what *this
+person* recorded, whatever seat or shift the push gave them. There is
+no arithmetic to get wrong because nothing is derived: there is a
+person, and there is a push. Observed live: push a person into seat 2
+and their screen shows seat 2 across three rigs; push again with them
+in seat 4 and it shows seat 4; the account never changed.
+
+**And the operator sees where they are working, on purpose.** Every
+turn on My Shift carries its rig, because the rig is what "where am I"
+means to somebody standing on the floor. The seat label rides in the
+same data for the sheet's sake and is not what a person needs to read.
 
 Built: `accounts.person_id`, migration `6492d4e8117c`, `mint_account
 operator --person <id>`, and `/me/shift`, `/me/scores` and the session
@@ -758,9 +776,9 @@ twenty minutes are already filed under the person who did not work them
 way. The push lands on every rig within thirty seconds; everything
 before it is the part nobody can fix.
 
-So a cover is a roster change like any other. Sara is off, Ben is
-covering: the manager assigns Ben at the desk and pushes, and the rig
-files Ben because the sheet says Ben. The rig is never asked who is
+The people working a shift can change at any time, and that is not a
+special case: the manager assigns whoever is working at the desk and
+pushes, and the rig files whoever the sheet names. The rig is never asked who is
 standing at it - see "Who signs in, and who does not" - and the roster
 read-back above is what stops that correction being reverted by the next
 desk to push.
@@ -848,8 +866,8 @@ recorded, saved and discarded, how many scored 3, 4 and 5, and the mean
 - and Live draws it beside the board. There is a GET and nothing else,
 and the panel has nothing to press; the route's test asserts every
 write verb is absent. Grouped by *person*, never by seat: grouping by
-`operator_id` credits Nadia's takes and Priya's cover day to one row
-with the wrong average for both, which is the merge the person id was
+`operator_id` credits two people who sat in one seat on different days
+to one row with the wrong average for both, which is the merge the person id was
 built to end. A take filed before the rig sent a person falls back to
 the seat and name it carries, and the row says which seat, so a chair
 is never mistaken for a person. The not-changing half is not built and
