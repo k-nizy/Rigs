@@ -21,10 +21,11 @@
  * a shape, because a floor has colour-blind operators on it and a phone
  * in sunlight washes out.
  *
- * **Time is drawn to scale.** A fifteen-minute break is a third of the
- * height of a forty-five-minute turn. Rows of equal height for unequal
- * spans misdraw the shape of the day, which is most of what a timeline
- * is for.
+ * **Time is drawn to scale, once.** The strip across the top is the
+ * whole shift, every turn and gap a segment as wide as it is long, with
+ * now marked on it. The table under it is the same day in rows of equal
+ * height, because a table is for reading and the strip is for the
+ * shape - which is most of what a timeline is for.
  *
  * Everything comes from packages/brand/brand.css. This screen adds no
  * colour of its own; dark comes free with the tokens, and is checked
@@ -93,7 +94,7 @@ body {
 }
 
 .wrap {
-  max-width: 560px;
+  max-width: 760px;
   margin: 0 auto;
   padding: var(--s5) var(--s4) var(--s7);
   padding-bottom: max(var(--s7), env(safe-area-inset-bottom));
@@ -142,15 +143,6 @@ body {
   display: flex; align-items: flex-end; justify-content: space-between;
   gap: var(--s3); flex-wrap: wrap;
   padding-bottom: var(--s3); border-bottom: 2px solid var(--ink);
-}
-.eyebrow {
-  font-size: 0.6rem; font-weight: 700; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--ink-2);
-  display: flex; align-items: center; gap: 7px; margin-bottom: var(--s1);
-}
-.v-mark {
-  width: 8px; height: 8px; background: var(--accent);
-  transform: rotate(45deg); display: inline-block; flex: none;
 }
 .masthead h1 {
   font-family: var(--v-display); font-weight: 400;
@@ -263,203 +255,203 @@ body {
   border-radius: var(--radius-sm); padding: 8px 11px;
 }
 
-/* ------------------------------------------------------- the hero */
-
-.now {
-  position: relative; overflow: hidden;
-  border-radius: var(--radius);
-  border: 1px solid var(--line-2);
-  background: var(--panel);
-  padding: var(--s5) var(--s5) var(--s4);
-  --state: var(--ink-2);
+/* A small mono heading, used by the strip and the table alike. */
+.strip-k, .progress {
+  font-family: var(--mono); font-size: 0.62rem; font-weight: 700;
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted);
 }
-/* The state, as a band down the side as well as a tint - so it survives
-   a washed-out screen and a colour-blind reader. */
-.now::before {
-  content: ""; position: absolute; inset: 0 auto 0 0; width: 6px;
+
+/* ------------------------------------------------------- the strip */
+
+.strip {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: var(--s4) var(--s4) var(--s3);
+}
+.strip-k { margin-bottom: 28px; }
+.trackwrap { position: relative; }
+.track {
+  display: flex; height: 52px; border-radius: var(--radius-sm);
+  overflow: hidden; background: var(--sunk);
+}
+/* A segment's width is its length in minutes, set by the script. */
+.seg {
+  flex: var(--w) 1 0; min-width: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-weight: 700; font-size: 0.72rem;
+  color: #fff; white-space: nowrap; overflow: hidden; padding: 0 2px;
+  border-right: 2px solid var(--panel);
+}
+.seg:last-child { border-right: 0; }
+.seg[data-kind="work"]  { background: var(--work); }
+.seg[data-kind="Break"] { background: var(--break); }
+.seg[data-kind="Think"] { background: var(--think); }
+.seg[data-kind="off"]   { background: var(--sunk); }
+.seg.gone { opacity: 0.35; }
+.seg.on { outline: 3px solid var(--ink); outline-offset: -3px; }
+
+.nowmark {
+  position: absolute; top: -8px; bottom: -8px; width: 3px;
+  background: var(--ink); transform: translateX(-50%); z-index: 2;
+}
+.nowmark b {
+  position: absolute; top: -23px; left: 50%; transform: translateX(-50%);
+  background: var(--ink); color: var(--ground);
+  font-family: var(--mono); font-size: 0.68rem; font-weight: 700;
+  padding: 1px 7px; border-radius: 5px; white-space: nowrap;
+}
+.ticks {
+  position: relative; height: 18px; margin-top: 6px;
+  font-family: var(--mono); font-size: 0.64rem; color: var(--muted);
+}
+.ticks span { position: absolute; transform: translateX(-50%); }
+.ticks span:first-child { transform: none; }
+.ticks span:last-child { transform: translateX(-100%); }
+.legend {
+  display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4);
+  margin-top: var(--s3); font-size: 0.74rem; color: var(--ink-2);
+}
+.legend span::before {
+  content: ""; display: inline-block; width: 11px; height: 11px;
+  border-radius: 3px; margin-right: 6px; vertical-align: -1px;
   background: var(--state);
+}
+.lg-work  { --state: var(--work); }
+.lg-break { --state: var(--break); }
+.lg-think { --state: var(--think); }
+
+/* ---------------------------------------------------- now and next */
+
+.cards { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s3); }
+
+.now, .next {
+  background: var(--panel); border: 1px solid var(--line);
+  border-top: 8px solid var(--state); border-radius: var(--radius);
+  padding: var(--s4); position: relative; min-width: 0;
 }
 .now[data-kind="work"]  { --state: var(--work); }
 .now[data-kind="Break"] { --state: var(--break); }
 .now[data-kind="Think"] { --state: var(--think); }
 .now[data-kind="soon"]  { --state: var(--break); }
 .now[data-kind="off"]   { --state: var(--muted); }
-.now[data-state] { background: color-mix(in srgb, var(--state) 7%, var(--panel)); }
-.now[data-state] { border-color: color-mix(in srgb, var(--state) 40%, var(--line-2)); }
-
-.now-k {
-  font-family: var(--mono); font-size: 0.62rem; font-weight: 700;
-  letter-spacing: 0.14em; text-transform: uppercase;
-  color: var(--state); margin-bottom: var(--s2);
-  display: flex; align-items: center; gap: var(--s2);
-}
-/* A filled dot, so the label carries the state without relying on hue. */
-.now-k::before {
-  content: ""; width: 8px; height: 8px; border-radius: 50%;
-  background: var(--state); flex: none;
-}
-.now[data-kind="soon"] .now-k::before { animation: beat 1.4s ease-in-out infinite; }
-@keyframes beat { 50% { opacity: 0.25; } }
-
-.now-where {
-  font-size: clamp(1.35rem, 6.5vw, 1.7rem); font-weight: 700;
-  letter-spacing: -0.015em; line-height: 1.15; margin-bottom: var(--s1);
-  text-wrap: balance;
-}
-.now-where .mono { font-family: var(--mono); letter-spacing: -0.01em; }
-.now-when { font-size: 0.85rem; color: var(--ink-2); }
-
-/* The number. Everything above is context for this. */
-.now-count {
-  display: flex; align-items: baseline; gap: var(--s3);
-  margin: var(--s4) 0 var(--s3);
-}
-.now-left {
-  font-family: var(--mono);
-  font-size: clamp(3rem, 17vw, 4.2rem);
-  font-weight: 700; line-height: 0.9; letter-spacing: -0.03em;
-  color: var(--state);
-}
-.now-unit {
-  font-size: 0.78rem; color: var(--ink-2); line-height: 1.25;
-  text-transform: none; letter-spacing: 0;
-}
-
-/* How far through this turn - the shape of the countdown, not a second
-   copy of the number. */
-.bar {
-  height: 6px; border-radius: 999px; overflow: hidden;
-  background: color-mix(in srgb, var(--state) 16%, transparent);
-}
-.bar i {
-  display: block; height: 100%; border-radius: 999px;
-  background: var(--state); transition: width 1s linear;
-}
-.now-hand {
-  font-size: 0.82rem; color: var(--ink-2); margin-top: var(--s3);
-}
-.now-hand b { color: var(--ink); font-weight: 600; }
-
-/* ------------------------------------------------------- what next */
-
-.next {
-  display: flex; align-items: center; gap: var(--s4);
-  border: 1px solid var(--line); border-left: 4px solid var(--state);
-  border-radius: var(--radius-sm); background: var(--panel);
-  padding: var(--s3) var(--s4);
-  --state: var(--ink-2);
-}
 .next[data-kind="work"]  { --state: var(--work); }
 .next[data-kind="Break"] { --state: var(--break); }
 .next[data-kind="Think"] { --state: var(--think); }
-.next-k {
-  font-family: var(--mono); font-size: 0.58rem; font-weight: 700;
-  letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);
-  flex: none; width: 34px;
+
+.now-k, .next-k {
+  display: block; font-family: var(--mono); font-size: 0.62rem;
+  font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase;
+  color: var(--muted);
 }
-.next-body { flex: 1; min-width: 0; }
-.next-what { font-size: 0.98rem; font-weight: 600; }
-.next-what .mono { font-family: var(--mono); }
-.next-sub { font-size: 0.76rem; color: var(--ink-2); margin-top: 1px; }
+/* A filled dot, so the label carries the state without relying on hue. */
+.now-k::before {
+  content: ""; display: inline-block; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--state); margin-right: 7px;
+  vertical-align: 1px;
+}
+.now[data-kind="soon"] .now-k::before { animation: beat 1.4s ease-in-out infinite; }
+@keyframes beat { 50% { transform: scale(1.5); } }
+
+/* The rig, in the biggest type on the page. */
+.now-where {
+  font-size: clamp(2rem, 9vw, 2.6rem); font-weight: 700; line-height: 1.05;
+  letter-spacing: -0.02em; margin-top: var(--s1);
+}
+.now-where .mono { font-family: var(--mono); letter-spacing: -0.01em; }
+.now-when { font-size: 0.86rem; color: var(--ink-2); margin-top: 2px; }
+
+.now-count { display: flex; align-items: baseline; gap: var(--s2); margin-top: var(--s3); }
+.now-left {
+  font-family: var(--mono); font-size: 2rem; font-weight: 700;
+  line-height: 1; color: var(--state);
+}
+.now[data-kind="off"] .now-left { color: var(--ink); }
+.now-unit { font-size: 0.86rem; color: var(--ink-2); }
+
+/* How far through this turn - the shape of the countdown. */
+.bar { height: 6px; border-radius: 3px; background: var(--sunk); overflow: hidden; margin-top: var(--s2); }
+.bar i { display: block; height: 100%; background: var(--state); border-radius: 3px; }
+
+.now-hand { font-size: 0.86rem; color: var(--ink-2); margin-top: var(--s2); }
+.now-hand b { color: var(--ink); font-weight: 600; }
+
+.next-what { font-size: 1.6rem; font-weight: 700; line-height: 1.1; color: var(--state); margin-top: var(--s1); }
+.next-what .mono { font-family: var(--mono); color: var(--ink); }
+.next-sub { font-size: 0.86rem; color: var(--ink-2); margin-top: 2px; }
 .next-in {
-  font-family: var(--mono); font-size: 0.86rem; font-weight: 600;
-  color: var(--ink-2); flex: none;
+  position: absolute; top: var(--s3); right: var(--s3);
+  font-family: var(--mono); font-size: 0.7rem; font-weight: 700;
+  color: var(--state); background: color-mix(in srgb, var(--state) 12%, var(--panel));
+  padding: 2px 8px; border-radius: 999px;
 }
 
-/* --------------------------------------------------- through the shift */
+/* ------------------------------------------------------- the table */
 
-.progress { display: flex; flex-direction: column; gap: var(--s2); }
-.progress-line {
-  display: flex; justify-content: space-between; gap: var(--s3);
-  font-size: 0.76rem; color: var(--ink-2); flex-wrap: wrap;
+/* The heading line above the table: turn n of m, worked, to go. */
+.progress { display: flex; flex-wrap: wrap; gap: 0 var(--s2); margin-bottom: calc(-1 * var(--s2)); }
+.progress b { color: var(--ink); }
+.progress .sep { color: var(--line-2); }
+
+.table-wrap {
+  overflow-x: auto; background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius);
 }
-.progress-line b { color: var(--ink); font-weight: 600; }
-.progress .bar { --state: var(--ink-2); height: 8px; }
-.progress .bar i { background: var(--ink); }
-
-/* ------------------------------------------------------- timeline */
-
-.past-toggle {
-  font: inherit; font-size: 0.78rem; font-weight: 600;
-  color: var(--ink-2); background: var(--sunk);
-  border: 1px dashed var(--line-2); border-radius: var(--radius-sm);
-  padding: 9px var(--s4); cursor: pointer; text-align: left;
-  display: flex; align-items: center; gap: var(--s2);
+.day-table { width: 100%; border-collapse: collapse; }
+.day-table th {
+  text-align: left; font-family: var(--mono); font-size: 0.6rem; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+  padding: 9px 12px; background: var(--sunk);
 }
-.past-toggle:hover { color: var(--ink); border-color: var(--ink-2); }
-.past-toggle::before { content: "▾"; font-size: 0.7em; }
-.past-toggle[aria-expanded="true"]::before { content: "▴"; }
-
-.timeline { list-style: none; display: flex; flex-direction: column; }
-
-.tl {
-  display: grid; grid-template-columns: 52px 1fr; gap: var(--s3);
-  --state: var(--line-2);
-}
+.tl td { padding: 10px 12px; border-top: 1px solid var(--line); vertical-align: middle; }
 .tl[data-kind="work"]  { --state: var(--work); }
 .tl[data-kind="Break"] { --state: var(--break); }
 .tl[data-kind="Think"] { --state: var(--think); }
 
-.tl-t {
-  font-family: var(--mono); font-size: 0.74rem; color: var(--muted);
-  padding-top: 9px; text-align: right; font-weight: 500;
-}
-.tl-b {
-  border-left: 3px solid var(--state);
-  padding: 8px 0 8px var(--s4); position: relative;
-  display: flex; flex-direction: column; justify-content: center;
-  /* Set inline from the row's own minutes - see rowHeight() in the JS.
-     A fifteen-minute break has to look like a third of a forty-five
-     minute turn or the timeline is drawing the wrong day. */
-  min-height: var(--h, 46px);
-}
-.tl-what {
-  font-size: 0.95rem; font-weight: 600;
-  display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap;
+.tl-t  { font-family: var(--mono); font-weight: 700; white-space: nowrap; width: 1%; padding-right: 4px !important; }
+.tl-to { font-family: var(--mono); font-size: 0.78rem; color: var(--muted); white-space: nowrap; width: 1%; padding-left: 0 !important; }
+.tl-what { font-size: 1.05rem; font-weight: 700; white-space: nowrap; width: 1%; padding-right: 24px !important; }
+/* The state as a square before the word - a shape, not only a hue. */
+.tl-what::before {
+  content: ""; display: inline-block; width: 12px; height: 12px;
+  border-radius: 3px; margin-right: 9px; vertical-align: -1px;
+  background: var(--state);
 }
 .tl-what .mono { font-family: var(--mono); }
-.tl[data-kind="Break"] .tl-what { color: var(--break); }
-.tl[data-kind="Think"] .tl-what { color: var(--think); }
-.tl-mins {
-  font-family: var(--mono); font-size: 0.72rem; font-weight: 500;
-  color: var(--muted);
-}
-.tl-sub { font-size: 0.76rem; color: var(--ink-2); margin-top: 2px; }
+.tl[data-kind="Break"] .tl-what,
+.tl[data-kind="Think"] .tl-what { color: var(--state); }
+.tl-mins { font-family: var(--mono); font-size: 0.72rem; font-weight: 500; color: var(--muted); margin-left: 8px; }
+.tl-sub { font-size: 0.84rem; color: var(--ink-2); }
 .tl-sub b { color: var(--ink); font-weight: 600; }
 
-/* Now: a filled block and a word, not a tint you have to look for. */
-.tl.is-now .tl-b {
-  background: color-mix(in srgb, var(--state) 10%, transparent);
-  border-left-width: 6px;
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-}
+/* Now: a tinted row and a word, not a tint you have to look for. */
+.tl.is-now td { background: color-mix(in srgb, var(--state) 10%, var(--panel)); }
 .tl.is-now .tl-what::after {
-  content: "NOW";
-  font-family: var(--mono); font-size: 0.56rem; font-weight: 700;
-  letter-spacing: 0.12em; color: var(--ground); background: var(--state);
-  padding: 2px 6px; border-radius: 999px;
+  content: "on now"; font-family: var(--v-sans); font-size: 0.72rem;
+  font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--state); margin-left: 10px;
 }
-.tl.is-past .tl-t,
-.tl.is-past .tl-what,
-.tl.is-past .tl-sub { opacity: 0.42; }
-.tl.is-past .tl-b { border-left-color: var(--line-2); }
+/* Done: still there, greyed. The strip says where now is. */
+.tl.is-past td { color: var(--muted); }
+.tl.is-past .tl-what { color: var(--muted); font-weight: 500; }
+.tl.is-past .tl-what::before { opacity: 0.4; }
+.tl.is-past .tl-sub b { color: var(--muted); font-weight: 500; }
 
 /* --------------------------------------------------------- budget */
 
 .budget {
-  border-top: 1px solid var(--line); padding-top: var(--s4);
-  display: flex; align-items: flex-end; justify-content: space-between;
-  gap: var(--s4); flex-wrap: wrap;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--s3); flex-wrap: wrap;
 }
-.budget-nums { display: flex; gap: var(--s5); font-size: 0.72rem; color: var(--ink-2); }
-.budget-nums b {
-  display: block; font-family: var(--mono); font-size: 1.15rem;
-  font-weight: 700; color: var(--ink); line-height: 1.15;
+.budget-nums { display: flex; gap: var(--s2); flex-wrap: wrap; }
+.budget-nums span {
+  background: var(--panel); border: 1px solid var(--line);
+  border-left: 5px solid var(--state); border-radius: 999px;
+  padding: 5px 12px; font-family: var(--mono); font-size: 0.78rem; color: var(--ink-2);
 }
-.budget-nums .b-work b  { color: var(--work); }
-.budget-nums .b-break b { color: var(--break); }
-.budget-nums .b-think b { color: var(--think); }
-.budget-note { font-size: 0.72rem; color: var(--muted); max-width: 30ch; text-align: right; }
+.budget-nums b { color: var(--ink); }
+.b-work  { --state: var(--work); }
+.b-break { --state: var(--break); }
+.b-think { --state: var(--think); }
+.budget-note { font-size: 0.72rem; color: var(--muted); max-width: 32ch; text-align: right; }
 
 .empty {
   border-left: 3px solid var(--break); background: var(--panel);
@@ -468,19 +460,34 @@ body {
 }
 .checked { font-size: 0.68rem; color: var(--muted); text-align: center; }
 
+/* A phone: one column of cards, a shorter strip with no words in it -
+   the table has them - and the note under the budget on its own line. */
+@media (max-width: 560px) {
+  .cards { grid-template-columns: 1fr; }
+  .track { height: 40px; }
+  .seg { font-size: 0; }
+  .budget-note { text-align: left; max-width: none; }
+  /* The end time goes: the next row starts then, and the cards say it.
+     What is left is three columns that fit a phone without scrolling. */
+  .tl-to { display: none; }
+  .tl td { padding-left: 10px; padding-right: 10px; }
+  .tl-what { padding-right: 12px !important; }
+  .tl-what .tl-mins { display: block; margin-left: 0; }
+}
+
 /* ===================================================================
  * Print - an operator screenshots or prints this and carries it.
  * =================================================================== */
 
 @media print {
   .perch, .who, .clock, #view-signin, #view-denied,
-  .past-toggle, .checked, .stale { display: none !important; }
+  .checked, .stale { display: none !important; }
   body { background: #fff; color: #000; }
   .wrap { max-width: none; padding: 0; }
   /* Everything, including what was folded away. */
   .tl[hidden] { display: grid !important; }
   .tl.is-past .tl-t, .tl.is-past .tl-what, .tl.is-past .tl-sub { opacity: 1; }
-  .now, .next, .tl-b { break-inside: avoid; }
+  .now, .next, .strip, .tl { break-inside: avoid; }
   .now-left { font-size: 2rem; }
 }
 
