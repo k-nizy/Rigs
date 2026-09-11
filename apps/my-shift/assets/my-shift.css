@@ -468,6 +468,10 @@ body {
 /* A phone: one column of cards, a shorter strip with no words in it -
    the table has them - and the note under the budget on its own line. */
 @media (max-width: 560px) {
+  /* The chip on one line of its own under the title, its buttons whole. */
+  .head-right { width: 100%; justify-content: space-between; }
+  .who { flex-wrap: wrap; max-width: 100%; row-gap: 3px; }
+  .who-out { white-space: nowrap; }
   .cards { grid-template-columns: 1fr; }
   .track { height: 40px; }
   .seg { font-size: 0; }
@@ -479,6 +483,9 @@ body {
   .tl-what { padding-right: 12px !important; }
   .tl-what .tl-mins { display: block; margin-left: 0; }
   .tl-task { white-space: normal; }
+  /* The what column gets the room; the then column wraps behind it. */
+  .tl-what { width: auto; padding-right: 8px !important; }
+  .tl-sub { font-size: 0.8rem; }
 }
 
 /* ===================================================================

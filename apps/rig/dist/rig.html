@@ -482,11 +482,22 @@ body {
 .log .bucket { color: var(--hail); }
 .drawer-body ul { padding-left: 1.1rem; color: #b6b9bf; }
 
+/* A narrow screen. The rig is the station and runs on the station's
+   own display, so a phone is not its case - but a window this narrow
+   must still be the rig and not a page scrolling sideways: the rail
+   wraps onto two lines, the checklist and its timer stack, and the
+   three pedals share what width there is. */
 @media (max-width: 720px) {
   .cams { grid-template-columns: 1fr; }
   .cams .cam:nth-child(n+2) { display: none; }
-  .rail { gap: 1rem; font-size: 0.62rem; }
-  .rail-right { gap: 0.9rem; }
+  .rail { gap: 0.35rem 1rem; font-size: 0.62rem; flex-wrap: wrap; white-space: normal; }
+  .rail-right { gap: 0.6rem 0.9rem; margin-left: 0; width: 100%; flex-wrap: wrap; }
+  .rail-task { flex: 1 1 100%; white-space: nowrap; }
+  .split { flex-direction: column; gap: 1rem; }
+  .check { font-size: clamp(0.95rem, 4.2vw, 1.4rem); }
+  .pedals { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .pedal { padding-left: 0.3rem; padding-right: 0.3rem; min-width: 0; }
+  .pedal strong { font-size: clamp(0.9rem, 4vw, 1.4rem); }
 }
 
 /* What the rig is running on, when that is not the ordinary thing. Quiet
