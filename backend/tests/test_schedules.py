@@ -477,6 +477,50 @@ async def test_a_shift_from_last_week_is_not_todays_answer(client, session):
     assert got["shift"] is None and got["turns"] == []
 
 
+# An empty day says why. Three floors produce one and they want three
+# different lines on the screen: nothing pushed at all, a push that names
+# nobody (a roster of plain names - stated in CLAUDE.md), and a push that
+# names people and not this person. The route reports two facts about
+# the floor and the page reads back the one that applies.
+
+async def test_an_empty_day_says_nothing_was_pushed(client, session):
+    got = await turns_for_operator(session, MEI, datetime(2026, 8, 25, 10, 0, tzinfo=UTC))
+    assert got["shift"] is None
+    assert got["floor"] == {"pushed": False, "namesPeople": False}, (
+        "with nothing pushed the screen has to be able to say so"
+    )
+
+
+async def test_an_empty_day_says_the_push_names_no_people(client, session):
+    await push(session, "Morning")          # a roster of plain names
+
+    got = await turns_for_operator(session, MEI, datetime(2026, 8, 25, 10, 0, tzinfo=UTC))
+    assert got["shift"] is None
+    assert got["floor"] == {"pushed": True, "namesPeople": False}, (
+        "the push names nobody, which is the case CLAUDE.md says to state plainly"
+    )
+
+
+async def test_an_empty_day_says_the_push_does_not_name_her(client, session):
+    await push(session, "Morning", person=TOMAS)
+
+    got = await turns_for_operator(session, MEI, datetime(2026, 8, 25, 10, 0, tzinfo=UTC))
+    assert got["shift"] is None
+    assert got["floor"] == {"pushed": True, "namesPeople": True}, (
+        "the push names people and not her - not the same as naming nobody"
+    )
+
+
+async def test_a_day_that_is_found_carries_the_same_two_facts(client, session):
+    await push(session, "Morning", person=MEI)
+
+    got = await turns_for_operator(session, MEI, datetime(2026, 8, 25, 10, 0, tzinfo=UTC))
+    assert got["shift"]["label"] == "Morning"
+    assert got["floor"] == {"pushed": True, "namesPeople": True}, (
+        "one shape whether the day is found or not, so the page has no second branch"
+    )
+
+
 # ------------------------------------------------- the roster, server-side
 
 # The assignment - which people sit in which group, in which slot, on
