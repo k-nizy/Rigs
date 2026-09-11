@@ -436,6 +436,8 @@ test("signing out takes the day off the screen, not just out of view",
     assert.equal(app.rows().length, 0);
     assert.equal(app.$("shiftline").textContent, "");
     assert.equal(app.$("who").hidden, true);
+    assert.equal(app.strip().hidden, true, "the strip is the day too");
+    assert.equal(app.strip().now.hidden, true);
   }));
 
 /* ------------------------------------------------ nobody else's day */
@@ -582,22 +584,45 @@ test("progress counts the turn in progress, not just the finished ones",
 
 /* ------------------------------------------------------ time to scale */
 
-test("a fifteen minute break is drawn shorter than a forty-five minute turn",
+/* The shape of the day is drawn once, as a strip across the top: every
+   turn and gap a segment as wide as it is long, now marked on it. The
+   table under it is the same day in rows of equal height, because a
+   table is for reading and the strip is for the shape. */
+
+test("the whole shift is one strip, every row a segment as wide as it is long",
   mounted(AN_OPERATOR, {}, "11:12", async app => {
-    /* Equal-height rows for unequal spans draw the wrong day, and the
-       shape of the day is most of what a timeline is for. */
-    const rows = app.rows();
-    const work45 = rows.find(r => r.kind === "work" && r.mins === "45m");
-    const break15 = rows.find(r => r.kind === "Break");
-    assert.ok(parseInt(work45.height) > parseInt(break15.height),
-      "45m row " + work45.height + " should be taller than 15m " + break15.height);
+    const s = app.strip();
+    assert.equal(s.hidden, false);
+    const drawn = s.segments.filter(g => g.kind !== "off");
+    assert.equal(drawn.length, app.rows().length, "one segment per row");
+    const work45 = drawn.find(g => g.kind === "work" && g.width === 45);
+    const break15 = drawn.find(g => g.kind === "Break");
+    assert.ok(work45, "a 45-minute turn should be a 45-wide segment");
+    assert.equal(break15.width, 15);
+    assert.match(work45.rig, /^RIG-0\d$/, "a work segment names its rig");
+    const total = s.segments.reduce((sum, g) => sum + g.width, 0);
+    assert.equal(total, 480, "the strip is the shift, 08:00 to 16:00, whole");
+    assert.equal(s.ticks[0], "08:00");
+    assert.equal(s.ticks[s.ticks.length - 1], "16:00");
   }));
 
-test("even the shortest row stays big enough to read and tap",
+test("now is marked on the strip where the shift has got to",
   mounted(AN_OPERATOR, {}, "11:12", async app => {
-    app.rows().forEach(r => {
-      assert.ok(parseInt(r.height) >= 46, r.at + " is only " + r.height);
-    });
+    const s = app.strip();
+    /* 11:12 is 192 minutes into an eight-hour shift: two fifths along. */
+    assert.equal(s.now.hidden, false);
+    assert.equal(s.now.left, "40.0%");
+    assert.match(s.now.text, /11:12/);
+    assert.equal(s.segments.filter(g => g.on).length, 1, "one segment is now");
+    assert.equal(s.segments.filter(g => g.gone).length,
+                 app.rows().filter(r => r.isPast).length, "the done ones are faded");
+  }));
+
+test("before the shift the marker is off the strip, and nothing is faded",
+  mounted(AN_OPERATOR, {}, "06:30", async app => {
+    const s = app.strip();
+    assert.equal(s.now.hidden, true);
+    assert.equal(s.segments.filter(g => g.gone).length, 0);
   }));
 
 test("every row says how long it lasts",
@@ -605,38 +630,27 @@ test("every row says how long it lasts",
     app.rows().forEach(r => assert.ok(r.mins, "no duration on the row at " + r.at));
   }));
 
-/* -------------------------------------------------- the past, folded */
+/* --------------------------------------------- the past, in its place */
 
-test("the hours already gone are folded away",
+test("the hours already gone stay on the page, greyed rather than folded",
   mounted(AN_OPERATOR, {}, "11:12", async app => {
-    /* Opening this mid-shift should land on now, not on 08:00. */
+    /* The strip says where now is, so nothing needs hiding: the whole
+       day, done and to come, in one look. */
     const rows = app.rows();
     const past = rows.filter(r => r.isPast);
     assert.ok(past.length > 0);
-    assert.ok(past.every(r => r.hidden), "past rows should start folded");
-    assert.ok(app.visibleRows().every(r => !r.isPast));
+    assert.ok(past.every(r => !r.hidden), "past rows should stay on the page");
+    assert.equal(rows.filter(r => r.isNow).length, 1);
   }));
 
-test("the fold says how many rows it is hiding, and opens",
-  mounted(AN_OPERATOR, {}, "11:12", async app => {
-    const t = app.pastToggle();
-    assert.equal(t.hidden, false);
-    assert.match(t.text, /already done/);
-    assert.equal(t.expanded, "false");
-
-    app.click(app.$("past-toggle"));
-    await app.settle();
-
-    assert.equal(app.pastToggle().expanded, "true");
-    assert.ok(app.rows().filter(r => r.isPast).every(r => !r.hidden),
-      "the past should be showing once asked for");
-  }));
-
-test("at the start of a shift there is nothing to fold",
-  mounted(AN_OPERATOR, {}, "08:05", async app => {
-    assert.equal(app.pastToggle().hidden, true);
-    assert.ok(app.visibleRows().length > 0);
-  }));
+test("the header is this page's own, with no company mark on it",
+  async () => {
+    const fs = require("node:fs");
+    const html = fs.readFileSync(path.join(__dirname, "index.html"), "utf8")
+      .replace(/<title>[^<]*<\/title>/, "");
+    assert.ok(!/class="eyebrow"|v-mark|Verlet Robotics/.test(html),
+      "the mark and the company name were asked off this screen");
+  });
 
 /* ---------------------------------------------------------- freshness */
 
