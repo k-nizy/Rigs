@@ -497,10 +497,17 @@ person, and there is a push. Observed live: push a person into seat 2
 and their screen shows seat 2 across three rigs; push again with them
 in seat 4 and it shows seat 4; the account never changed.
 
-**And the operator sees where they are working, on purpose.** Every
-turn on My Shift carries its rig, because the rig is what "where am I"
-means to somebody standing on the floor. The seat label rides in the
-same data for the sheet's sake and is not what a person needs to read.
+**And the operator sees where they are working, on purpose - and
+what for.** Every turn on My Shift carries its rig, because the rig is
+what "where am I" means to somebody standing on the floor, and the
+rig's task with it, read from that rig's payload, so the card says what
+you are doing on the rig you are on and changes it when you move. A
+group keeps one task for the whole shift today, so it reads the same on
+all three rigs; the day a push gives two rigs two tasks, the screen is
+already right. The table names the task on every turn, so what the
+next turns are for is read down the day, not only what this one is.
+The seat label rides in the same data for the sheet's sake and is not
+what a person needs to read.
 
 Built: `accounts.person_id`, migration `6492d4e8117c`, `mint_account
 operator --person <id>`, and `/me/shift`, `/me/scores` and the session

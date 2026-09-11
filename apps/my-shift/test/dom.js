@@ -212,6 +212,7 @@ async function mountMyShift(opts) {
           rig: (find(li, "mono")[0] || {}).textContent || null,
           mins: (find(li, "tl-mins")[0] || {}).textContent || null,
           sub: sub ? sub.textContent : "",
+          task: (find(li, "tl-task")[0] || {}).textContent || null,
           height: body && body.style ? body.style._p["--h"] : null,
           hidden: !!li.hidden,
           isNow: li.classList.contains("is-now"),
@@ -230,6 +231,7 @@ async function mountMyShift(opts) {
         left: find(box, "now-left").map(n => n.textContent)[0] || "",
         unit: find(box, "now-unit").map(n => n.textContent)[0] || "",
         hand: find(box, "now-hand").map(n => n.textContent)[0] || "",
+        task: find(box, "now-task").map(n => n.textContent)[0] || "",
         barWidth: (() => {
           const bar = find(box, "bar")[0];
           const fill = bar && bar.children[0];
@@ -247,6 +249,7 @@ async function mountMyShift(opts) {
         what: find(box, "next-what").map(n => n.textContent)[0] || "",
         sub: find(box, "next-sub").map(n => n.textContent)[0] || "",
         in: find(box, "next-in").map(n => n.textContent)[0] || "",
+        task: find(box, "next-task").map(n => n.textContent)[0] || "",
       };
     },
 
