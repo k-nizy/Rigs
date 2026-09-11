@@ -80,11 +80,12 @@ deploy/                        nginx, systemd, and DEPLOY.md
 The rig must never compute a different answer from the desk that scheduled
 it, so there is exactly one implementation and neither app owns it.
 
-My Shift is deliberately outside that. It loads the engine for one clock
-helper and takes its turns from `/api/me/shift`, which hands back what the
-desk pushed. It computes no rotation, and a screen that recomputed one in
-order to draw it would be the third answer the invariant exists to
-prevent.
+My Shift is deliberately outside that. It loads the engine for two clock
+helpers and takes its turns from `/api/me/shift`, which hands back what
+the desk pushed - the whole of the operator's shift, before it starts and
+after it ends, not only while it runs. It computes no rotation, and a
+screen that recomputed one in order to draw it would be the third answer
+the invariant exists to prevent.
 
 It is also plain enough to run headlessly, which is how it gets tested:
 
@@ -173,7 +174,7 @@ desk and My Shift open unlocked on it:
 ```
 POST /api/rigs/:rigId/events         the ledger - append-only, resend-safe
 GET  /api/rigs/:rigId/events/cursor  where a rig got to
-GET  /api/me/shift                   an operator's own day, derived from nothing
+GET  /api/me/shift                   an operator's own shift, derived from nothing
 POST /api/auth/login, /logout, /password, /reset
 GET  /api/health                     every switch that can be off
 ```

@@ -122,19 +122,33 @@ def _nearest(rows: list[Schedule], now: datetime) -> Schedule:
 async def turns_for_operator(
     session: AsyncSession, person_id: str, now: datetime | None = None
 ) -> dict:
-    """One person's turns in the shift running now, across every rig.
+    """One person's turns in their shift, across every rig.
+
+    Their shift is the one that names them and covers now; failing that,
+    the one naming them that starts next; failing that, the one that
+    named them and ended last. That is `in_force`'s rule asked for a
+    person instead of a rig, and `_nearest` is reused rather than
+    rewritten. My Shift counts down to the first turn before a shift and
+    says "finished" after the last, and neither state was reachable
+    while this served only the shift in force: at 07:30 an operator was
+    told nothing was scheduled, and at 16:05 the same. Bounded a day
+    either side of today, as the rig's is - a person whose last shift
+    was a week ago has nothing scheduled, and a week-old "finished" with
+    a date on it is a screen to misread.
 
     Matched on the person the push named in each turn, never on the
     seat: the seat is whichever chair the roster put them in today, and
-    on a cover day the chair a person usually sits in holds somebody
-    else. An account names its person and nothing about where they sit.
+    an account names its person and nothing about where they sit. Which
+    is also what makes it *their* shift that is chosen and not the
+    floor's - at 17:00 the floor is running Day, and an operator who
+    worked Morning is shown Morning.
 
     Read, not derived. Every field returned here was written into a
     payload by the desk and is handed back unchanged; this only selects -
-    which schedules cover this instant, and which of their turns name
-    this person. The same rule `in_force` above is built on, and for the
-    same reason: the rotation is computed in one shared JavaScript file
-    and a second implementation here would be a third answer.
+    which schedules name this person, which of those is theirs at this
+    instant, and which of its turns are theirs. The rotation is computed
+    in one shared JavaScript file and a second implementation here would
+    be a third answer.
 
     It deliberately does *not* work out the breaks between the turns.
     Each turn already carries `theyGoTo`, so a screen can lay the gaps
@@ -148,33 +162,52 @@ async def turns_for_operator(
     payload in the first place.
     """
     now = now or datetime.now(timezone.utc)
+    today = now.astimezone(timezone.utc).date()
 
     # The latest push wins for a given rig, shift and date, the same way
     # `in_force` picks one. Ordering by pushed_at descending and keeping
     # the first of each key means a re-push does not double the day.
     rows = await session.execute(
-        select(Schedule).order_by(desc(Schedule.pushed_at))
+        select(Schedule)
+        .where(
+            Schedule.shift_date >= today - timedelta(days=1),
+            Schedule.shift_date <= today + timedelta(days=1),
+        )
+        .order_by(desc(Schedule.pushed_at))
     )
     latest: dict[tuple[str, object, str], Schedule] = {}
     for row in rows.scalars().all():
         latest.setdefault((row.rig_id, row.shift_date, row.shift_label), row)
 
+    # Only the sheets that name this person are candidates at all.
+    named: list[tuple[Schedule, list[dict]]] = []
+    for row in latest.values():
+        theirs = [turn for turn in (row.payload or {}).get("turns") or []
+                  if (turn.get("operator") or {}).get("personId") == person_id]
+        if theirs:
+            named.append((row, theirs))
+    if not named:
+        return {"personId": person_id, "shift": None, "turns": []}
+
+    covering = [row for row, _ in named
+                if rules.shift_covers(row.payload or {}, row.shift_date, now, timezone.utc)]
+    chosen = (min(covering, key=lambda r: (r.shift_date, r.shift_label))
+              if covering else _nearest([row for row, _ in named], now))
+    key = (chosen.shift_date, chosen.shift_label)
+
     turns: list[dict] = []
     shift: dict | None = None
-    for row in latest.values():
-        payload = row.payload or {}
-        if not rules.shift_covers(payload, row.shift_date, now, timezone.utc):
+    for row, theirs in named:
+        if (row.shift_date, row.shift_label) != key:
             continue
-        for turn in payload.get("turns") or []:
-            if (turn.get("operator") or {}).get("personId") != person_id:
-                continue
-            turns.append({**turn, "rigId": payload.get("rigId")})
-            if shift is None:
-                shift = {
-                    **(payload.get("shift") or {}),
-                    "group": payload.get("group"),
-                    "task": payload.get("task"),
-                }
+        payload = row.payload or {}
+        turns.extend({**turn, "rigId": payload.get("rigId")} for turn in theirs)
+        if shift is None:
+            shift = {
+                **(payload.get("shift") or {}),
+                "group": payload.get("group"),
+                "task": payload.get("task"),
+            }
 
     turns.sort(key=lambda t: (t.get("from") or "", t.get("rigId") or ""))
     return {"personId": person_id, "shift": shift, "turns": turns}
