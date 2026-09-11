@@ -143,6 +143,11 @@ cd /srv/rigs/backend
 .venv/bin/python -m tools.preflight --strict
 ```
 
+`upgrade head` is rehearsed in CI the way a floor goes through it -
+over rows that already exist, and back one step and forward again -
+by `tools.rehearse_upgrade`. Never run that tool against this
+database: it downgrades it. Run it against a copy, or trust CI.
+
 Preflight is the whole point of this section. It checks the database is
 reachable, the migrations are at head, every table the models expect
 exists, the spool can be written **and read back with a checksum**, all
@@ -187,7 +192,7 @@ it is the wrong end of it.
 ```sh
 cd /srv/rigs/backend
 .venv/bin/python -m tools.mint_account manager  --email r.osei@verlet.co  --name "Ruth Osei"
-.venv/bin/python -m tools.mint_account operator --email m.chen@verlet.co  --name "Mei Chen" --operator-id op-a2
+.venv/bin/python -m tools.mint_account operator --email m.chen@verlet.co  --name "Mei Chen" --person <id from people>
 .venv/bin/python -m tools.mint_account list
 ```
 
@@ -198,11 +203,21 @@ the scrollback.
 
 Three things worth knowing before you run it:
 
-- **A manager names no operator; an operator must name one.** The
-  `--operator-id` is the id on the sheet (`op-a2`), and My Shift has
-  nothing to look itself up by without it. The database enforces this,
-  so a wrong one is refused rather than discovered later by a screen
-  showing somebody else's day.
+- **A manager names no person; an operator must name one.** `--person`
+  is the id from `people` - a manager creates the person on the desk
+  first, then the account for them. The account says *who*; where they
+  sit is the roster pushed that morning, and nothing on the account
+  holds a seat. The database enforces this, so an id nobody has is
+  refused rather than discovered later by an empty day.
+- **Upgrading a floor that already has operator accounts.** Those
+  accounts were minted with a seat and no person. The upgrade keeps
+  them signing in; until each is linked, My Shift shows that person an
+  empty day. Link them - it keeps the password - rather than re-mint:
+
+  ```sh
+  .venv/bin/python -m tools.mint_account list                # '-' in the person column = unlinked
+  .venv/bin/python -m tools.mint_account link --email m.chen@verlet.co --person <id from people>
+  ```
 - **There is no sign-up page and there should not be.** A floor has two
   or three managers and sixteen operators on a roster somebody already
   maintains. This is also how the first manager exists at all - a seeded

@@ -478,6 +478,21 @@ operator --person <id>`, and `/me/shift`, `/me/scores` and the session
 all answering by person. `operator_id` stays on old rows, unread, so
 nothing is destroyed and the downgrade is clean.
 
+**A floor that already has operator accounts upgrades, and links.** The
+first version of that migration was green in CI and could not be
+applied to any floor with an operator on it: a CHECK added the ordinary
+way is checked against every existing row, and every existing operator
+had a seat and no person. Its downgrade did not restore the old rule,
+so the one-step rollback DEPLOY.md documents could not go forward
+again. Both were caught by running the real thing against a database
+with rows in it, which CI never had. Now the new rule is added `NOT
+VALID` - enforced on every row written from then on, tolerant of the
+rows that predate it - and the downgrade restores the old rule the same
+way. Existing accounts keep signing in and are given their person by a
+manager with `mint_account link`, which keeps the password; they are
+never re-minted and never invented from the account's name. Until
+linked, such an account sees an empty day.
+
 **What that costs on the day it lands, stated rather than hidden.**
 "My day" is matched on the person the push named in each turn, and
 never on a name - a name is only a string, and inferring identity from
@@ -1026,13 +1041,20 @@ cd backend && lint-imports                     the three layering contracts
 cd backend && node tests/e2e_rig_to_floor.js   the seam, against a live service
 ```
 
-`.github/workflows/ci.yml` runs all four on every push, plus the two
+`.github/workflows/ci.yml` runs all four on every push, plus the
 things nobody runs by hand: that the committed dists still match their
-sources, and that the migrations apply to an empty database, come back
-down, and still agree with the models. That last one matters because the
-test suite builds its schema from the models while a deployment builds
-it from the migrations — a green suite on its own cannot tell you those
-two have not drifted apart.
+sources; that the migrations apply to an empty database, come back
+down, and still agree with the models; and, since `6492d4e8117c`, that
+they apply over a floor that already has rows in it and survive the
+one-step rollback DEPLOY.md documents - `tools.rehearse_upgrade`, which
+pins a revision, seeds the floor as it was then, and carries it to
+head. The empty-database check matters because the test suite builds
+its schema from the models while a deployment builds it from the
+migrations — a green suite on its own cannot tell you those two have
+not drifted apart. The rehearsal matters because an empty database is
+the one thing a floor never is: a rule that refuses existing rows, or a
+downgrade that forgets to put one back, is green on empty and fails on
+the day it is needed.
 
 **A suite run stays inside its own schema, `public` included.** Each run
 takes a private schema in `rigs_test`, and the connection that gets it
