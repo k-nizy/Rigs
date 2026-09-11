@@ -138,6 +138,15 @@ jobs:
       # The deployment gate, run against a database that was built the way
       # a real one is. It is the API unit's ExecStartPre on the floor, so
       # a preflight that has stopped working stops being a gate.
+      # Two things base-to-head cannot see, both learned from a migration
+      # that was green here and undeployable: an upgrade over rows that
+      # already exist, and the one-step rollback DEPLOY.md documents
+      # followed by going forward again. The tool pins a revision and
+      # seeds the floor as it was then, so every later migration has to
+      # carry a populated floor forward, not just an empty one.
+      - name: The upgrade a floor would actually go through
+        run: python -m tools.rehearse_upgrade
+
       - name: Preflight
         run: python -m tools.preflight
 
