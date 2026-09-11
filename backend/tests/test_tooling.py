@@ -572,3 +572,66 @@ def test_the_parser_asks_for_a_person_and_not_a_seat():
     with pytest.raises(SystemExit):
         asyncio.run(mint_account.run(["operator", "--email", "a@b.c", "--name", "A",
                                       "--operator-id", "op-a2", "--password", "x"]))
+
+
+async def test_an_existing_account_is_linked_to_its_person_not_re_minted(engine, session):
+    """The upgrade path for a floor that had operator accounts before
+    people existed. The account keeps its email and its password; it
+    gains its person. `link` is the manager's act, and it refuses to
+    take a person somebody else already signs in as."""
+    from core.domains.accounts.model import Account
+    from core.domains.accounts.passwords import hash_password
+    from core.domains.accounts.repository import AccountRepository
+    from core.domains.people.repository import PersonRepository
+    from tools import mint_account
+
+    # The suite builds its schema from the models, where the rule is a
+    # plain CHECK that refuses a seat-only operator outright. A floor
+    # that was *upgraded* holds that rule NOT VALID over exactly such
+    # rows - which is the state `link` exists for - so reproduce it.
+    from sqlalchemy import text as _t
+    await session.execute(_t("ALTER TABLE accounts DROP CONSTRAINT ck_accounts_person_id_matches_role"))
+    legacy = Account(email="m.chen@verlet.co", name="Mei Chen", role="operator",
+                     operator_id="op-a2", password_hash=hash_password("the-old-password-12"))
+    session.add(legacy)
+    await session.flush()
+    await session.execute(_t(
+        "ALTER TABLE accounts ADD CONSTRAINT ck_accounts_person_id_matches_role CHECK ("
+        "(role = 'manager' AND person_id IS NULL) OR (role = 'operator' AND person_id IS NOT NULL)"
+        ") NOT VALID"))
+    mei = await PersonRepository(session).create("Mei Chen")
+    await session.commit()
+    before = legacy.password_hash
+
+    rc = await mint_account._act(
+        _argparse.Namespace(cmd="link", email="m.chen@verlet.co", person=str(mei.id)), session)
+    assert rc == 0
+    acct = await AccountRepository(session).by_email("m.chen@verlet.co")
+    assert acct.person_id == mei.id, "the account was not linked"
+    assert acct.password_hash == before, "linking must not touch the password"
+
+    other = await PersonRepository(session).create("Priya Anand")
+    await session.commit()
+    session.add(Account(email="p.anand@verlet.co", name="Priya Anand", role="operator",
+                        person_id=other.id, password_hash=hash_password("x-long-enough-12")))
+    await session.commit()
+    with pytest.raises(SystemExit) as e:
+        await mint_account._act(
+            _argparse.Namespace(cmd="link", email="m.chen@verlet.co", person=str(other.id)), session)
+    assert "already signs in" in str(e.value)
+
+
+async def test_linking_a_manager_is_refused(engine, session):
+    """A manager is not on the sheet and has no person to be."""
+    from core.domains.accounts.model import Account
+    from core.domains.accounts.passwords import hash_password
+    from core.domains.people.repository import PersonRepository
+    from tools import mint_account
+    session.add(Account(email="r.osei@verlet.co", name="Ruth Osei", role="manager",
+                        password_hash=hash_password("x-long-enough-12")))
+    p = await PersonRepository(session).create("Ruth Osei")
+    await session.commit()
+    with pytest.raises(SystemExit) as e:
+        await mint_account._act(
+            _argparse.Namespace(cmd="link", email="r.osei@verlet.co", person=str(p.id)), session)
+    assert "manager" in str(e.value).lower()
