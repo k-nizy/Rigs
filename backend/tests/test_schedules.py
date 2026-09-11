@@ -22,7 +22,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select
 
 from core.domains.schedules.model import Schedule, SchedulePush
-from core.workflows.schedules import _nearest, in_force
+from core.workflows.schedules import _nearest, in_force, turns_for_operator
 
 RIG = "RIG-03"
 UTC = timezone.utc
@@ -35,25 +35,28 @@ SHIFTS = {
 }
 
 
-def payload(label, tz="UTC", rig=RIG, day=DAY, turns=True):
+def payload(label, tz="UTC", rig=RIG, day=DAY, turns=True, person=None):
     start, end = SHIFTS[label]
+    op = {"id": "op-a1", "name": "Someone"}
+    if person is not None:
+        op["personId"] = person
     return {
         "rigId": rig, "group": "A", "task": "Box transfer",
         "shift": {"label": label, "date": day.isoformat(),
                   "start": start, "end": end, "tz": tz},
         "blockMinutes": 15, "rotation": "hold",
         "turns": [{"from": start, "to": end, "minutes": 480,
-                   "operator": {"id": "op-a1", "name": "Someone"},
+                   "operator": op,
                    "relievedBy": None, "theyGoTo": "Break"}] if turns else [],
     }
 
 
-async def push(session, label, tz="UTC", rig=RIG, day=DAY, at=None):
+async def push(session, label, tz="UTC", rig=RIG, day=DAY, at=None, person=None):
     s = Schedule(
         push_id=uuid.uuid4(),
         pushed_at=at or datetime(2026, 8, 25, 7, 0, tzinfo=UTC),
         rig_id=rig, shift_date=day, shift_label=label,
-        payload=payload(label, tz=tz, rig=rig, day=day),
+        payload=payload(label, tz=tz, rig=rig, day=day, person=person),
     )
     session.add(s)
     await session.commit()
@@ -391,6 +394,87 @@ def test_the_shift_about_to_start_is_also_order_independent():
         "before the Morning shift the rig should be waiting on Morning, got " +
         str(sorted(answers))
     )
+
+
+# ------------------------------------------------------ the person's day
+#
+# `turns_for_operator` is `in_force`'s selection asked for a person
+# instead of a rig: the shift that names them and covers now, else the
+# one naming them that starts next, else the one that named them and
+# ended last. My Shift counts down to the first turn before a shift and
+# says "finished" after the last, and neither was reachable while the
+# route served only the shift in force - at 07:30 an operator was told
+# nothing was scheduled, and at 16:05 the same.
+
+MEI = "bbbbbbbb-0000-4000-8000-000000000001"
+TOMAS = "bbbbbbbb-0000-4000-8000-000000000003"
+
+
+async def test_before_her_shift_starts_she_is_handed_the_whole_of_it(client, session):
+    await push(session, "Morning", person=MEI)
+
+    early = datetime(2026, 8, 25, 7, 30, tzinfo=UTC)
+    got = await turns_for_operator(session, MEI, early)
+    assert got["shift"] and got["shift"]["label"] == "Morning", (
+        "at 07:30 her Morning is half an hour away, and she was handed nothing"
+    )
+    assert [t["from"] for t in got["turns"]] == ["08:00"]
+
+
+async def test_after_it_ends_she_can_still_read_it(client, session):
+    await push(session, "Morning", person=MEI)
+
+    late = datetime(2026, 8, 25, 16, 5, tzinfo=UTC)
+    got = await turns_for_operator(session, MEI, late)
+    assert got["shift"] and got["shift"]["label"] == "Morning", (
+        "five minutes after her shift ended the day she just worked was gone"
+    )
+    assert len(got["turns"]) == 1
+
+
+async def test_it_is_her_shift_that_is_chosen_not_the_floors(client, session):
+    """At 17:00 the floor is running Day. Mei worked Morning and Day is
+    Tomas's; her screen is about her day, and the shift in force on the
+    floor is not it."""
+    await push(session, "Morning", person=MEI)
+    await push(session, "Day", person=TOMAS)
+
+    got = await turns_for_operator(session, MEI, datetime(2026, 8, 25, 17, 0, tzinfo=UTC))
+    assert got["shift"] and got["shift"]["label"] == "Morning"
+    assert got["turns"] and all(t["operator"]["personId"] == MEI for t in got["turns"])
+
+
+async def test_the_shift_about_to_start_beats_the_one_just_finished(client, session):
+    """The rig's rule, for the same reason: what is coming is more use
+    than what is gone. A Night shift belongs to the date it starts on,
+    so at 23:00 on the 25th her next shift is on the 26th's sheet."""
+    await push(session, "Morning", person=MEI)
+    await push(session, "Night", person=MEI, day=DAY + timedelta(days=1))
+
+    got = await turns_for_operator(session, MEI, datetime(2026, 8, 25, 23, 0, tzinfo=UTC))
+    assert got["shift"] and got["shift"]["label"] == "Night"
+    assert got["shift"]["date"] == "2026-08-26"
+
+
+async def test_a_running_shift_still_wins_over_either(client, session):
+    """A guard rather than a regression - it held before the fallback
+    existed - but the fallback must never shadow a shift that is
+    genuinely running."""
+    await push(session, "Morning", person=MEI)
+    await push(session, "Day", person=MEI)
+
+    got = await turns_for_operator(session, MEI, datetime(2026, 8, 25, 10, 0, tzinfo=UTC))
+    assert got["shift"]["label"] == "Morning"
+
+
+async def test_a_shift_from_last_week_is_not_todays_answer(client, session):
+    """Bounded a day either side, like the rig's. A person whose last
+    shift was a week ago has nothing scheduled and My Shift says so; a
+    week-old "finished" with a date on it is a screen to misread."""
+    await push(session, "Morning", person=MEI, day=DAY - timedelta(days=7))
+
+    got = await turns_for_operator(session, MEI, datetime(2026, 8, 25, 10, 0, tzinfo=UTC))
+    assert got["shift"] is None and got["turns"] == []
 
 
 # ------------------------------------------------- the roster, server-side

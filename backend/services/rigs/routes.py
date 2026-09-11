@@ -1058,7 +1058,7 @@ async def me(account=Depends(require_account)) -> WhoOut:
 
 
 @router.get("/me/shift", tags=["people"],
-            summary="My turns in the shift running now, across every rig")
+            summary="My shift - running, next, or just ended - across every rig")
 async def my_shift(
     account=Depends(require_operator),
     session: AsyncSession = Depends(get_session),
