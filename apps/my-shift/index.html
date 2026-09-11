@@ -27,7 +27,6 @@
 
   <header class="masthead">
     <div class="brand">
-      <p class="eyebrow"><span class="v-mark" aria-hidden="true"></span>Verlet Robotics</p>
       <h1>My Shift</h1>
     </div>
     <div class="head-right">
@@ -167,24 +166,41 @@
 
     <p class="stale" id="stale" hidden></p>
 
-    <!-- The hero. Everything about this minute, in the biggest type on
-         the page, coloured by what you are doing. -->
-    <section class="now" id="now" aria-live="polite"></section>
+    <!-- The whole shift as one strip: every turn and gap a segment as
+         wide as it is long, faded once it is over, now marked on it.
+         The shape of the day in one look, which is most of what a
+         timeline is for; the table below is the same day, readable. -->
+    <section class="strip" id="strip" hidden>
+      <h2 class="strip-k">Your whole shift</h2>
+      <div class="trackwrap">
+        <div class="track" id="track"></div>
+        <div class="nowmark" id="nowmark" hidden><b id="nowmark-t"></b></div>
+      </div>
+      <div class="ticks" id="ticks"></div>
+      <p class="legend"><span class="lg-work">Work, on the rig named</span><span class="lg-break">Break</span><span class="lg-think">Think</span></p>
+    </section>
 
-    <!-- What happens when the hero runs out. Always visible without
-         scrolling, because it is the second question every time. -->
-    <section class="next" id="next" hidden></section>
-
-    <!-- How far through the shift, and the budget in one line. -->
-    <section class="progress" id="progress" hidden></section>
+    <!-- Now and next, side by side where there is room. Everything
+         about this minute in the biggest type on the page, coloured by
+         what you are doing; and what happens when it runs out, because
+         that is the second question every time. -->
+    <div class="cards">
+      <section class="now" id="now" aria-live="polite"></section>
+      <section class="next" id="next" hidden></section>
+    </div>
 
     <p class="empty" id="empty" hidden></p>
 
-    <!-- The past, folded away. Mid-shift an operator opening this
-         should land on now, not on hours that are already over. -->
-    <button type="button" class="past-toggle" id="past-toggle" hidden></button>
-
-    <ol class="timeline" id="timeline"></ol>
+    <!-- The day, turn by turn. How far through it is the table's own
+         heading. Rows already done stay, greyed: the strip says where
+         now is, so nothing needs folding away. -->
+    <section class="progress" id="progress" hidden></section>
+    <div class="table-wrap">
+      <table class="day-table">
+        <thead><tr><th scope="col" colspan="2">Time</th><th scope="col">What</th><th scope="col">Then</th></tr></thead>
+        <tbody id="timeline"></tbody>
+      </table>
+    </div>
 
     <div class="budget" id="budget" hidden>
       <div class="budget-nums">

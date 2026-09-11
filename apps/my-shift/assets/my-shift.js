@@ -49,8 +49,6 @@ const day = {
   signature: "",       // to notice the desk re-pushing under us
 };
 let ticker = null;
-let showPast = false;
-let scrolledToNow = false;
 
 /* How close to a handover counts as "soon". Long enough to finish a
  * take and walk, short enough that it is not shouting for half the
@@ -175,14 +173,17 @@ function buildRows(turns) {
   return rows;
 }
 
-/* Row height, proportional to how long the row lasts.
- *
- * A fifteen-minute break drawn the same height as a forty-five-minute
- * turn misdraws the day, and the shape of the day is most of what a
- * timeline is for. Floored so the shortest row is still comfortably
- * tappable and readable. */
-function rowHeight(mins) {
-  return Math.max(46, Math.round(mins * 1.5));
+/* How long the shift is, on the axis. Read from the window the desk
+ * wrote; a payload with no end falls back to where the last row ends. */
+function shiftLength() {
+  if (day.shift && day.shift.end) return offsetEnd(day.shift.end);
+  return day.rows.length ? day.rows[day.rows.length - 1].end : 480;
+}
+
+/* A floor "HH:MM" for a minute on the axis, for the strip's hour marks. */
+function hhmmAt(mins) {
+  const m = ((Math.round(mins) % 1440) + 1440) % 1440;
+  return pad2(Math.floor(m / 60)) + ":" + pad2(m % 60);
 }
 
 /* Where we are in the day: the row happening now, the one after it,
@@ -388,60 +389,111 @@ function renderProgress(at) {
   const totalWork = day.rows.filter(r => r.kind === "work")
     .reduce((s, r) => s + r.minutes, 0);
 
-  const line = el("div", "progress-line");
-  const l = el("span");
-  l.appendChild(txt("Turn "));
-  l.appendChild(el("b", null, String(here.turnNo || 1)));
-  l.appendChild(txt(" of " + here.turnsTotal));
-  line.appendChild(l);
+  const turn = el("span");
+  turn.appendChild(txt("Turn "));
+  turn.appendChild(el("b", null, String(here.turnNo || 1)));
+  turn.appendChild(txt(" of " + here.turnsTotal));
 
-  const r = el("span");
-  r.appendChild(el("b", null, hm(here.workedMins)));
-  r.appendChild(txt(" worked · " + hm(Math.max(0, totalWork - here.workedMins)) + " to go"));
-  line.appendChild(r);
-  box.appendChild(line);
+  const worked = el("span");
+  worked.appendChild(el("b", null, hm(here.workedMins)));
+  worked.appendChild(txt(" worked"));
 
-  const bar = el("div", "bar");
-  const fill = el("i");
-  fill.style.width = ((here.workedMins / (totalWork || 1)) * 100).toFixed(1) + "%";
-  bar.appendChild(fill);
-  box.appendChild(bar);
+  const toGo = el("span", null, hm(Math.max(0, totalWork - here.workedMins)) + " to go");
+
+  [turn, worked, toGo].forEach((part, i) => {
+    if (i) box.appendChild(el("span", "sep", "·"));
+    box.appendChild(part);
+  });
+}
+
+/* The whole shift as one strip. Every row is a segment as wide as it is
+ * long, in the row's colour; time before the first turn and after the
+ * last is drawn as nothing, so the strip is always the shift and a late
+ * start reads as a late start. Rebuilt with the table, not every second
+ * - only the marker moves, in renderNowMark. */
+function renderStrip(at) {
+  const box = $("strip"), track = $("track"), ticks = $("ticks");
+  track.textContent = "";
+  ticks.textContent = "";
+  if (!day.rows.length || !day.shift) { box.hidden = true; return; }
+  box.hidden = false;
+  const len = shiftLength();
+
+  const filler = (from, to) => {
+    if (to - from <= 0) return;
+    const seg = el("div", "seg");
+    seg.setAttribute("data-kind", "off");
+    seg.style.setProperty("--w", String(to - from));
+    track.appendChild(seg);
+  };
+  let cursor = 0;
+  day.rows.forEach(row => {
+    filler(cursor, row.start);
+    const seg = el("div", "seg");
+    seg.setAttribute("data-kind", row.kind);
+    seg.style.setProperty("--w", String(row.end - row.start));
+    /* The rig's name, where there is room for it - a fifteen-minute
+       stub at the end of the shift shows three letters of it, which
+       reads as a fault. The table under the strip names every one. */
+    if (row.kind === "work" && row.end - row.start >= 30) {
+      seg.appendChild(el("span", "mono", row.rigId));
+    }
+    if (covers(row, at)) seg.classList.add("on");
+    else if (row.end <= at) seg.classList.add("gone");
+    track.appendChild(seg);
+    cursor = row.end;
+  });
+  filler(cursor, len);
+
+  /* Hour marks, the first and last written in full. */
+  const start = shiftStart();
+  for (let m = 0; m <= len; m += 60) {
+    const full = m === 0 || m === len;
+    const tick = el("span", null,
+      full ? hhmmAt(start + m) : String(Math.floor(((start + m) / 60) % 24)));
+    tick.style.left = ((m / len) * 100).toFixed(1) + "%";
+    ticks.appendChild(tick);
+  }
+}
+
+/* Where now is on the strip. Off it before the shift starts and after
+ * it ends - the now card already says which, and a marker pinned to an
+ * edge would read as a shift that is running. */
+function renderNowMark(at) {
+  const mark = $("nowmark");
+  const len = shiftLength();
+  if (!day.rows.length || at < 0 || at >= len) { mark.hidden = true; return; }
+  mark.hidden = false;
+  mark.style.left = ((at / len) * 100).toFixed(1) + "%";
+  $("nowmark-t").textContent = "now " + clockString();
 }
 
 function renderTimeline(at) {
-  const list = $("timeline");
-  list.textContent = "";
-  let pastCount = 0;
+  const body = $("timeline");
+  body.textContent = "";
 
   day.rows.forEach(row => {
     const isNow = covers(row, at);
     const isPast = !isNow && row.end <= at;
-    if (isPast) pastCount += 1;
 
-    const li = el("li", "tl");
-    li.setAttribute("data-kind", row.kind);
-    if (isNow) li.classList.add("is-now");
-    if (isPast) {
-      li.classList.add("is-past");
-      li.hidden = !showPast;
-    }
+    const tr = el("tr", "tl");
+    tr.setAttribute("data-kind", row.kind);
+    if (isNow) tr.classList.add("is-now");
+    if (isPast) tr.classList.add("is-past");
 
-    li.appendChild(el("div", "tl-t", row.from));
+    tr.appendChild(el("td", "tl-t", row.from));
+    tr.appendChild(el("td", "tl-to", "– " + row.to));
 
-    const body = el("div", "tl-b");
-    body.style.setProperty("--h", rowHeight(row.minutes) + "px");
-
-    const what = el("div", "tl-what");
+    const what = el("td", "tl-what");
     if (row.kind === "work") {
-      what.appendChild(txt("Work "));
       what.appendChild(el("span", "mono", row.rigId));
     } else {
       what.appendChild(txt(row.kind));
     }
     what.appendChild(el("span", "tl-mins", hm(row.minutes)));
-    body.appendChild(what);
+    tr.appendChild(what);
 
-    const sub = el("div", "tl-sub");
+    const sub = el("td", "tl-sub");
     if (row.kind === "work" && row.goesTo) {
       sub.appendChild(txt("then "));
       sub.appendChild(el("b", null, row.goesTo));
@@ -456,22 +508,10 @@ function renderTimeline(at) {
       sub.appendChild(txt("back on "));
       sub.appendChild(el("b", null, row.backTo));
     }
-    if (sub.childNodes.length) body.appendChild(sub);
+    tr.appendChild(sub);
 
-    li.appendChild(body);
-    list.appendChild(li);
+    body.appendChild(tr);
   });
-
-  const toggle = $("past-toggle");
-  if (!pastCount) {
-    toggle.hidden = true;
-  } else {
-    toggle.hidden = false;
-    toggle.setAttribute("aria-expanded", String(showPast));
-    toggle.textContent = showPast
-      ? "Hide the " + pastCount + " row" + (pastCount === 1 ? "" : "s") + " already done"
-      : pastCount + " row" + (pastCount === 1 ? "" : "s") + " already done — show";
-  }
 }
 
 function renderBudget() {
@@ -549,6 +589,7 @@ function renderDay() {
   renderNext(at);
   renderProgress(at);
   renderPerch(at);
+  renderNowMark(at);
 
   /* The timeline, only when it would actually differ.
    *
@@ -556,28 +597,22 @@ function renderDay() {
    * emptying the list collapses the document, the browser clamps the
    * scroll offset to the shorter page, and an operator who had scrolled
    * to look at the end of their day was thrown back to the top a second
-   * later. Every second. The list changes when the schedule changes,
-   * when the current row moves on, or when the past is folded away -
-   * which is at most once a minute and usually far less. */
-  const sig = [day.signature, whereWeAre(at).i, showPast, day.stale,
+   * later. Every second. The list changes when the schedule changes or
+   * when the current row moves on - at most once a minute and usually
+   * far less. The strip is rebuilt with it, for the same reason. */
+  const sig = [day.signature, whereWeAre(at).i, day.stale,
                day.checkedAt].join("|");
   if (sig === drawn) return;
   drawn = sig;
 
   renderShiftLine();
+  renderStrip(at);
   renderTimeline(at);
   renderBudget();
   renderFreshness();
-
-  /* Land on now, once. Mid-shift an operator opening this should not
-     have to scroll past hours that are already over. */
-  if (!scrolledToNow && day.rows.length) {
-    scrolledToNow = true;
-    const row = document.querySelector(".tl.is-now");
-    if (row && row.scrollIntoView) {
-      setTimeout(() => row.scrollIntoView({ block: "center" }), 0);
-    }
-  }
+  /* No scrolling to the current row. The page opens on now - the strip
+     and the two cards are the top of it - and jumping to the table row
+     scrolled exactly those out of view. */
 }
 
 /* ===================================================================
@@ -691,7 +726,6 @@ function applyGate() {
     clearInterval(ticker);
     day.shift = null; day.turns = []; day.rows = [];
     day.checkedAt = null; day.stale = false; day.signature = "";
-    scrolledToNow = false;
     drawn = "";
     $("timeline").textContent = "";
     $("now").textContent = "";
@@ -699,7 +733,8 @@ function applyGate() {
     $("next").hidden = true;
     $("progress").hidden = true;
     $("budget").hidden = true;
-    $("past-toggle").hidden = true;
+    $("strip").hidden = true;
+    $("nowmark").hidden = true;
     $("clock").hidden = true;
     $("perch").hidden = true;
     $("checked").textContent = "";
@@ -936,11 +971,6 @@ document.addEventListener("keydown", e => {
   const modal = $("passwd-modal");
   if (e.key === "Escape" && modal && !modal.hidden) closePasswd();
 });
-on("past-toggle", "click", () => {
-  showPast = !showPast;
-  renderDay();
-});
-
 /* The perch follows the scroll, not the one-second tick - a sticky bar
    that appears a second after you scroll past the thing it replaces
    reads as a glitch. */
@@ -958,7 +988,8 @@ window.addEventListener("scroll", () => renderPerch(nowOnShift()), { passive: tr
  * check, once, and an answer somebody can act on. */
 const NEEDED = ["view-signin", "view-denied", "view-day", "clock", "clock-time",
                 "clock-zone", "who", "who-name", "who-role", "shiftline",
-                "stale", "now", "next", "progress", "empty", "past-toggle",
+                "stale", "now", "next", "progress", "empty", "strip", "track",
+                "nowmark", "nowmark-t", "ticks",
                 "timeline", "budget", "b-work", "b-break", "b-think",
                 "budget-note", "checked", "perch", "perch-what", "perch-left"];
 
