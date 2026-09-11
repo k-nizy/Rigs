@@ -263,14 +263,23 @@ async function mountMyShift(opts) {
       };
     },
 
-    pastToggle() {
-      const b = byId["past-toggle"];
-      return { hidden: b.hidden, text: b.textContent,
-               expanded: b.attrs["aria-expanded"] };
+    /* The strip: the shift as segments, and where now is marked on it. */
+    strip() {
+      const track = byId["track"], mark = byId["nowmark"];
+      return {
+        hidden: byId["strip"].hidden,
+        segments: track.children.map(seg => ({
+          kind: seg.attrs["data-kind"],
+          rig: (find(seg, "mono")[0] || {}).textContent || null,
+          width: Number(seg.style._p["--w"]),
+          on: seg.classList.contains("on"),
+          gone: seg.classList.contains("gone"),
+        })),
+        now: { hidden: mark.hidden, left: mark.style.left,
+               text: byId["nowmark-t"].textContent },
+        ticks: byId["ticks"].children.map(t => t.textContent),
+      };
     },
-
-    /* Only the rows an operator can actually see. */
-    visibleRows() { return this.rows().filter(r => !r.hidden); },
 
     budget() {
       return {
