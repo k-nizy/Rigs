@@ -328,6 +328,7 @@ async function loadPeople() {
     const body = await r.json();
     PEOPLE = (body && body.people) || [];
     rosterMode = "picker";
+    offerPeople();
   } catch (e) {
     rosterMode = "text";
   }
@@ -1123,6 +1124,149 @@ function renameButton(person, row, assign, close) {
   return rename;
 }
 
+/* The People screen.
+
+   Three columns that answer three questions a manager actually asks:
+   who is on the floor, where are they today, and can they open My
+   Shift yet. The seat is read from the roster being planned, so it
+   agrees with Plan by construction rather than by a second query; who
+   signs in comes from the service, which is the only thing that knows.
+
+   One action per row, never a menu: invite somebody who has an address
+   and no account, send the link again if it went astray, or retire
+   somebody who has left. Nothing here can change a password or read
+   one, because nothing anywhere can. */
+function renderPeople() {
+  const host = $("people-list");
+  if (!host) return;
+  host.textContent = "";
+
+  const live = PEOPLE.filter(x => !x.disabledAt);
+  const signing = live.filter(x => x.account === "active").length;
+  const invited = live.filter(x => x.account === "invited").length;
+  $("people-sub").textContent =
+    live.length + (live.length === 1 ? " person" : " people") + " on the floor \u00b7 "
+    + signing + " sign in" + (invited ? ", " + invited + " invited" : "");
+
+  PEOPLE.slice()
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    .forEach(person => host.appendChild(personRow(person)));
+}
+
+function personRow(person) {
+  const row = el("div", "prow");
+  row.setAttribute("data-person", person.id);
+  if (person.disabledAt) row.classList.add("gone");
+
+  const who = el("div");
+  who.appendChild(el("span", "prow-name", person.name));
+  who.appendChild(el("span", "prow-mail", person.email || "no email"));
+  row.appendChild(who);
+
+  const at = seatOf(person.id, null);
+  row.appendChild(el("span", "prow-seat" + (at ? "" : " off"),
+    at ? "Group " + at.g.key + " \u00b7 " + (at.oi + 1) : "not today"));
+
+  /* What the service says, in the manager's words rather than the
+     API's. "Needs an email" is the one that is actionable here. */
+  const state = person.disabledAt ? "Left the floor"
+    : person.account === "active" ? "Yes"
+    : person.account === "invited" ? "Invited"
+    : person.email ? "Not yet"
+    : "Needs an email to be invited";
+  row.appendChild(el("span", "prow-signs"
+    + (person.account === "active" && !person.disabledAt ? " yes" : "")
+    + (person.account === "invited" && !person.disabledAt ? " invited" : ""), state));
+
+  const acts = el("div", "prow-acts");
+  if (!person.disabledAt && person.email && person.account === "none") {
+    acts.appendChild(inviteButton(person, "Invite", "prow-act go"));
+  } else if (!person.disabledAt && person.account === "invited") {
+    acts.appendChild(inviteButton(person, "Send again", "prow-act again"));
+  }
+  if (!person.disabledAt) acts.appendChild(retireButton(person));
+  row.appendChild(acts);
+  return row;
+}
+
+/* Both buttons are the same call. The desk does not decide whether an
+   account is made or a link re-sent - the service does, and says which. */
+function inviteButton(person, label, cls) {
+  const b = el("button", cls, label);
+  b.type = "button";
+  b.addEventListener("click", async () => {
+    b.disabled = true;
+    try {
+      const r = await api("/api/people/" + encodeURIComponent(person.id) + "/invite",
+                          { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        /* The floor's own words. A refusal here is a real answer - no
+           relay, no address, already signs in - and a manager can act
+           on every one of them. */
+        toast(body.detail || "Could not invite " + person.name);
+        b.disabled = false;
+        return;
+      }
+      person.account = "invited";
+      toast("Invitation sent to " + (body.email || person.name));
+      renderPeople();
+    } catch (e) {
+      toast("Could not invite " + person.name);
+      b.disabled = false;
+    }
+  });
+  return b;
+}
+
+/* Disabled, never deleted - somebody leaving is not the same as their
+   never having been here, and a take filed last year still names them. */
+function retireButton(person) {
+  const b = el("button", "prow-act", "Left the floor");
+  b.type = "button";
+  b.addEventListener("click", async () => {
+    b.disabled = true;
+    try {
+      const r = await api("/api/people/" + encodeURIComponent(person.id) + "/disable",
+                          { method: "POST" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      person.disabledAt = new Date().toISOString();
+      toast(person.name + " is off the floor");
+      renderPeople();
+    } catch (e) {
+      toast("Could not retire " + person.name);
+      b.disabled = false;
+    }
+  });
+  return b;
+}
+
+async function addPerson() {
+  const name = $("add-name").value.trim();
+  const email = $("add-email").value.trim();
+  if (!name) { toast("A person needs a name"); return; }
+  const btn = $("btn-add-person");
+  btn.disabled = true;
+  try {
+    const r = await api("/api/people", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(email ? { name, email } : { name }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(body.detail || "Could not add " + name); return; }
+    PEOPLE = PEOPLE.concat([body]);
+    $("add-name").value = "";
+    $("add-email").value = "";
+    toast("Added " + body.name + " to the floor");
+    renderPeople();
+  } catch (e) {
+    toast("Could not add " + name);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* Who recorded what this shift, with the scores they gave their own
    takes. One row per person; a take filed before the rig sent a person
    sits under the seat and name it carries, and the row says which seat,
@@ -1567,7 +1711,9 @@ function applyGate() {
     clearInterval(ticker);
     $("view-live").hidden = true;
     $("view-plan").hidden = true;
-    ["board", "upnext", "rosters", "tbl-ops", "tbl-rigs"].forEach(id => {
+    $("view-people").hidden = true;
+    PEOPLE = [];
+    ["board", "upnext", "rosters", "tbl-ops", "tbl-rigs", "people-list"].forEach(id => {
       $(id).textContent = "";
     });
   }
@@ -1765,15 +1911,37 @@ function setView(v) {
     b.setAttribute("aria-selected", String(b.dataset.mode === v)));
   $("view-live").hidden = v !== "live";
   $("view-plan").hidden = v !== "plan";
+  $("view-people").hidden = v !== "people";
   document.body.dataset.view = v;
 
   clearInterval(ticker);
   if (v === "live") {
     renderLive();
     ticker = setInterval(renderLive, 1000);
+  } else if (v === "people") {
+    renderPeople();
   } else {
     renderPlan();
   }
+}
+
+/* The People button, added once the service has answered with a list.
+
+   Not in the markup, because a desk with no service behind it has
+   nobody to list and nowhere to add one - the same reasoning that
+   leaves the roster read-only there. A floor whose service predates
+   `/api/people` is the same case. */
+function offerPeople() {
+  const modes = $("modes");
+  if ([...modes.children].some(b => b.dataset.mode === "people")) return;
+  const b = document.createElement("button");
+  b.type = "button";
+  b.setAttribute("role", "tab");
+  b.setAttribute("aria-selected", "false");
+  b.dataset.mode = "people";
+  b.textContent = "People";
+  b.addEventListener("click", () => setView("people"));
+  modes.appendChild(b);
 }
 
 [...$("modes").children].forEach(b =>
@@ -1784,6 +1952,7 @@ function setView(v) {
 $("in-date").value = cfg.date;
 $("in-date").addEventListener("change", e => { cfg.date = e.target.value; onPlanChanged(); });
 $("btn-push").addEventListener("click", pushFloor);
+$("btn-add-person").addEventListener("click", addPerson);
 $("btn-print").addEventListener("click", () => window.print());
 $("btn-refresh").addEventListener("click", () => loadFloor(true));
 $("signin-form").addEventListener("submit", signIn);

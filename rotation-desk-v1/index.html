@@ -15,15 +15,15 @@
 <div class="wrap">
 
   <header class="masthead">
-    <div class="brand">
-      <p class="eyebrow"><span class="v-mark" aria-hidden="true"></span>Verlet Robotics</p>
-      <h1>Rotation Desk <span class="ver">v1</span></h1>
-    </div>
+    <h1>Rotation Desk <span class="ver">v1</span></h1>
+    <!-- The three screens, on one line with the title and whoever is at
+         it. People is added by the script when the service has a list to
+         show: with no service there is nobody to list. -->
+    <nav class="modes" role="tablist" id="modes" aria-label="Desk mode">
+      <button type="button" role="tab" data-mode="live" aria-selected="true">Live</button>
+      <button type="button" role="tab" data-mode="plan" aria-selected="false">Plan</button>
+    </nav>
     <div class="head-right">
-      <div class="modes" role="tablist" id="modes" aria-label="Desk mode">
-        <button type="button" role="tab" data-mode="live" aria-selected="true">Live</button>
-        <button type="button" role="tab" data-mode="plan" aria-selected="false">Plan</button>
-      </div>
       <!-- Who is signed in. Hidden entirely on a deployment with no
            accounts, so the demo looks exactly as it did. -->
       <div class="who" id="who" hidden>
@@ -165,6 +165,36 @@
   <!-- =============================================================
        LIVE - what the floor is doing right now. Nothing to fill in.
        ============================================================= -->
+  <!-- =============================================================
+       PEOPLE - who is on the floor, and who signs in. The seat is read
+       from the roster being planned; whether somebody signs in comes
+       from the service. Inviting is the only way to give somebody a
+       password without reading one out.
+       ============================================================= -->
+  <main id="view-people" hidden>
+    <section class="people">
+      <div class="people-head">
+        <div>
+          <h2>People on the floor</h2>
+          <p id="people-sub">&nbsp;</p>
+        </div>
+        <div class="add">
+          <input type="text" id="add-name" placeholder="Name" aria-label="New person's name">
+          <input type="email" id="add-email" placeholder="Email (optional)" aria-label="New person's email">
+          <button type="button" class="btn" id="btn-add-person">Add person</button>
+        </div>
+      </div>
+      <div class="people-table">
+        <div class="prow prow-head">
+          <span>Person</span><span>Today</span><span>Signs in</span><span></span>
+        </div>
+        <div id="people-list"></div>
+      </div>
+      <p class="people-foot">An invite sends a link to choose a password - nothing is read
+        out, and the link works once. Who sits where today is set on Plan.</p>
+    </section>
+  </main>
+
   <main id="view-live">
 
     <div class="now" id="now">
