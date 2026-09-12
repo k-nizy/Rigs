@@ -39,7 +39,8 @@ class TestCreatedDeliberately:
         async with serving() as c:
             p = await add(c, "Ben Carter")
         uuid.UUID(p["id"])
-        assert p == {"id": p["id"], "name": "Ben Carter", "email": None, "disabledAt": None}
+        assert p == {"id": p["id"], "name": "Ben Carter", "email": None, "disabledAt": None,
+                     "account": "none"}   # nobody signs in as a person just made
 
     async def test_two_people_with_one_name_are_two_people(self, engine):
         async with serving() as c:
