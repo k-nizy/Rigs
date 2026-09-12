@@ -212,9 +212,12 @@ async function mountDesk(opts) {
     find,
     textIn,
 
+    /* The patch lands on the node and rides on the event too, so a
+       handler reading e.key or e.value sees what a browser would give. */
     fire(node, type, patch) {
       Object.assign(node, patch || {});
-      (node._on[type] || []).forEach(fn => fn({ target: node }));
+      (node._on[type] || []).forEach(fn => fn({ target: node, ...(patch || {}),
+                                                preventDefault() {}, stopPropagation() {} }));
     },
     click(node) { this.fire(node, "click"); },
 

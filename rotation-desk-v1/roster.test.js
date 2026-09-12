@@ -431,38 +431,152 @@ const PEOPLE = [
   { id: "person-mei",  name: "Mei Chen",   email: "m.chen@verlet.co", disabledAt: null },
   { id: "person-ben1", name: "Ben Carter", email: "b.carter@verlet.co", disabledAt: null },
   { id: "person-ben2", name: "Ben Carter", email: null, disabledAt: null },
+  { id: "person-ines", name: "Ines Costa", email: "i.costa@verlet.co", disabledAt: null },
+  { id: "person-gone", name: "Old Hand",   email: null, disabledAt: "2026-08-01T00:00:00Z" },
 ];
 
-/* The first operator input of group A, and the note beside it. */
-const firstOp = desk => {
-  const card = desk.find(desk.$("rosters"), "grp")[0];
-  const line = desk.find(card, "op-line")[0];
-  const inp = line.children[1];
-  assert.equal(inp.getAttribute("aria-label"), "Group A operator 1",
-    "the first op-line of group A did not hold operator 1");
-  return { inp, note: line.children[2] };
-};
+/* One operator seat on the roster cards: its field, its note, and the
+   menu the field opens. Group by letter, seat by number, as on the
+   sheet. */
+function seat(desk, key, n) {
+  const card = desk.find(desk.$("rosters"), "grp")
+    .find(c => desk.textIn(c, "grp-key") === "GROUP " + key);
+  assert.ok(card, "no roster card for group " + key);
+  const line = desk.find(card, "op-line")[n - 1];
+  const field = desk.find(line, "op-pick")[0];
+  assert.ok(field, "seat " + key + n + " has no picker field");
+  assert.equal(field.getAttribute("aria-label"), "Group " + key + " operator " + n);
+  return {
+    line, field,
+    name: () => field.textContent,
+    note: () => desk.find(line, "op-note")[0],
+    open() { desk.click(field); return this; },
+    isOpen: () => !desk.find(line, "pick-menu")[0].hidden,
+    search: () => desk.find(line, "pick-search")[0],
+    rows: () => desk.find(line, "pick-row").map(r => ({
+      id: r.getAttribute("data-person"),
+      name: desk.textIn(r, "pick-name"),
+      mail: desk.textIn(r, "pick-mail"),
+      where: desk.textIn(r, "pick-where"),
+      take: desk.find(r, "pick-take")[0],
+      rename: desk.find(r, "pick-rename")[0] || null,
+    })),
+    add: () => desk.find(line, "pick-add")[0] || null,
+    foot: () => desk.textIn(line, "pick-foot"),
+  };
+}
 
-test("with people on the floor, a typed name becomes the person and the push carries their id",
+test("the picker lists everyone on the floor before anything is typed, and not the disabled",
   (async () => {
     const server = servingPeople(PEOPLE);
     const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
     try {
       await settle();
       desk.mode("plan");
-      const { inp, note } = firstOp(desk);
-      desk.fire(inp, "input",  { value: "Mei Chen" });
-      desk.fire(inp, "change", { value: "Mei Chen" });
+      const a1 = seat(desk, "A", 1);
+      assert.equal(a1.isOpen(), false, "the menu should start closed");
+      a1.open();
+      assert.equal(a1.isOpen(), true);
+      assert.deepEqual(a1.rows().map(r => r.name),
+        ["Ben Carter", "Ben Carter", "Ines Costa", "Mei Chen"],
+        "everybody, sorted, with nobody disabled");
+      assert.deepEqual(a1.rows().map(r => r.where), ["", "", "", ""],
+        "nobody is seated yet, so nobody is marked");
+    } finally { desk.stop(); }
+  }));
+
+test("typing narrows the list, on name or email, and clearing brings it all back",
+  (async () => {
+    const server = servingPeople(PEOPLE);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.mode("plan");
+      const a1 = seat(desk, "A", 1).open();
+      desk.fire(a1.search(), "input", { value: "me" });
+      assert.deepEqual(a1.rows().map(r => r.name), ["Mei Chen"]);
+      desk.fire(a1.search(), "input", { value: "b.carter" });
+      assert.deepEqual(a1.rows().map(r => r.id), ["person-ben1"], "email narrows too");
+      desk.fire(a1.search(), "input", { value: "" });
+      assert.equal(a1.rows().length, 4);
+    } finally { desk.stop(); }
+  }));
+
+test("picking a person seats them, closes the menu, and the push carries their id",
+  (async () => {
+    const server = servingPeople(PEOPLE);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.mode("plan");
+      const a1 = seat(desk, "A", 1).open();
+      desk.click(a1.rows().find(r => r.id === "person-mei").take);
       await settle();
 
-      assert.equal(note.hidden, false, "a resolved person with an email shows it");
-      assert.match(note.textContent, /m\.chen@verlet\.co/);
+      assert.equal(a1.name(), "Mei Chen");
+      assert.equal(a1.isOpen(), false, "a pick closes the menu");
+      assert.match(a1.note().textContent, /m\.chen@verlet\.co/, "the email confirms who was picked");
 
       desk.click(desk.$("btn-push"));
       await settle();
-      assert.ok(server.posted.length === 0, "resolving an existing person must not create one");
+      assert.equal(server.posted.length, 0, "picking an existing person must not create one");
       assert.ok(personIdsIn(server.sent).includes("person-mei"),
         "the push did not carry the picked person's id");
+    } finally { desk.stop(); }
+  }));
+
+test("a person already seated is marked with where they sit, and 'here' in their own seat",
+  (async () => {
+    const server = servingPeople(PEOPLE);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.mode("plan");
+      const a1 = seat(desk, "A", 1).open();
+      desk.click(a1.rows().find(r => r.id === "person-mei").take);
+      await settle();
+
+      const b1 = seat(desk, "B", 1).open();
+      const mei = b1.rows().find(r => r.id === "person-mei");
+      assert.equal(mei.where, "Group A · 1", "the list should say where Mei already sits");
+      assert.equal(b1.rows().find(r => r.id === "person-ines").where, "");
+
+      const again = seat(desk, "A", 1).open();
+      assert.equal(again.rows().find(r => r.id === "person-mei").where, "here");
+    } finally { desk.stop(); }
+  }));
+
+test("picking someone seated elsewhere moves them here, the two seats swap, and it says so",
+  (async () => {
+    const server = servingPeople(PEOPLE);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.mode("plan");
+      const a1 = seat(desk, "A", 1).open();
+      desk.click(a1.rows().find(r => r.id === "person-mei").take);
+      await settle();
+      const b1 = seat(desk, "B", 1);
+      const wasInB1 = b1.name();
+      assert.ok(wasInB1 && wasInB1 !== "Mei Chen");
+
+      b1.open();
+      desk.click(b1.rows().find(r => r.id === "person-mei").take);
+      await settle();
+
+      assert.equal(seat(desk, "B", 1).name(), "Mei Chen");
+      assert.equal(seat(desk, "A", 1).name(), wasInB1,
+        "the seat Mei left should hold whoever B1 held - the roster stays whole");
+      assert.match(seat(desk, "B", 1).note().textContent,
+        new RegExp("moved here from Group A seat 1.*" + wasInB1),
+        "the note should say what moved and where the other went");
+
+      desk.click(desk.$("btn-push"));
+      await settle();
+      const ids = personIdsIn(server.sent).filter(id => id === "person-mei");
+      assert.ok(ids.length > 0 && new Set(server.sent.filter(p => p.turns.some(t =>
+        t.operator.personId === "person-mei")).map(p => p.group)).size === 1,
+        "Mei should be in exactly one group after the move");
     } finally { desk.stop(); }
   }));
 
@@ -473,62 +587,78 @@ test("a name nobody has is offered for adding, and typing alone never mints a pe
     try {
       await settle();
       desk.mode("plan");
-      const { inp, note } = firstOp(desk);
-      desk.fire(inp, "input",  { value: "Zoe Bright" });
-      desk.fire(inp, "change", { value: "Zoe Bright" });
-      await settle();
-
+      const a1 = seat(desk, "A", 1).open();
+      desk.fire(a1.search(), "input", { value: "Zoe Bright" });
+      assert.equal(a1.rows().length, 0);
+      assert.match(a1.foot(), /Nobody on the floor is called Zoe Bright/);
       assert.equal(server.posted.length, 0, "typing a name created a person by itself");
-      assert.match(note.textContent, /Nobody on the floor is called Zoe Bright/);
 
-      const add = desk.find(note, "op-act")[0];
+      const add = a1.add();
       assert.ok(add, "no add button was offered");
+      assert.match(add.textContent, /Add Zoe Bright/);
       desk.click(add);
       await settle();
 
       assert.deepEqual(server.posted, [{ name: "Zoe Bright" }], "adding did not POST the typed name");
+      assert.equal(a1.name(), "Zoe Bright", "the new person should take the seat");
+      assert.equal(a1.isOpen(), false);
       desk.click(desk.$("btn-push"));
       await settle();
-      assert.ok(personIdsIn(server.sent).includes("person-4"),
+      assert.ok(personIdsIn(server.sent).includes("person-6"),
         "the newly added person's id was not pushed");
     } finally { desk.stop(); }
   }));
 
-test("two people with one name are flagged, never guessed, and one can be renamed apart",
+test("two people with one name are both listed with what tells them apart, and one can be renamed",
   (async () => {
     const server = servingPeople(PEOPLE);
     const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
     try {
       await settle();
       desk.mode("plan");
-      const { inp, note } = firstOp(desk);
-      desk.fire(inp, "input",  { value: "Ben Carter" });
-      desk.fire(inp, "change", { value: "Ben Carter" });
-      await settle();
+      const a1 = seat(desk, "A", 1).open();
+      const bens = a1.rows().filter(r => r.name === "Ben Carter");
+      assert.equal(bens.length, 2, "both should be listed, never one guessed");
+      assert.deepEqual(bens.map(r => r.mail), ["b.carter@verlet.co", "no email"],
+        "the email is what tells them apart, and its absence is said");
+      assert.ok(bens.every(r => r.rename), "a shared name offers a rename on each");
+      assert.equal(a1.rows().find(r => r.id === "person-mei").rename, null,
+        "a name nobody shares needs no rename here");
 
-      assert.match(note.textContent, /2 people are called Ben Carter/);
-      desk.click(desk.$("btn-push"));
-      await settle();
-      assert.ok(!personIdsIn(server.sent).some(id => id.startsWith("person-ben")),
-        "the desk guessed which Ben Carter was meant");
-
-      /* The remedy the doc licenses: rename one, the id does not move. */
-      const renames = desk.find(note, "op-act").filter(b => b.textContent === "Rename");
-      assert.equal(renames.length, 2, "each Ben Carter should offer a rename");
-      desk.click(renames[1]);
+      desk.click(bens[1].rename);
       await settle();
       const box = desk.$("rosters").querySelectorAll("[aria-label=New name for Ben Carter]")[0];
       assert.ok(box, "rename offered no box to type the new name into");
       desk.fire(box, "input", { value: "Ben Carter (nights)" });
-      const save = desk.find(note, "op-act").find(b => b.textContent === "Save");
-      desk.click(save);
+      desk.click(desk.find(a1.line, "pick-save")[0]);
       await settle();
 
       assert.deepEqual(server.renamed, [{ id: "person-ben2", name: "Ben Carter (nights)" }]);
+      assert.equal(a1.name(), "Ben Carter (nights)", "the renamed person takes the seat");
       desk.click(desk.$("btn-push"));
       await settle();
       assert.ok(personIdsIn(server.sent).includes("person-ben2"),
-        "renaming apart did not assign the renamed person");
+        "renaming apart did not seat the renamed person");
+    } finally { desk.stop(); }
+  }));
+
+test("Escape closes the menu, and Enter takes the first match",
+  (async () => {
+    const server = servingPeople(PEOPLE);
+    const desk = await mountDesk({ at: "10:37:22", fetchImpl: server.fetchImpl });
+    try {
+      await settle();
+      desk.mode("plan");
+      const a1 = seat(desk, "A", 1).open();
+      desk.fire(a1.search(), "keydown", { key: "Escape" });
+      assert.equal(a1.isOpen(), false);
+
+      a1.open();
+      desk.fire(a1.search(), "input", { value: "ines" });
+      desk.fire(a1.search(), "keydown", { key: "Enter" });
+      await settle();
+      assert.equal(a1.name(), "Ines Costa");
+      assert.equal(a1.isOpen(), false);
     } finally { desk.stop(); }
   }));
 

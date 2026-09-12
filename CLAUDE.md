@@ -621,13 +621,19 @@ its own, so each can be reverted on its own.
   payload half is built too: a roster entry may be `{ name, personId }`
   and the engine puts `operator.personId` on every turn beside the seat,
   only when the entry carries one, so the sheet is drawn identically
-  either way. The picker is built too: a roster card resolves a typed
-  name to a person on change, offers to add a name nobody has, and flags
-  two people who share one - never guessing. The card is a plain text
-  box against a service that predates `/api/people` (the same absent-
-  route exception `session.js` makes), and read-only with no service at
-  all, since a desk that cannot push has nowhere for an edit to go.
-  Typing never mints a person; only the add button does.
+  either way. The picker is built too, and rebuilt once: each seat on
+  a roster card is a field that opens the floor's whole list under it -
+  everybody, in name order, narrowed by typing, never a browser's guess
+  at matches - and beside anyone already seated it says where they sit.
+  Picking somebody seated elsewhere moves them here and sends this
+  seat's holder there, so the roster stays whole, and the note says what
+  moved. A name nobody has is offered for adding; two people with one
+  name are both listed with what tells them apart and each offers a
+  rename - never guessed. The card is a plain text box against a
+  service that predates `/api/people` (the same absent-route exception
+  `session.js` makes), and read-only with no service at all, since a
+  desk that cannot push has nowhere for an edit to go. Typing never
+  mints a person; only the add button does.
 - **The roster reads server-side** - built, and the read-back-and-prove
   path is gone. The assignment had no home but the pushed payloads; it
   rides on the push now, as `schedule_pushes.roster`, in the same row
