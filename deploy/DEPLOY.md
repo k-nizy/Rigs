@@ -222,6 +222,12 @@ Three things worth knowing before you run it:
   or three managers and sixteen operators on a roster somebody already
   maintains. This is also how the first manager exists at all - a seeded
   default account would be a known password on every deployment.
+- **Inviting, once mail can leave.** With `SMTP_HOST` set (the reset
+  flow's relay) a manager invites from the desk - or from here with
+  `mint_account invite --person <id from people>` - and the person gets
+  a link to choose their own password; nothing is read out. `INVITE_DAYS`
+  (default 3) is how long the link lives. Without a relay the invite is
+  refused and says so; `operator --person` with a password is the way.
 - **Disable, never delete.** `mint_account disable` ends every session
   that person has open and keeps the name, so a later audit row still
   resolves to somebody.

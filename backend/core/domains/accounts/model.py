@@ -71,6 +71,14 @@ class Account(TimestampedBase):
 
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
+    # When a password was last chosen - by the person, or by whoever
+    # minted the account. Null on an account that was *invited*: it has
+    # a hash nobody knows, and stays "invited" until the link is
+    # followed. The desk reads this to say who signs in yet.
+    password_set_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # Disabled, never deleted. Somebody leaving is not the same as them
     # never having been here, and a later audit row naming who pushed a
     # schedule should still be able to find the name.

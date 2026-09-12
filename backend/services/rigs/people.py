@@ -39,6 +39,7 @@ from __future__ import annotations
 import hmac
 import logging
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, Request, Response
@@ -52,6 +53,7 @@ from core.domains.accounts.repository import (
     AccountRepository, AccountSessionRepository, PasswordResetRepository,
     normalise_email,
 )
+from core.domains.people.repository import PersonRepository
 from core.infrastructure.config import Settings, get_settings
 from core.infrastructure.database import get_session, sessionmaker
 from services.rigs import mail
@@ -303,6 +305,7 @@ async def _set_password(
     the one that puts links in mailboxes.
     """
     account.password_hash = hash_password(new)
+    account.password_set_at = datetime.now(timezone.utc)
 
     sessions = AccountSessionRepository(session)
     await sessions.revoke_all(account.id)
@@ -500,6 +503,119 @@ async def finish_reset(
     session_token = await _set_password(session, account, new, settings)
     log.info("password set from a reset link: %s (%s)", account.email, account.role)
     return account, session_token
+
+
+# ------------------------------------------------------------ an invite
+
+
+class InviteRefused(Exception):
+    """Why an invitation cannot be sent, with the status a route gives it.
+
+    Said plainly. This is a manager's act on a manager's screen, and the
+    public reset route's silence is not wanted here: a manager is
+    entitled to know why nothing was sent.
+    """
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+def invite_message(token: str, account: Account, settings: Settings) -> tuple[str, str]:
+    """The subject and body of an invitation. Plain text, and it says
+    what the link is for - somebody who never asked for mail from this
+    floor is reading it."""
+    days = settings.invite_days
+    body = (
+        f"Hello {account.name},\n\n"
+        f"You have been added to the Rigs floor. My Shift shows your turns, "
+        f"your breaks and your own numbers, and it signs in with this address. "
+        f"Open this link to choose your password:\n\n"
+        f"    {reset_link(token, account, settings)}\n\n"
+        f"It works once, and it stops working in {days} days - ask a manager "
+        f"for another if it has.\n"
+    )
+    return "You are on the Rigs floor - choose your password", body
+
+
+async def invite_person(
+    session: AsyncSession, person_id: uuid.UUID, settings: Settings,
+) -> tuple[Account, str, bool]:
+    """Mint the person's operator account if there is none, and mail a
+    link to set its password. Returns the account, whether it was
+    "created" or the link "resent", and whether the relay took the mail.
+
+    The one function under both the desk's button and the terminal's
+    verb, so the two cannot drift. It is the reset flow doing the same
+    job for somebody who has no password yet: the account is minted with
+    a hash of a secret nobody is told - not blank, not a known value -
+    and the link is the same one "Forgotten your password?" sends,
+    landing on My Shift. Following it chooses a password and signs them
+    in, and `password_set_at` records that it happened; until then the
+    account is "invited", which is what the desk draws the button from.
+
+    Refused up front when the floor cannot send mail at all, and nothing
+    is minted: an account with a password nobody knows, behind a link
+    that never arrives, is a person locked out with no way to tell. The
+    terminal can still mint one with a password on such a floor.
+
+    Somebody who already signs in is refused too. An invite would mail
+    them a link that replaces the password they chose, which is a reset,
+    and the reset flow is where that lives.
+    """
+    if not mail.is_configured(settings):
+        raise InviteRefused(
+            503, "this floor has no mail relay configured, so it cannot send an "
+                 "invitation - mint the account with mint_account instead")
+
+    person = await PersonRepository(session).get(person_id)
+    if person is None:
+        raise LookupError("nobody has that id")
+    if person.disabled_at is not None:
+        raise InviteRefused(409, f"{person.name} has left the floor")
+    if not person.email:
+        raise InviteRefused(409, f"{person.name} has no email address - give them one first")
+
+    accounts = AccountRepository(session)
+    account = await accounts.by_person_id(person.id)
+    if account is not None and account.disabled_at is not None:
+        raise InviteRefused(409, f"{person.name}'s account is disabled")
+    if account is not None and account.password_set_at is not None:
+        raise InviteRefused(409, f"{person.name} already signs in as {account.email}")
+
+    what = "resent"
+    if account is None:
+        taken = await accounts.by_email(person.email)
+        if taken is not None:
+            raise InviteRefused(409, f"{person.email} already signs in as somebody else")
+        account = Account(
+            email=normalise_email(person.email), name=person.name, role=OPERATOR,
+            person_id=person.id,
+            password_hash=hash_password(secrets.token_urlsafe(32)),
+            password_set_at=None,
+        )
+        await accounts.add(account)
+        await session.flush()
+        what = "created"
+
+    # A fresh link voids the earlier ones, as a reset does: a manager who
+    # presses again because the mail did not come must not leave two
+    # working ways in lying in a mailbox.
+    resets = PasswordResetRepository(session)
+    await resets.void_all(account.id)
+    token = secrets.token_urlsafe(32)
+    await resets.open(account.id, token, timedelta(days=settings.invite_days))
+    await session.commit()
+
+    subject, body = invite_message(token, account, settings)
+    sent = await mail.send(account.email, subject, body, settings)
+    if sent:
+        log.info("invitation sent to %s (%s)", account.email, what)
+    else:
+        log.error("an invitation for %s could not be delivered; the account "
+                  "exists and a manager can send it again", account.email)
+    return account, what, sent
 
 
 # ------------------------------------------------- who is calling, later

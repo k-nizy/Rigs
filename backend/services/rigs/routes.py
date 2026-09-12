@@ -32,6 +32,7 @@ from core.workflows.schedules import turns_for_operator
 from sqlalchemy.exc import IntegrityError
 
 from core.domains.people.repository import PersonRepository
+from core.domains.accounts.model import Account
 from core.domains.accounts.repository import (
     AccountRepository, AccountSessionRepository,
 )
@@ -39,7 +40,8 @@ from services.rigs.auth import (
     desk_auth, desk_read_auth, rig_auth, rig_auth_for_key, rig_rate_limit,
 )
 from services.rigs.people import (
-    REFUSED, RESET_SENT, SESSION_COOKIE, PasswordRefused, deliver_reset,
+    REFUSED, RESET_SENT, SESSION_COOKIE, InviteRefused, PasswordRefused, deliver_reset,
+    invite_person,
     change_password, clear_session_cookies, current_account, finish_reset,
     issue_session_cookies, lockout, lockout_key, login_key, login_limiter,
     require_account, require_csrf, require_manager, require_operator,
@@ -1243,13 +1245,42 @@ class PersonOut(BaseModel):
     name: str
     email: str | None
     disabledAt: str | None
+    # Whether they sign in yet: "none" (no account), "invited" (an account
+    # with a password nobody knows, behind a link), "active" (a password
+    # of their own). What the desk draws the invite button from.
+    account: str = "none"
 
 
-def _person_out(p) -> PersonOut:
+def _person_out(p, account: str = "none") -> PersonOut:
     return PersonOut(
         id=str(p.id), name=p.name, email=p.email,
         disabledAt=p.disabled_at.isoformat() if p.disabled_at else None,
+        account=account,
     )
+
+
+async def _account_states(session: AsyncSession, people) -> dict:
+    """One query for the lot. `people` and `accounts` are separate
+    domains that never import each other; joining them is this layer's
+    job, and it is a read."""
+    ids = [p.id for p in people]
+    if not ids:
+        return {}
+    rows = await session.execute(select(Account).where(Account.person_id.in_(ids)))
+    out = {}
+    for a in rows.scalars().all():
+        if a.disabled_at is not None:
+            out[a.person_id] = "none"
+        else:
+            out[a.person_id] = "active" if a.password_set_at is not None else "invited"
+    return out
+
+
+class InviteOut(BaseModel):
+    ok: bool
+    email: str
+    account: str     # "created" | "resent"
+    sent: bool
 
 
 class PeopleOut(BaseModel):
@@ -1300,7 +1331,8 @@ async def find_people(
     disambiguates rather than the code guessing. No query is the whole
     floor - the picker's opening state."""
     rows = await PersonRepository(session).search(q, include_disabled=includeDisabled)
-    return PeopleOut(people=[_person_out(p) for p in rows])
+    states = await _account_states(session, rows)
+    return PeopleOut(people=[_person_out(p, states.get(p.id, "none")) for p in rows])
 
 
 @router.get("/people/{person_id}", response_model=PersonOut, tags=["people"],
@@ -1315,7 +1347,32 @@ async def one_person(
     p = await PersonRepository(session).get(person_id)
     if p is None:
         raise HTTPException(status_code=404, detail="nobody has that id")
-    return _person_out(p)
+    states = await _account_states(session, [p])
+    return _person_out(p, states.get(p.id, "none"))
+
+
+@router.post("/people/{person_id}/invite", response_model=InviteOut, tags=["people"],
+             dependencies=[Depends(require_manager), Depends(require_csrf)],
+             summary="Mint their account with no password, and mail a link to set one")
+async def invite_a_person(
+    person_id: uuid.UUID, session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> InviteOut:
+    """The desk's invite button. `invite_person` is the whole of it, and
+    the terminal's `mint_account invite` calls the same function.
+
+    Refused plainly - no address, has left, already signs in, no relay on
+    this floor - because this is a manager's act on a manager's screen.
+    The public reset route must not say who exists; this route is not
+    reachable by the public.
+    """
+    try:
+        account, what, sent = await invite_person(session, person_id, settings)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="nobody has that id")
+    except InviteRefused as refused:
+        raise HTTPException(status_code=refused.status, detail=refused.message)
+    return InviteOut(ok=True, email=account.email, account=what, sent=sent)
 
 
 @router.patch("/people/{person_id}", response_model=PersonOut, tags=["people"],

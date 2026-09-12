@@ -220,6 +220,10 @@ class Settings(BaseSettings):
     # A reset token is the account for as long as it lives, so it does not
     # live long. Long enough to walk to a screen and read a mailbox.
     password_reset_minutes: int = 30
+    # How long an invitation link lives. Days, not minutes: a reset is
+    # asked for at a screen and opened straight away; an invite is sent
+    # by a manager and opened at home, tonight or tomorrow.
+    invite_days: int = 3
 
     # Requests per hour per calling address. Separate from the login
     # limiter: this one sends mail, so an unbounded route is a way to have
