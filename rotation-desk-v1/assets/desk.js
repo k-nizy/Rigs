@@ -333,16 +333,6 @@ async function loadPeople() {
   }
 }
 
-/* Everybody with this name, however it is capitalised or spaced. The
-   comparison is deliberately loose: "Ben Carter" and "ben carter " are
-   one person to a human, and a picker that disagreed would offer to
-   create a second one. */
-function peopleNamed(name) {
-  const want = String(name || "").trim().toLowerCase();
-  if (!want) return [];
-  return PEOPLE.filter(x => String(x.name || "").trim().toLowerCase() === want);
-}
-
 /* The twelve payloads, gathered back into the four groups they came
  * from. The payload carries its own group and task, so this needs
  * nothing from the roster on screen. */
@@ -834,7 +824,6 @@ function renderRosters() {
     opWrap.appendChild(el("label", null, "Operators"));
     const list = el("div", "op-list");
     g.ops.forEach((o, oi) => list.appendChild(opLine(g, o, oi)));
-    if (rosterMode === "picker") opWrap.appendChild(peopleList());
     opWrap.appendChild(list);
     card.appendChild(opWrap);
 
@@ -855,21 +844,6 @@ function renderRosters() {
   });
 }
 
-/* The names the picker offers, as a datalist so the browser does the
-   searching. It is a list of who exists, not a list of what may be
-   typed: what makes an entry a person is resolving it below, not
-   picking it from here. */
-function peopleList() {
-  const dl = el("datalist");
-  dl.id = "people-list";
-  PEOPLE.forEach(x => {
-    const o = el("option");
-    o.value = x.name;
-    dl.appendChild(o);
-  });
-  return dl;
-}
-
 /* One operator slot, in whichever of the three modes the floor turned
    out to support. */
 function opLine(g, o, oi) {
@@ -884,22 +858,12 @@ function opLine(g, o, oi) {
     return line;
   }
 
+  if (rosterMode === "picker") return pickLine(g, oi, line, label);
+
   const inp = el("input");
   inp.type = "text";
   inp.value = opName(o);
   inp.setAttribute("aria-label", label);
-  if (rosterMode === "picker") inp.setAttribute("list", "people-list");
-
-  const note = el("div", "op-note");
-  note.hidden = true;
-
-  /* The only way a person is ever attached to a seat. Typing cannot do
-     it; this is called from resolve() below and from nowhere else. */
-  function assign(person) {
-    g.ops[oi] = { name: person.name, personId: person.id };
-    inp.value = person.name;
-    onPlanChanged();
-  }
 
   inp.addEventListener("input", () => {
     /* Marks the screen as touched, so the floor's roster never lands on
@@ -911,55 +875,188 @@ function opLine(g, o, oi) {
     onPlanChanged();
   });
 
-  if (rosterMode === "picker") {
-    inp.addEventListener("change", () => resolveOp(inp, note, assign));
-  }
-
   line.appendChild(inp);
-  line.appendChild(note);
   return line;
 }
 
-/* What the desk says about the name now in the box.
-
-   It flags and does not refuse. A manager at 07:55 who cannot schedule
-   a shift until they have done data admin is a manager who works around
-   the desk, and the remedy - renaming - is one press away rather than a
-   trip to another screen. The residual is real and stated in CLAUDE.md:
-   the wrong one of two people sharing a name can be picked. */
-function resolveOp(inp, note, assign) {
-  const typed = inp.value.trim();
-  note.textContent = "";
-  note.className = "op-note";
-  note.hidden = true;
-  if (!typed) return;
-
-  const same = peopleNamed(typed);
-
-  if (same.length === 1) {
-    assign(same[0]);
-    if (same[0].email) {
-      note.appendChild(el("span", "op-hint", same[0].email));
-      note.hidden = false;
+/* Where a person sits on the roster being drawn, if anywhere: the
+   group and the seat. `except` is a seat to ignore - the one asking. */
+function seatOf(personId, except) {
+  for (const g of GROUPS) {
+    for (let i = 0; i < g.ops.length; i++) {
+      if (except && except.g === g && except.oi === i) continue;
+      if (opPerson(g.ops[i]) === personId) return { g, oi: i };
     }
-    return;
+  }
+  return null;
+}
+
+/* Every seat's field, so a pick that moves somebody can redraw the seat
+   they left without re-mounting the cards (the inputs on them are live,
+   and renderRosters() rightly refuses to). */
+const SEATS = {};
+
+/* The picker: one seat of a roster card, with people on the floor.
+
+   The field shows who holds the seat. Pressing it opens the floor's
+   whole list under it - everybody, in name order, not a browser's guess
+   at what matches - with a box that narrows it, an offer to add a name
+   nobody has, and beside anyone already seated, where they sit. Picking
+   somebody seated elsewhere moves them here and sends this seat's
+   holder there: the roster stays whole, and the note says what moved.
+
+   It flags and does not refuse. Two people with one name are both
+   listed with what tells them apart - the email, or its absence - and
+   each offers a rename, which is the remedy CLAUDE.md licenses: the id
+   never moves, so a take already filed is untouched. The residual is
+   stated there too: the wrong one of two can still be picked.
+
+   Nothing here mints a person by typing. Only the add button does, and
+   only for the name in the box, and it says so first. */
+function pickLine(g, oi, line, label) {
+  const field = el("button", "op-pick");
+  field.type = "button";
+  field.setAttribute("aria-label", label);
+  field.setAttribute("aria-expanded", "false");
+
+  const note = el("div", "op-note");
+  note.hidden = true;
+
+  const menu = el("div", "pick-menu");
+  menu.hidden = true;
+  const search = el("input", "pick-search");
+  search.type = "text";
+  search.setAttribute("aria-label", "Search people");
+  search.placeholder = "Type to narrow, or pick below";
+  const list = el("div", "pick-list");
+  const foot = el("div", "pick-foot");
+  menu.appendChild(search);
+  menu.appendChild(list);
+  menu.appendChild(foot);
+
+  function showName() {
+    const name = opName(g.ops[oi]);
+    field.textContent = name || "Pick a person";
+    if (name) field.classList.remove("empty"); else field.classList.add("empty");
+  }
+  function say(text, kind) {
+    note.textContent = "";
+    note.className = "op-note" + (kind ? " " + kind : "");
+    note.hidden = !text;
+    if (text) note.appendChild(el("span", kind ? null : "op-hint", text));
+  }
+  function open() {
+    search.value = "";
+    draw();
+    menu.hidden = false;
+    field.setAttribute("aria-expanded", "true");
+    if (search.focus) search.focus();
+  }
+  function close() {
+    menu.hidden = true;
+    field.setAttribute("aria-expanded", "false");
   }
 
-  note.hidden = false;
-  note.className = "op-note warn";
-
-  if (same.length > 1) {
-    note.appendChild(el("span", null,
-      same.length + " people are called " + typed + " - pick one, or rename to tell them apart"));
-    same.forEach(x => note.appendChild(personChoice(x, note, assign)));
-    return;
+  /* The only way a person is ever attached to a seat. */
+  function assign(person) {
+    const from = seatOf(person.id, { g, oi });
+    const held = g.ops[oi];
+    if (from) from.g.ops[from.oi] = held;
+    g.ops[oi] = { name: person.name, personId: person.id };
+    onPlanChanged();
+    showName();
+    if (from) {
+      const other = SEATS[from.g.key + ":" + from.oi];
+      if (other) other.showName();
+      const heldName = opName(held);
+      say(person.name + " moved here from Group " + from.g.key + " seat " + (from.oi + 1)
+          + " - " + (heldName ? heldName + " sits there now" : "that seat is empty now"), "warn");
+    } else {
+      say(person.email || "");
+    }
   }
 
-  /* Created deliberately: typing a name to make a person is the act the
-     doc describes, and it is only typing one into a *schedule* that is
-     forbidden. So this offers, and does not do it silently. */
-  note.appendChild(el("span", null, "Nobody on the floor is called " + typed));
-  const add = el("button", "op-act", "Add " + typed);
+  let shown = [];   // the people the list is showing, in order, for Enter
+  function draw() {
+    const q = search.value.trim().toLowerCase();
+    list.textContent = "";
+    foot.textContent = "";
+    const shared = {};
+    PEOPLE.forEach(x => {
+      const k = String(x.name || "").trim().toLowerCase();
+      shared[k] = (shared[k] || 0) + 1;
+    });
+    const people = PEOPLE
+      .filter(x => !x.disabledAt)
+      .filter(x => !q || (String(x.name || "") + " " + (x.email || "")).toLowerCase().includes(q))
+      .sort((p1, p2) => String(p1.name).localeCompare(String(p2.name)));
+    shown = people;
+
+    people.forEach(x => {
+      const row = el("div", "pick-row");
+      row.setAttribute("data-person", x.id);
+      const at = seatOf(x.id, null);
+      const here = !!(at && at.g === g && at.oi === oi);
+      if (here) row.classList.add("here");
+      else if (at) row.classList.add("seated");
+
+      const take = el("button", "pick-take");
+      take.type = "button";
+      take.appendChild(el("span", "pick-name", x.name));
+      take.appendChild(el("span", "pick-mail", x.email || "no email"));
+      take.appendChild(el("span", "pick-where",
+        here ? "here" : at ? "Group " + at.g.key + " \u00b7 " + (at.oi + 1) : ""));
+      take.addEventListener("click", () => { assign(x); close(); });
+      row.appendChild(take);
+
+      if (shared[String(x.name || "").trim().toLowerCase()] > 1) {
+        row.appendChild(renameButton(x, row, assign, close));
+      }
+      list.appendChild(row);
+    });
+
+    if (!people.length) {
+      const typed = search.value.trim();
+      if (typed) {
+        foot.appendChild(el("span", "pick-none", "Nobody on the floor is called " + typed));
+        foot.appendChild(addButton(typed, assign, close));
+      } else {
+        foot.appendChild(el("span", "pick-none", "Nobody on the floor yet - type a name to add one"));
+      }
+    }
+  }
+
+  field.addEventListener("click", () => (menu.hidden ? open() : close()));
+  search.addEventListener("input", draw);
+  search.addEventListener("keydown", e => {
+    if (e.key === "Escape") { close(); return; }
+    if (e.key === "Enter") {
+      if (shown[0]) { assign(shown[0]); close(); }
+      if (e.preventDefault) e.preventDefault();
+    }
+  });
+  /* A press anywhere else closes it. Guarded, because a headless page
+     has no geometry to contain anything. */
+  document.addEventListener("click", e => {
+    if (menu.hidden) return;
+    if (typeof line.contains === "function" && e.target && !line.contains(e.target)) close();
+  });
+
+  SEATS[g.key + ":" + oi] = { showName };
+  showName();
+  say(opPerson(g.ops[oi]) ? (PEOPLE.find(x => x.id === opPerson(g.ops[oi])) || {}).email || "" : "");
+
+  line.appendChild(field);
+  line.appendChild(note);
+  line.appendChild(menu);
+  return line;
+}
+
+/* Created deliberately: typing a name to make a person is the act the
+   doc describes, and it is only typing one into a *schedule* that is
+   forbidden. So this offers, and does not do it silently. */
+function addButton(typed, assign, close) {
+  const add = el("button", "pick-add", "Add " + typed);
   add.type = "button";
   add.addEventListener("click", async () => {
     add.disabled = true;
@@ -973,35 +1070,29 @@ function resolveOp(inp, note, assign) {
       const person = await r.json();
       PEOPLE = PEOPLE.concat([person]);
       assign(person);
-      note.hidden = true;
+      close();
       toast("Added " + person.name + " to the floor");
     } catch (e) {
       add.disabled = false;
       toast("Could not add " + typed);
     }
   });
-  note.appendChild(add);
+  return add;
 }
 
-/* One of several people sharing a name: take this one, or give this one
-   a name that tells them apart. Renaming is safe by construction - the
-   id does not move, so a take already filed under it is untouched. */
-function personChoice(person, note, assign) {
-  const row = el("div", "op-choice");
-  const take = el("button", "op-act", person.email ? person.name + " - " + person.email
-                                                   : person.name);
-  take.type = "button";
-  take.addEventListener("click", () => { assign(person); note.hidden = true; });
-  row.appendChild(take);
-
-  const rename = el("button", "op-act quiet", "Rename");
+/* One of several people sharing a name: give this one a name that
+   tells them apart. Safe by construction - the id does not move, so a
+   take already filed under it is untouched. The renamed person takes
+   the seat, since telling them apart was in aid of picking one. */
+function renameButton(person, row, assign, close) {
+  const rename = el("button", "pick-rename", "Rename");
   rename.type = "button";
   rename.addEventListener("click", () => {
     const box = el("input");
     box.type = "text";
     box.value = person.name;
     box.setAttribute("aria-label", "New name for " + person.name);
-    const save = el("button", "op-act", "Save");
+    const save = el("button", "pick-save", "Save");
     save.type = "button";
     save.addEventListener("click", async () => {
       const next = box.value.trim();
@@ -1017,7 +1108,7 @@ function personChoice(person, note, assign) {
         const updated = await r.json();
         PEOPLE = PEOPLE.map(x => (x.id === updated.id ? updated : x));
         assign(updated);
-        note.hidden = true;
+        close();
         toast("Renamed to " + updated.name);
       } catch (e) {
         save.disabled = false;
@@ -1025,11 +1116,11 @@ function personChoice(person, note, assign) {
       }
     });
     row.textContent = "";
+    row.className = "pick-row renaming";
     row.appendChild(box);
     row.appendChild(save);
   });
-  row.appendChild(rename);
-  return row;
+  return rename;
 }
 
 /* Who recorded what this shift, with the scores they gave their own
