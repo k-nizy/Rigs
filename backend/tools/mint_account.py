@@ -9,6 +9,7 @@ schedules to twelve rigs is a door where a wall belongs.
     python -m tools.mint_account manager  --email r.osei@verlet.co --name "Ruth Osei"
     python -m tools.mint_account operator --email m.chen@verlet.co --name "Mei Chen" --person <people.id>
     python -m tools.mint_account link     --email m.chen@verlet.co --person <people.id>   # an account that predates people
+    python -m tools.mint_account invite   --person <people.id>   # an account with no password, and a link to set one
     python -m tools.mint_account passwd   --email r.osei@verlet.co
     python -m tools.mint_account disable  --email r.osei@verlet.co
 
@@ -46,6 +47,7 @@ from core.domains.accounts.model import Account, MANAGER, OPERATOR  # noqa: E402
 from core.domains.accounts.passwords import (                    # noqa: E402
     hash_password, password_complaint,
 )
+from services.rigs.people import InviteRefused, invite_person   # noqa: E402
 from core.domains.people.repository import PersonRepository
 from core.domains.accounts.repository import (                   # noqa: E402
     AccountRepository, AccountSessionRepository, normalise_email,
@@ -107,6 +109,25 @@ async def _act(args, session) -> int:
                   f"{str(a.person_id)[:8] if a.person_id else '-':<8} {state}")
         return 0
 
+    if args.cmd == "invite":
+        # The desk's invite button, from here: the same function, so the
+        # two cannot drift. Needs the floor's mail relay configured; on a
+        # floor without one, `operator --person` with a password is the
+        # way, and the refusal says so.
+        try:
+            person_id = uuid.UUID(str(args.person))
+        except (ValueError, TypeError):
+            raise SystemExit(f"--person must be a people id, got {args.person!r}")
+        try:
+            account, what, sent = await invite_person(session, person_id, get_settings())
+        except LookupError:
+            raise SystemExit(f"nobody has the id {person_id} - create the person on the desk first")
+        except InviteRefused as refused:
+            raise SystemExit(refused.message)
+        print(f"{'created' if what == 'created' else 'found'} {account.email}; "
+              + ("invitation sent" if sent else "the relay refused the mail - see the log"))
+        return 0 if sent else 1
+
     existing = await accounts.by_email(args.email)
 
     if args.cmd == "disable":
@@ -123,6 +144,7 @@ async def _act(args, session) -> int:
             raise SystemExit(f"no account for {args.email}")
         password, show = _password(args.password, prompt=not args.generate)
         existing.password_hash = hash_password(password)
+        existing.password_set_at = datetime.now(timezone.utc)
         # A changed password that leaves the old cookies working has not
         # changed anything for whoever already had one.
         ended = await AccountSessionRepository(session).revoke_all(existing.id)
@@ -184,6 +206,7 @@ async def _act(args, session) -> int:
     await accounts.add(Account(
         email=normalise_email(args.email), name=args.name, role=role,
         person_id=person_id, password_hash=hash_password(password),
+        password_set_at=datetime.now(timezone.utc),
     ))
     await session.commit()
     print(f"created {role} {normalise_email(args.email)}"
@@ -232,6 +255,9 @@ async def run(argv: list[str]) -> int:
                                        "the upgrade path, and it keeps the password")
     link.add_argument("--email", required=True)
     link.add_argument("--person", required=True, help="the id from `people`")
+    invite = sub.add_parser("invite", help="mint an operator account with no password and "
+                                           "mail a link to set one - needs the mail relay")
+    invite.add_argument("--person", required=True, help="the id from `people`")
 
     args = p.parse_args(argv)
     if args.cmd in ("manager", "operator", "passwd") and not args.password \
@@ -240,6 +266,8 @@ async def run(argv: list[str]) -> int:
         raise SystemExit("no terminal to prompt on - pass --password or --generate")
     if not hasattr(args, "person"):
         args.person = None
+    if not hasattr(args, "email"):
+        args.email = None
     return await _run(args)
 
 

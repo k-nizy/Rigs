@@ -640,8 +640,20 @@ its own, so each can be reverted on its own.
   a desk that predates the field still pushes. Stored opaque, like the
   payload: the service is a courier, and an opinion about slots would be
   a third answer.
-- **Invites**, through the password reset flow, for anybody given an
-  address.
+- **Invites** - built. `POST /api/people/{id}/invite` on the desk and
+  `mint_account invite --person` at the terminal, with one function
+  under both so they cannot drift. The person's operator account is
+  minted with a hash of a secret nobody is told, and the link mailed is
+  the one "Forgotten your password?" sends, landing on My Shift and
+  living `INVITE_DAYS` rather than minutes, since an invite is opened at
+  home. Following it chooses a password and signs them in; no first
+  password is ever read out. Refused plainly, this being a manager's
+  act: no address, has left, already signs in, or no relay on this
+  floor - and then nothing is minted, because an account behind a link
+  that never arrives is a person locked out with no way to tell.
+  `accounts.password_set_at` records when a password was chosen, and
+  the people list carries `none`, `invited` or `active` from it, which
+  is what the desk draws the button from.
 
 ## The return arrow (built)
 
