@@ -648,7 +648,13 @@ its own, so each can be reverted on its own.
   a third answer.
 - **Invites** - built. `POST /api/people/{id}/invite` on the desk and
   `mint_account invite --person` at the terminal, with one function
-  under both so they cannot drift. The person's operator account is
+  under both so they cannot drift. The button lives on the desk's third
+  screen, **People**, which lists the floor with where each person sits
+  today - read from the roster being planned, so it agrees with Plan by
+  construction - and whether they sign in yet. One action per row:
+  invite, send the link again, or retire somebody who has left. The
+  screen is offered only where the service answers `/api/people`,
+  because a desk with no service has nobody to list. The person's operator account is
   minted with a hash of a secret nobody is told, and the link mailed is
   the one "Forgotten your password?" sends, landing on My Shift and
   living `INVITE_DAYS` rather than minutes, since an invite is opened at

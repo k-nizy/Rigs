@@ -371,11 +371,14 @@ button, select, input, summary, .gcard, .grp, .src, .btn {
 
 /* ----------------------------------------------------------- header */
 
+/* One line: what this is, the three screens, and who is at it. No
+   company mark and no company name - this screen is opened by people
+   who work here, on a floor that has one desk. */
 header.masthead {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 1.2rem;
+  gap: 0.8rem 1.2rem;
   flex-wrap: wrap;
   padding-bottom: 0.9rem;
   border-bottom: 2px solid var(--ink);
@@ -399,21 +402,89 @@ header.masthead {
   color: var(--muted);
 }
 
-/* the only navigation on the page */
-.modes { display: flex; border: 1px solid var(--line-2); border-radius: 3px; overflow: hidden; }
+/* The only navigation on the page: one pill, in the middle of the line. */
+.modes {
+  display: flex; border: 1px solid var(--line-2); border-radius: 999px;
+  overflow: hidden; background: var(--panel);
+}
 .modes button {
-  background: var(--panel);
+  background: transparent;
   border: 0;
-  border-right: 1px solid var(--line-2);
-  padding: 0.45rem 1.15rem;
-  font-size: 0.86rem;
+  padding: 0.42rem 1.15rem;
+  font-size: 0.88rem;
   font-weight: 600;
   color: var(--muted);
   cursor: pointer;
 }
-.modes button:last-child { border-right: 0; }
-.modes button:hover { background: var(--panel-2); color: var(--ink); }
+.modes button:hover { color: var(--ink); }
 .modes button[aria-selected="true"] { background: var(--ink); color: var(--ground); }
+
+/* ===================================================================
+ * PEOPLE
+ * =================================================================== */
+
+.people { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.people-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 1rem; flex-wrap: wrap; padding: 0.9rem 1rem; border-bottom: 1px solid var(--line);
+}
+.people-head h2 { margin: 0; font-size: 1.02rem; }
+.people-head p { margin: 0; color: var(--muted); font-size: 0.82rem; }
+.add { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.add input {
+  font: inherit; font-size: 0.86rem; padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line-2); border-radius: 4px; background: var(--panel); color: var(--ink);
+}
+
+.people-table { display: flex; flex-direction: column; }
+.prow {
+  display: grid; grid-template-columns: minmax(9rem, 1.6fr) 9rem 1fr auto;
+  gap: 0.6rem 1rem; align-items: center;
+  padding: 0.6rem 1rem; border-top: 1px solid var(--line);
+}
+.prow-head {
+  border-top: 0; background: var(--panel-2); padding: 0.5rem 1rem;
+  font-family: var(--v-mono); font-size: 0.6rem; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+}
+.prow-name { font-weight: 600; }
+.prow-mail { display: block; font-family: var(--v-mono); font-size: 0.7rem; color: var(--muted); }
+.prow-seat {
+  justify-self: start;
+  font-family: var(--v-mono); font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 999px; background: var(--g2-soft); color: var(--g2);
+}
+.prow-seat.off { background: var(--panel-2); color: var(--muted); }
+.prow-signs { font-size: 0.84rem; color: var(--ink-2); }
+.prow-signs.yes { color: var(--ok); font-weight: 600; }
+.prow-signs.invited { color: var(--warn); font-weight: 600; }
+.prow-acts { display: flex; gap: 0.4rem; justify-content: flex-end; flex-wrap: wrap; }
+.prow-act {
+  font: inherit; font-size: 0.76rem; line-height: 1.2; cursor: pointer;
+  padding: 0.3rem 0.7rem; border-radius: 4px;
+  border: 1px solid var(--line-2); background: transparent; color: var(--muted);
+}
+.prow-act:hover { color: var(--ink); }
+.prow-act.go { border-color: var(--ink); background: var(--ink); color: var(--ground); font-weight: 600; }
+.prow-act.again { border-color: var(--warn); color: var(--ink); background: var(--warn-soft); }
+.prow-act:disabled { opacity: 0.45; cursor: default; }
+.prow.gone .prow-name, .prow.gone .prow-signs { color: var(--muted); }
+.people-foot { padding: 0.7rem 1rem; font-size: 0.78rem; color: var(--muted); background: var(--panel-2); border-top: 1px solid var(--line); }
+
+@media (max-width: 640px) {
+  /* Two columns, and both items on the first row are placed by hand:
+     an item with only a row given is placed before the auto-placed
+     ones and takes column 1, which put the seat chip where the name
+     belongs. */
+  .prow { grid-template-columns: 1fr auto; row-gap: 0.35rem; }
+  .prow-head { display: none; }
+  .prow > div:first-child { grid-column: 1; grid-row: 1; }
+  .prow-seat { grid-column: 2; grid-row: 1; justify-self: end; }
+  .prow-signs { grid-column: 1 / -1; }
+  .prow-acts { grid-column: 1 / -1; justify-content: flex-start; }
+  .add { width: 100%; }
+  .add input { flex: 1; min-width: 8rem; }
+}
 
 /* =================================================================
  * LIVE
@@ -1386,15 +1457,15 @@ pre.json .n { color: var(--accent); }
 <div class="wrap">
 
   <header class="masthead">
-    <div class="brand">
-      <p class="eyebrow"><span class="v-mark" aria-hidden="true"></span>Verlet Robotics</p>
-      <h1>Rotation Desk <span class="ver">v1</span></h1>
-    </div>
+    <h1>Rotation Desk <span class="ver">v1</span></h1>
+    <!-- The three screens, on one line with the title and whoever is at
+         it. People is added by the script when the service has a list to
+         show: with no service there is nobody to list. -->
+    <nav class="modes" role="tablist" id="modes" aria-label="Desk mode">
+      <button type="button" role="tab" data-mode="live" aria-selected="true">Live</button>
+      <button type="button" role="tab" data-mode="plan" aria-selected="false">Plan</button>
+    </nav>
     <div class="head-right">
-      <div class="modes" role="tablist" id="modes" aria-label="Desk mode">
-        <button type="button" role="tab" data-mode="live" aria-selected="true">Live</button>
-        <button type="button" role="tab" data-mode="plan" aria-selected="false">Plan</button>
-      </div>
       <!-- Who is signed in. Hidden entirely on a deployment with no
            accounts, so the demo looks exactly as it did. -->
       <div class="who" id="who" hidden>
@@ -1536,6 +1607,36 @@ pre.json .n { color: var(--accent); }
   <!-- =============================================================
        LIVE - what the floor is doing right now. Nothing to fill in.
        ============================================================= -->
+  <!-- =============================================================
+       PEOPLE - who is on the floor, and who signs in. The seat is read
+       from the roster being planned; whether somebody signs in comes
+       from the service. Inviting is the only way to give somebody a
+       password without reading one out.
+       ============================================================= -->
+  <main id="view-people" hidden>
+    <section class="people">
+      <div class="people-head">
+        <div>
+          <h2>People on the floor</h2>
+          <p id="people-sub">&nbsp;</p>
+        </div>
+        <div class="add">
+          <input type="text" id="add-name" placeholder="Name" aria-label="New person's name">
+          <input type="email" id="add-email" placeholder="Email (optional)" aria-label="New person's email">
+          <button type="button" class="btn" id="btn-add-person">Add person</button>
+        </div>
+      </div>
+      <div class="people-table">
+        <div class="prow prow-head">
+          <span>Person</span><span>Today</span><span>Signs in</span><span></span>
+        </div>
+        <div id="people-list"></div>
+      </div>
+      <p class="people-foot">An invite sends a link to choose a password - nothing is read
+        out, and the link works once. Who sits where today is set on Plan.</p>
+    </section>
+  </main>
+
   <main id="view-live">
 
     <div class="now" id="now">
@@ -2956,6 +3057,7 @@ async function loadPeople() {
     const body = await r.json();
     PEOPLE = (body && body.people) || [];
     rosterMode = "picker";
+    offerPeople();
   } catch (e) {
     rosterMode = "text";
   }
@@ -3751,6 +3853,149 @@ function renameButton(person, row, assign, close) {
   return rename;
 }
 
+/* The People screen.
+
+   Three columns that answer three questions a manager actually asks:
+   who is on the floor, where are they today, and can they open My
+   Shift yet. The seat is read from the roster being planned, so it
+   agrees with Plan by construction rather than by a second query; who
+   signs in comes from the service, which is the only thing that knows.
+
+   One action per row, never a menu: invite somebody who has an address
+   and no account, send the link again if it went astray, or retire
+   somebody who has left. Nothing here can change a password or read
+   one, because nothing anywhere can. */
+function renderPeople() {
+  const host = $("people-list");
+  if (!host) return;
+  host.textContent = "";
+
+  const live = PEOPLE.filter(x => !x.disabledAt);
+  const signing = live.filter(x => x.account === "active").length;
+  const invited = live.filter(x => x.account === "invited").length;
+  $("people-sub").textContent =
+    live.length + (live.length === 1 ? " person" : " people") + " on the floor \u00b7 "
+    + signing + " sign in" + (invited ? ", " + invited + " invited" : "");
+
+  PEOPLE.slice()
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    .forEach(person => host.appendChild(personRow(person)));
+}
+
+function personRow(person) {
+  const row = el("div", "prow");
+  row.setAttribute("data-person", person.id);
+  if (person.disabledAt) row.classList.add("gone");
+
+  const who = el("div");
+  who.appendChild(el("span", "prow-name", person.name));
+  who.appendChild(el("span", "prow-mail", person.email || "no email"));
+  row.appendChild(who);
+
+  const at = seatOf(person.id, null);
+  row.appendChild(el("span", "prow-seat" + (at ? "" : " off"),
+    at ? "Group " + at.g.key + " \u00b7 " + (at.oi + 1) : "not today"));
+
+  /* What the service says, in the manager's words rather than the
+     API's. "Needs an email" is the one that is actionable here. */
+  const state = person.disabledAt ? "Left the floor"
+    : person.account === "active" ? "Yes"
+    : person.account === "invited" ? "Invited"
+    : person.email ? "Not yet"
+    : "Needs an email to be invited";
+  row.appendChild(el("span", "prow-signs"
+    + (person.account === "active" && !person.disabledAt ? " yes" : "")
+    + (person.account === "invited" && !person.disabledAt ? " invited" : ""), state));
+
+  const acts = el("div", "prow-acts");
+  if (!person.disabledAt && person.email && person.account === "none") {
+    acts.appendChild(inviteButton(person, "Invite", "prow-act go"));
+  } else if (!person.disabledAt && person.account === "invited") {
+    acts.appendChild(inviteButton(person, "Send again", "prow-act again"));
+  }
+  if (!person.disabledAt) acts.appendChild(retireButton(person));
+  row.appendChild(acts);
+  return row;
+}
+
+/* Both buttons are the same call. The desk does not decide whether an
+   account is made or a link re-sent - the service does, and says which. */
+function inviteButton(person, label, cls) {
+  const b = el("button", cls, label);
+  b.type = "button";
+  b.addEventListener("click", async () => {
+    b.disabled = true;
+    try {
+      const r = await api("/api/people/" + encodeURIComponent(person.id) + "/invite",
+                          { method: "POST" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        /* The floor's own words. A refusal here is a real answer - no
+           relay, no address, already signs in - and a manager can act
+           on every one of them. */
+        toast(body.detail || "Could not invite " + person.name);
+        b.disabled = false;
+        return;
+      }
+      person.account = "invited";
+      toast("Invitation sent to " + (body.email || person.name));
+      renderPeople();
+    } catch (e) {
+      toast("Could not invite " + person.name);
+      b.disabled = false;
+    }
+  });
+  return b;
+}
+
+/* Disabled, never deleted - somebody leaving is not the same as their
+   never having been here, and a take filed last year still names them. */
+function retireButton(person) {
+  const b = el("button", "prow-act", "Left the floor");
+  b.type = "button";
+  b.addEventListener("click", async () => {
+    b.disabled = true;
+    try {
+      const r = await api("/api/people/" + encodeURIComponent(person.id) + "/disable",
+                          { method: "POST" });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      person.disabledAt = new Date().toISOString();
+      toast(person.name + " is off the floor");
+      renderPeople();
+    } catch (e) {
+      toast("Could not retire " + person.name);
+      b.disabled = false;
+    }
+  });
+  return b;
+}
+
+async function addPerson() {
+  const name = $("add-name").value.trim();
+  const email = $("add-email").value.trim();
+  if (!name) { toast("A person needs a name"); return; }
+  const btn = $("btn-add-person");
+  btn.disabled = true;
+  try {
+    const r = await api("/api/people", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(email ? { name, email } : { name }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(body.detail || "Could not add " + name); return; }
+    PEOPLE = PEOPLE.concat([body]);
+    $("add-name").value = "";
+    $("add-email").value = "";
+    toast("Added " + body.name + " to the floor");
+    renderPeople();
+  } catch (e) {
+    toast("Could not add " + name);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 /* Who recorded what this shift, with the scores they gave their own
    takes. One row per person; a take filed before the rig sent a person
    sits under the seat and name it carries, and the row says which seat,
@@ -4195,7 +4440,9 @@ function applyGate() {
     clearInterval(ticker);
     $("view-live").hidden = true;
     $("view-plan").hidden = true;
-    ["board", "upnext", "rosters", "tbl-ops", "tbl-rigs"].forEach(id => {
+    $("view-people").hidden = true;
+    PEOPLE = [];
+    ["board", "upnext", "rosters", "tbl-ops", "tbl-rigs", "people-list"].forEach(id => {
       $(id).textContent = "";
     });
   }
@@ -4393,15 +4640,37 @@ function setView(v) {
     b.setAttribute("aria-selected", String(b.dataset.mode === v)));
   $("view-live").hidden = v !== "live";
   $("view-plan").hidden = v !== "plan";
+  $("view-people").hidden = v !== "people";
   document.body.dataset.view = v;
 
   clearInterval(ticker);
   if (v === "live") {
     renderLive();
     ticker = setInterval(renderLive, 1000);
+  } else if (v === "people") {
+    renderPeople();
   } else {
     renderPlan();
   }
+}
+
+/* The People button, added once the service has answered with a list.
+
+   Not in the markup, because a desk with no service behind it has
+   nobody to list and nowhere to add one - the same reasoning that
+   leaves the roster read-only there. A floor whose service predates
+   `/api/people` is the same case. */
+function offerPeople() {
+  const modes = $("modes");
+  if ([...modes.children].some(b => b.dataset.mode === "people")) return;
+  const b = document.createElement("button");
+  b.type = "button";
+  b.setAttribute("role", "tab");
+  b.setAttribute("aria-selected", "false");
+  b.dataset.mode = "people";
+  b.textContent = "People";
+  b.addEventListener("click", () => setView("people"));
+  modes.appendChild(b);
 }
 
 [...$("modes").children].forEach(b =>
@@ -4412,6 +4681,7 @@ function setView(v) {
 $("in-date").value = cfg.date;
 $("in-date").addEventListener("change", e => { cfg.date = e.target.value; onPlanChanged(); });
 $("btn-push").addEventListener("click", pushFloor);
+$("btn-add-person").addEventListener("click", addPerson);
 $("btn-print").addEventListener("click", () => window.print());
 $("btn-refresh").addEventListener("click", () => loadFloor(true));
 $("signin-form").addEventListener("submit", signIn);

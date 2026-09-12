@@ -192,11 +192,14 @@ button, select, input, summary, .gcard, .grp, .src, .btn {
 
 /* ----------------------------------------------------------- header */
 
+/* One line: what this is, the three screens, and who is at it. No
+   company mark and no company name - this screen is opened by people
+   who work here, on a floor that has one desk. */
 header.masthead {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 1.2rem;
+  gap: 0.8rem 1.2rem;
   flex-wrap: wrap;
   padding-bottom: 0.9rem;
   border-bottom: 2px solid var(--ink);
@@ -220,21 +223,89 @@ header.masthead {
   color: var(--muted);
 }
 
-/* the only navigation on the page */
-.modes { display: flex; border: 1px solid var(--line-2); border-radius: 3px; overflow: hidden; }
+/* The only navigation on the page: one pill, in the middle of the line. */
+.modes {
+  display: flex; border: 1px solid var(--line-2); border-radius: 999px;
+  overflow: hidden; background: var(--panel);
+}
 .modes button {
-  background: var(--panel);
+  background: transparent;
   border: 0;
-  border-right: 1px solid var(--line-2);
-  padding: 0.45rem 1.15rem;
-  font-size: 0.86rem;
+  padding: 0.42rem 1.15rem;
+  font-size: 0.88rem;
   font-weight: 600;
   color: var(--muted);
   cursor: pointer;
 }
-.modes button:last-child { border-right: 0; }
-.modes button:hover { background: var(--panel-2); color: var(--ink); }
+.modes button:hover { color: var(--ink); }
 .modes button[aria-selected="true"] { background: var(--ink); color: var(--ground); }
+
+/* ===================================================================
+ * PEOPLE
+ * =================================================================== */
+
+.people { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.people-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 1rem; flex-wrap: wrap; padding: 0.9rem 1rem; border-bottom: 1px solid var(--line);
+}
+.people-head h2 { margin: 0; font-size: 1.02rem; }
+.people-head p { margin: 0; color: var(--muted); font-size: 0.82rem; }
+.add { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.add input {
+  font: inherit; font-size: 0.86rem; padding: 0.4rem 0.6rem;
+  border: 1px solid var(--line-2); border-radius: 4px; background: var(--panel); color: var(--ink);
+}
+
+.people-table { display: flex; flex-direction: column; }
+.prow {
+  display: grid; grid-template-columns: minmax(9rem, 1.6fr) 9rem 1fr auto;
+  gap: 0.6rem 1rem; align-items: center;
+  padding: 0.6rem 1rem; border-top: 1px solid var(--line);
+}
+.prow-head {
+  border-top: 0; background: var(--panel-2); padding: 0.5rem 1rem;
+  font-family: var(--v-mono); font-size: 0.6rem; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+}
+.prow-name { font-weight: 600; }
+.prow-mail { display: block; font-family: var(--v-mono); font-size: 0.7rem; color: var(--muted); }
+.prow-seat {
+  justify-self: start;
+  font-family: var(--v-mono); font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 999px; background: var(--g2-soft); color: var(--g2);
+}
+.prow-seat.off { background: var(--panel-2); color: var(--muted); }
+.prow-signs { font-size: 0.84rem; color: var(--ink-2); }
+.prow-signs.yes { color: var(--ok); font-weight: 600; }
+.prow-signs.invited { color: var(--warn); font-weight: 600; }
+.prow-acts { display: flex; gap: 0.4rem; justify-content: flex-end; flex-wrap: wrap; }
+.prow-act {
+  font: inherit; font-size: 0.76rem; line-height: 1.2; cursor: pointer;
+  padding: 0.3rem 0.7rem; border-radius: 4px;
+  border: 1px solid var(--line-2); background: transparent; color: var(--muted);
+}
+.prow-act:hover { color: var(--ink); }
+.prow-act.go { border-color: var(--ink); background: var(--ink); color: var(--ground); font-weight: 600; }
+.prow-act.again { border-color: var(--warn); color: var(--ink); background: var(--warn-soft); }
+.prow-act:disabled { opacity: 0.45; cursor: default; }
+.prow.gone .prow-name, .prow.gone .prow-signs { color: var(--muted); }
+.people-foot { padding: 0.7rem 1rem; font-size: 0.78rem; color: var(--muted); background: var(--panel-2); border-top: 1px solid var(--line); }
+
+@media (max-width: 640px) {
+  /* Two columns, and both items on the first row are placed by hand:
+     an item with only a row given is placed before the auto-placed
+     ones and takes column 1, which put the seat chip where the name
+     belongs. */
+  .prow { grid-template-columns: 1fr auto; row-gap: 0.35rem; }
+  .prow-head { display: none; }
+  .prow > div:first-child { grid-column: 1; grid-row: 1; }
+  .prow-seat { grid-column: 2; grid-row: 1; justify-self: end; }
+  .prow-signs { grid-column: 1 / -1; }
+  .prow-acts { grid-column: 1 / -1; justify-content: flex-start; }
+  .add { width: 100%; }
+  .add input { flex: 1; min-width: 8rem; }
+}
 
 /* =================================================================
  * LIVE
